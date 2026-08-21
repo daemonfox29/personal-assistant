@@ -36,7 +36,7 @@ class OllamaAdapterTests(unittest.TestCase):
                 "prompt": "Hello",
                 "stream": False,
                 "think": False,
-                "keep_alive": "2m",
+                "keep_alive": "5m",
                 "options": {"num_ctx": 8192},
             },
             120.0,
@@ -61,3 +61,19 @@ class OllamaAdapterTests(unittest.TestCase):
         self.assertEqual(payload["model"], "qwen3:8b")
         self.assertEqual(payload["keep_alive"], "0")
         self.assertEqual(payload["options"], {"num_ctx": 4096})
+
+    def test_warm_up_loads_the_model_with_the_configured_settings(self) -> None:
+        sender = Mock(return_value={"response": ""})
+        ensure_service = Mock()
+        model = OllamaModel(
+            send_json=sender,
+            ensure_service=ensure_service,
+        )
+
+        model.warm_up()
+
+        ensure_service.assert_called_once_with()
+        payload = sender.call_args.args[1]
+        self.assertEqual(payload["prompt"], "")
+        self.assertEqual(payload["model"], "qwen3:14b")
+        self.assertEqual(payload["keep_alive"], "5m")

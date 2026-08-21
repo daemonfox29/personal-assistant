@@ -25,7 +25,7 @@ class OllamaSettings:
     base_url: str = "http://127.0.0.1:11434"
     model_name: str = "qwen3:14b"
     context_tokens: int = 8192
-    keep_alive: str = "2m"
+    keep_alive: str = "5m"
     timeout_seconds: float = 120.0
 
 
@@ -68,11 +68,22 @@ class OllamaModel(LanguageModel):
 
         self._ensure_service()
 
-        response = self._send_json(
+        response = self._send_request(request.prompt)
+
+        return ModelResponse(text=response["response"])
+
+    def warm_up(self) -> None:
+        """Load the configured model when the assistant application starts."""
+
+        self._ensure_service()
+        self._send_request("")
+
+    def _send_request(self, prompt: str) -> dict[str, Any]:
+        return self._send_json(
             f"{self._settings.base_url}/api/generate",
             {
                 "model": self._settings.model_name,
-                "prompt": request.prompt,
+                "prompt": prompt,
                 "stream": False,
                 "think": False,
                 "keep_alive": self._settings.keep_alive,
@@ -80,5 +91,3 @@ class OllamaModel(LanguageModel):
             },
             self._settings.timeout_seconds,
         )
-
-        return ModelResponse(text=response["response"])

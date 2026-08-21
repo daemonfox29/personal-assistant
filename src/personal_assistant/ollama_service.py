@@ -1,4 +1,4 @@
-"""Start and check the local Ollama service without loading a model."""
+"""Start and check the local Ollama service before a model is used."""
 
 from collections.abc import Callable
 from dataclasses import dataclass
