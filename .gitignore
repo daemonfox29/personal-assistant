@@ -216,3 +216,60 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# codex output 8-20-26
+
+# Python: environments, bytecode, test/build artifacts
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+build/
+dist/
+*.egg-info/
+
+# Secrets and machine-specific configuration
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
+config/local.*
+
+# Personal assistant runtime data and SQLite databases
+data/
+runtime/
+memory/
+databases/
+*.db
+*.sqlite
+*.sqlite3
+
+# Logs and generated operational output
+logs/
+*.log
+artifacts/
+outputs/
+
+# Browser automation state, sessions, and downloads
+browser_data/
+browser_profiles/
+playwright/.auth/
+downloads/
+
+# Local model and embedding caches
+models/
+model_cache/
+embedding_cache/
+
+# Editor and operating-system metadata
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.example.json
+.DS_Store
