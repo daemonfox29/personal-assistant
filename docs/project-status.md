@@ -61,7 +61,7 @@ Completed:
 - Kept the original non-streaming `generate()` path as the shared baseline for simple or future model adapters; streaming is an optional extension.
 - Added automated streaming tests and verified one small response against the real local Ollama model.
 - Optimized the initial performance defaults from an 8K context window to 4K and added a 400-token response cap; both can be changed later in `OllamaSettings`.
-- Added a concise-answer instruction, a visible notice when the model reaches its cap, a 1,200-token `/long <question>` command, and a `/max <1-2000> <question>` command for deliberately longer one-off responses.
+- Added a concise-answer instruction, a visible notice when the model reaches its cap, a 1,200-token `/long <question>` command, a 2,000-token `/max <question>` command, and a `/limit <1-2000> <question>` command for custom response budgets.
 
 Next:
 

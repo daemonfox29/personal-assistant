@@ -15,6 +15,7 @@ ChunkWriter = Callable[[str], None]
 EXIT_COMMANDS = frozenset({"exit", "quit"})
 LONG_RESPONSE_COMMAND = "/long"
 MAX_RESPONSE_COMMAND = "/max"
+CUSTOM_LIMIT_COMMAND = "/limit"
 LONG_RESPONSE_TOKEN_LIMIT = 1200
 MAXIMUM_RESPONSE_TOKEN_LIMIT = 2000
 
@@ -46,7 +47,8 @@ class ChatSession:
 
         self._write_output(
             "Type 'quit' or 'exit' to close. Use '/long <question>' for a "
-            "1,200-token answer or '/max <1-2000> <question>' for a custom limit."
+            "1,200-token answer, '/max <question>' for 2,000 tokens, or "
+            "'/limit <1-2000> <question>' for a custom limit."
         )
 
         while True:
@@ -80,7 +82,7 @@ class ChatSession:
         if limit_reached:
             self._write_output(
                 "[Response stopped at its token limit. Use '/long <question>' "
-                "or '/max <1-2000> <question>' for a longer answer.]"
+                "or '/max <question>' for a longer answer.]"
             )
 
     def _long_request(
@@ -97,28 +99,42 @@ class ChatSession:
             max_response_tokens=LONG_RESPONSE_TOKEN_LIMIT,
         )
 
+    def _max_request(
+        self,
+        separator: str,
+        remaining_prompt: str,
+    ) -> ModelRequest | None:
+        if not separator or not remaining_prompt.strip():
+            self._write_output("Usage: /max <question>")
+            return None
+
+        return ModelRequest(
+            prompt=remaining_prompt.strip(),
+            max_response_tokens=MAXIMUM_RESPONSE_TOKEN_LIMIT,
+        )
+
     def _custom_limit_request(
         self,
         separator: str,
         remaining_prompt: str,
     ) -> ModelRequest | None:
         if not separator:
-            self._write_output("Usage: /max <1-2000> <question>")
+            self._write_output("Usage: /limit <1-2000> <question>")
             return None
 
         token_limit, question_separator, question = remaining_prompt.partition(" ")
         if not question_separator or not question.strip():
-            self._write_output("Usage: /max <1-2000> <question>")
+            self._write_output("Usage: /limit <1-2000> <question>")
             return None
 
         try:
             response_limit = int(token_limit)
         except ValueError:
-            self._write_output("The /max token limit must be a whole number.")
+            self._write_output("The /limit token limit must be a whole number.")
             return None
 
         if not 1 <= response_limit <= MAXIMUM_RESPONSE_TOKEN_LIMIT:
-            self._write_output("The /max token limit must be between 1 and 2000.")
+            self._write_output("The /limit token limit must be between 1 and 2000.")
             return None
 
         return ModelRequest(
@@ -134,11 +150,17 @@ class ChatSession:
             return None
 
         command, separator, remaining_prompt = stripped_prompt.partition(" ")
-        if command.lower() not in {LONG_RESPONSE_COMMAND, MAX_RESPONSE_COMMAND}:
+        if command.lower() not in {
+            LONG_RESPONSE_COMMAND,
+            MAX_RESPONSE_COMMAND,
+            CUSTOM_LIMIT_COMMAND,
+        }:
             return ModelRequest(prompt=prompt)
 
         if command.lower() == LONG_RESPONSE_COMMAND:
             return self._long_request(separator, remaining_prompt)
+        if command.lower() == MAX_RESPONSE_COMMAND:
+            return self._max_request(separator, remaining_prompt)
         return self._custom_limit_request(separator, remaining_prompt)
 
     def _say_goodbye(self) -> None:
