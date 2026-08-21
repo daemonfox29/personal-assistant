@@ -117,18 +117,25 @@ class OllamaAdapterTests(unittest.TestCase):
             {"num_ctx": 4096, "num_predict": 400},
         )
 
-    def test_explicit_long_request_removes_the_response_cap(self) -> None:
+    def test_explicit_long_request_uses_its_response_cap(self) -> None:
         sender = Mock(return_value={"response": "A longer reply"})
         model = OllamaModel(send_json=sender, ensure_service=Mock())
 
         model.generate(
-            ModelRequest(prompt="Explain in detail", max_response_tokens=-1)
+            ModelRequest(prompt="Explain in detail", max_response_tokens=1200)
         )
 
         payload = sender.call_args.args[1]
-        self.assertEqual(payload["options"]["num_predict"], -1)
+        self.assertEqual(payload["options"]["num_predict"], 1200)
         self.assertEqual(
             payload["system"],
-            "The user explicitly requested an unrestricted-length response. "
-            "Answer as completely as needed.",
+            "Answer the user's request completely within 1200 tokens or fewer. "
+            "Be concise. If it cannot fit, provide the most useful complete "
+            "answer possible and offer to continue.",
         )
+
+    def test_non_positive_response_cap_is_rejected(self) -> None:
+        model = OllamaModel(send_json=Mock(), ensure_service=Mock())
+
+        with self.assertRaises(ValueError):
+            model.generate(ModelRequest(prompt="Hello", max_response_tokens=0))

@@ -146,6 +146,8 @@ class OllamaModel(LanguageModel):
             if request.max_response_tokens is not None
             else self._settings.max_response_tokens
         )
+        if response_limit <= 0:
+            raise ValueError("The response token limit must be a positive number.")
         return {
             "model": self._settings.model_name,
             "prompt": request.prompt,
@@ -160,12 +162,6 @@ class OllamaModel(LanguageModel):
         }
 
     def _response_instruction(self, response_limit: int) -> str:
-        if response_limit < 0:
-            return (
-                "The user explicitly requested an unrestricted-length response. "
-                "Answer as completely as needed."
-            )
-
         return (
             f"Answer the user's request completely within {response_limit} tokens "
             "or fewer. Be concise. If it cannot fit, provide the most useful "

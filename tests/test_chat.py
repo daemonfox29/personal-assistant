@@ -66,7 +66,7 @@ class ChatSessionTests(unittest.TestCase):
         self.assertEqual(chunks, ["Assistant: ", "Hello", " back", "\n"])
         write_output.assert_called_with("Goodbye.")
 
-    def test_long_command_removes_the_default_response_cap(self) -> None:
+    def test_long_command_uses_the_long_response_cap(self) -> None:
         model = Mock()
         model.generate.return_value = ModelResponse(text="Long reply")
         read_input = Mock(side_effect=["/long Explain the history", "quit"])
@@ -75,7 +75,33 @@ class ChatSessionTests(unittest.TestCase):
 
         request = model.generate.call_args.args[0]
         self.assertEqual(request.prompt, "Explain the history")
-        self.assertEqual(request.max_response_tokens, -1)
+        self.assertEqual(request.max_response_tokens, 1200)
+
+    def test_max_command_uses_a_custom_response_cap(self) -> None:
+        model = Mock()
+        model.generate.return_value = ModelResponse(text="Custom reply")
+        read_input = Mock(side_effect=["/max 800 Explain the topic", "quit"])
+
+        ChatSession(model, read_input=read_input, write_output=Mock()).run()
+
+        request = model.generate.call_args.args[0]
+        self.assertEqual(request.prompt, "Explain the topic")
+        self.assertEqual(request.max_response_tokens, 800)
+
+    def test_max_command_rejects_a_limit_above_2000(self) -> None:
+        model = Mock()
+        write_output = Mock()
+
+        ChatSession(
+            model,
+            read_input=Mock(side_effect=["/max 2001 Explain the topic", "quit"]),
+            write_output=write_output,
+        ).run()
+
+        model.generate.assert_not_called()
+        write_output.assert_any_call(
+            "The /max token limit must be between 1 and 2000."
+        )
 
     def test_limit_notice_is_shown_when_streaming_hits_its_cap(self) -> None:
         class LimitedStreamingModel:
@@ -95,7 +121,7 @@ class ChatSessionTests(unittest.TestCase):
 
         write_output.assert_any_call(
             "[Response stopped at its token limit. Use '/long <question>' "
-            "to allow a longer answer.]"
+            "or '/max <1-2000> <question>' for a longer answer.]"
         )
 
     def test_end_of_input_closes_the_chat(self) -> None:
