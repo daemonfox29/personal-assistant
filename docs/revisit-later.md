@@ -15,3 +15,9 @@ Questions and concepts to return to after the project has more working pieces.
 - How can a model adapter follow the protocol without explicitly inheriting from it?
 - What does `@runtime_checkable` verify, and what does it not verify?
 - How do replaceable model adapters keep their own settings while sharing the same `generate()` interface?
+
+## Saved memory and database retrieval
+
+- How does the assistant store long-term memory separately from the model's temporary context?
+- How does it search saved memory or a database for only the information relevant to a new request?
+- When should older conversation be summarized, retrieved from storage, or left out entirely?
