@@ -77,3 +77,26 @@ class OllamaAdapterTests(unittest.TestCase):
         self.assertEqual(payload["prompt"], "")
         self.assertEqual(payload["model"], "qwen3:14b")
         self.assertEqual(payload["keep_alive"], "5m")
+
+    def test_stream_generate_yields_each_response_piece(self) -> None:
+        stream_json = Mock(
+            return_value=iter(
+                [
+                    {"response": "Local"},
+                    {"response": " reply"},
+                    {"done": True},
+                ]
+            )
+        )
+        model = OllamaModel(
+            stream_json=stream_json,
+            ensure_service=Mock(),
+        )
+
+        response_chunks = list(model.stream_generate(ModelRequest(prompt="Hello")))
+
+        self.assertEqual(response_chunks, ["Local", " reply"])
+        payload = stream_json.call_args.args[1]
+        self.assertTrue(payload["stream"])
+        self.assertFalse(payload["think"])
+        self.assertEqual(payload["keep_alive"], "5m")

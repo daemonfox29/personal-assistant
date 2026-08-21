@@ -10,7 +10,7 @@ This document is the handoff point between coding sessions. At the end of each s
 - Runtime personal data, browser state, secrets, logs, databases, and model files remain excluded from Git.
 - The assistant has a replaceable language-model interface and a local Ollama adapter configured for `qwen3:14b`.
 - Starting the command-line assistant starts Ollama if needed, preloads the local model, uses an 8K context window, and asks Ollama to unload the model after five idle minutes.
-- A minimal local-only chat interface is working. It has no saved conversation memory, tools, browser access, personal-data access, or credential access.
+- A minimal local-only chat interface is working and streams response text as the model generates it. It has no saved conversation memory, tools, browser access, personal-data access, or credential access.
 
 ## Outstanding actions
 
@@ -52,3 +52,15 @@ Next:
 
 - Centralize the connection and model settings so future model experiments require one small, obvious edit.
 - Add bounded session-only conversation history before deciding what should become persistent SQLite memory.
+
+### 2026-08-21 02:49 MDT
+
+Completed:
+
+- Updated the command-line chat interface to stream Qwen's response text as it is generated, rather than waiting silently for a complete answer.
+- Kept the original non-streaming `generate()` path as the shared baseline for simple or future model adapters; streaming is an optional extension.
+- Added automated streaming tests and verified one small response against the real local Ollama model.
+
+Next:
+
+- Resume with centralized model and connection settings, then bounded session-only conversation history.

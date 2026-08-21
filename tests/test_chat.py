@@ -7,6 +7,17 @@ from personal_assistant.chat import ChatSession
 from personal_assistant.model import ModelResponse
 
 
+class StreamingTestModel:
+    """A tiny model that returns two response chunks for a chat test."""
+
+    def generate(self, request):
+        raise AssertionError("The streaming path should be used instead.")
+
+    def stream_generate(self, request):
+        yield "Hello"
+        yield " back"
+
+
 class ChatSessionTests(unittest.TestCase):
     """Verify input is sent to the model and exit remains local."""
 
@@ -38,6 +49,21 @@ class ChatSessionTests(unittest.TestCase):
         ).run()
 
         model.generate.assert_not_called()
+        write_output.assert_called_with("Goodbye.")
+
+    def test_streaming_model_displays_each_response_piece_immediately(self) -> None:
+        chunks: list[str] = []
+        read_input = Mock(side_effect=["Hello", "quit"])
+        write_output = Mock()
+
+        ChatSession(
+            StreamingTestModel(),
+            read_input=read_input,
+            write_output=write_output,
+            write_chunk=chunks.append,
+        ).run()
+
+        self.assertEqual(chunks, ["Assistant: ", "Hello", " back", "\n"])
         write_output.assert_called_with("Goodbye.")
 
     def test_end_of_input_closes_the_chat(self) -> None:

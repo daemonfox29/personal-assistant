@@ -1,6 +1,7 @@
 """Common contract for replaceable language-model adapters."""
 
 from dataclasses import dataclass
+from collections.abc import Iterator
 from typing import Protocol, runtime_checkable
 
 
@@ -24,3 +25,11 @@ class LanguageModel(Protocol):
 
     def generate(self, request: ModelRequest) -> ModelResponse:
         """Generate a response for a model request."""
+
+
+@runtime_checkable
+class StreamingLanguageModel(Protocol):
+    """Optional behavior for adapters that can yield a response in pieces."""
+
+    def stream_generate(self, request: ModelRequest) -> Iterator[str]:
+        """Yield response text as it becomes available."""

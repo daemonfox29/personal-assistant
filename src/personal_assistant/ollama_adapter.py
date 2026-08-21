@@ -1,6 +1,6 @@
 """Local Ollama adapter for the shared language-model contract."""
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 import json
 from typing import Any
@@ -15,6 +15,7 @@ from personal_assistant.ollama_service import OllamaService, OllamaServiceSettin
 
 
 JsonSender = Callable[[str, dict[str, object], float], dict[str, Any]]
+JsonStreamer = Callable[[str, dict[str, object], float], Iterator[dict[str, Any]]]
 ServiceEnsurer = Callable[[], None]
 
 
@@ -47,6 +48,26 @@ def _send_json(
         return json.loads(response.read())
 
 
+def _stream_json(
+    url: str,
+    payload: dict[str, object],
+    timeout_seconds: float,
+) -> Iterator[dict[str, Any]]:
+    """Yield Ollama's newline-delimited JSON response as it arrives."""
+
+    request = Request(
+        url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+
+    with urlopen(request, timeout=timeout_seconds) as response:
+        for line in response:
+            if line.strip():
+                yield json.loads(line)
+
+
 class OllamaModel(LanguageModel):
     """Generate text through a locally running Ollama service."""
 
@@ -55,10 +76,12 @@ class OllamaModel(LanguageModel):
         settings: OllamaSettings = OllamaSettings(),
         *,
         send_json: JsonSender = _send_json,
+        stream_json: JsonStreamer = _stream_json,
         ensure_service: ServiceEnsurer | None = None,
     ) -> None:
         self._settings = settings
         self._send_json = send_json
+        self._stream_json = stream_json
         self._ensure_service = ensure_service or OllamaService(
             OllamaServiceSettings(base_url=settings.base_url)
         ).ensure_available
@@ -72,6 +95,16 @@ class OllamaModel(LanguageModel):
 
         return ModelResponse(text=response["response"])
 
+    def stream_generate(self, request: ModelRequest) -> Iterator[str]:
+        """Yield response text as Ollama generates it."""
+
+        self._ensure_service()
+
+        for response in self._stream_request(request.prompt):
+            text = response.get("response", "")
+            if isinstance(text, str) and text:
+                yield text
+
     def warm_up(self) -> None:
         """Load the configured model when the assistant application starts."""
 
@@ -81,13 +114,23 @@ class OllamaModel(LanguageModel):
     def _send_request(self, prompt: str) -> dict[str, Any]:
         return self._send_json(
             f"{self._settings.base_url}/api/generate",
-            {
-                "model": self._settings.model_name,
-                "prompt": prompt,
-                "stream": False,
-                "think": False,
-                "keep_alive": self._settings.keep_alive,
-                "options": {"num_ctx": self._settings.context_tokens},
-            },
+            self._request_payload(prompt, stream=False),
             self._settings.timeout_seconds,
         )
+
+    def _stream_request(self, prompt: str) -> Iterator[dict[str, Any]]:
+        return self._stream_json(
+            f"{self._settings.base_url}/api/generate",
+            self._request_payload(prompt, stream=True),
+            self._settings.timeout_seconds,
+        )
+
+    def _request_payload(self, prompt: str, *, stream: bool) -> dict[str, object]:
+        return {
+            "model": self._settings.model_name,
+            "prompt": prompt,
+            "stream": stream,
+            "think": False,
+            "keep_alive": self._settings.keep_alive,
+            "options": {"num_ctx": self._settings.context_tokens},
+        }

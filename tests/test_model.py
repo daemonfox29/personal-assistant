@@ -6,6 +6,7 @@ from personal_assistant.model import (
     LanguageModel,
     ModelRequest,
     ModelResponse,
+    StreamingLanguageModel,
 )
 
 
@@ -14,6 +15,13 @@ class EchoModel:
 
     def generate(self, request: ModelRequest) -> ModelResponse:
         return ModelResponse(text=request.prompt)
+
+
+class StreamingEchoModel(EchoModel):
+    """A test-only model that can return text gradually."""
+
+    def stream_generate(self, request: ModelRequest):
+        yield request.prompt
 
 
 class ModelContractTests(unittest.TestCase):
@@ -30,3 +38,9 @@ class ModelContractTests(unittest.TestCase):
         response = model.generate(ModelRequest(prompt="Hello"))
 
         self.assertEqual(response.text, "Hello")
+
+    def test_streaming_model_matches_the_optional_contract(self) -> None:
+        model = StreamingEchoModel()
+
+        self.assertIsInstance(model, StreamingLanguageModel)
+        self.assertEqual(list(model.stream_generate(ModelRequest(prompt="Hello"))), ["Hello"])
