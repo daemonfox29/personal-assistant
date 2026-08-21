@@ -5,12 +5,16 @@ import unittest
 from personal_assistant.permissions import (
     ActionKind,
     PermissionDecision,
+    POLICY_BY_ACTION,
     evaluate_action,
 )
 
 
 class PermissionPolicyTests(unittest.TestCase):
     """Verify that sensitive actions remain protected."""
+
+    def test_every_action_has_an_explicit_policy(self) -> None:
+        self.assertSetEqual(set(POLICY_BY_ACTION), set(ActionKind))
 
     def test_project_file_reading_is_allowed(self) -> None:
         result = evaluate_action(ActionKind.READ_PROJECT_FILE)

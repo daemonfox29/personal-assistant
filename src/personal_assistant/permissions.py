@@ -31,33 +31,40 @@ class PermissionResult:
     reason: str
 
 
+POLICY_BY_ACTION: dict[ActionKind, PermissionResult] = {
+    ActionKind.READ_PROJECT_FILE: PermissionResult(
+        PermissionDecision.ALLOW,
+        "Reading project source files is allowed.",
+    ),
+    ActionKind.READ_PERSONAL_DATA: PermissionResult(
+        PermissionDecision.REQUIRE_APPROVAL,
+        "This action requires explicit user approval.",
+    ),
+    ActionKind.WRITE_LOCAL_FILE: PermissionResult(
+        PermissionDecision.REQUIRE_APPROVAL,
+        "This action requires explicit user approval.",
+    ),
+    ActionKind.BROWSER_NAVIGATION: PermissionResult(
+        PermissionDecision.REQUIRE_APPROVAL,
+        "This action requires explicit user approval.",
+    ),
+    ActionKind.NETWORK_REQUEST: PermissionResult(
+        PermissionDecision.REQUIRE_APPROVAL,
+        "This action requires explicit user approval.",
+    ),
+    ActionKind.ACCESS_CREDENTIALS: PermissionResult(
+        PermissionDecision.DENY,
+        "Credentials must never be accessed automatically.",
+    ),
+}
+
+DEFAULT_DENY = PermissionResult(
+    PermissionDecision.DENY,
+    "Unknown actions are denied by default.",
+)
+
+
 def evaluate_action(action: ActionKind) -> PermissionResult:
     """Return the safety decision for a requested action."""
 
-    if action is ActionKind.READ_PROJECT_FILE:
-        return PermissionResult(
-            PermissionDecision.ALLOW,
-            "Reading project source files is allowed.",
-        )
-
-    if action is ActionKind.ACCESS_CREDENTIALS:
-        return PermissionResult(
-            PermissionDecision.DENY,
-            "Credentials must never be accessed automatically.",
-        )
-
-    if action in {
-        ActionKind.READ_PERSONAL_DATA,
-        ActionKind.WRITE_LOCAL_FILE,
-        ActionKind.BROWSER_NAVIGATION,
-        ActionKind.NETWORK_REQUEST,
-    }:
-        return PermissionResult(
-            PermissionDecision.REQUIRE_APPROVAL,
-            "This action requires explicit user approval.",
-        )
-
-    return PermissionResult(
-        PermissionDecision.DENY,
-        "Unknown actions are denied by default.",
-    )
+    return POLICY_BY_ACTION.get(action, DEFAULT_DENY)
