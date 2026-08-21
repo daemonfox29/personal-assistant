@@ -1,5 +1,6 @@
 """Command-line entry point for the Personal Assistant."""
 
+from personal_assistant.chat import ChatSession
 from personal_assistant.ollama_adapter import OllamaModel
 
 
@@ -11,8 +12,10 @@ def startup_message() -> str:
 def main() -> None:
     """Start the assistant and preload its configured local model."""
     print("Loading the local model...")
-    OllamaModel().warm_up()
+    model = OllamaModel()
+    model.warm_up()
     print(startup_message())
+    ChatSession(model).run()
 
 
 if __name__ == "__main__":
