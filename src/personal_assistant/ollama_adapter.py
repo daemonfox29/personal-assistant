@@ -25,7 +25,8 @@ class OllamaSettings:
 
     base_url: str = "http://127.0.0.1:11434"
     model_name: str = "qwen3:14b"
-    context_tokens: int = 8192
+    context_tokens: int = 4096
+    max_response_tokens: int = 400
     keep_alive: str = "5m"
     timeout_seconds: float = 120.0
 
@@ -132,5 +133,8 @@ class OllamaModel(LanguageModel):
             "stream": stream,
             "think": False,
             "keep_alive": self._settings.keep_alive,
-            "options": {"num_ctx": self._settings.context_tokens},
+            "options": {
+                "num_ctx": self._settings.context_tokens,
+                "num_predict": self._settings.max_response_tokens,
+            },
         }
