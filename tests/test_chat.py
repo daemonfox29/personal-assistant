@@ -66,6 +66,30 @@ class ChatSessionTests(unittest.TestCase):
         self.assertEqual(chunks, ["Assistant: ", "Hello", " back", "\n"])
         write_output.assert_called_with("Goodbye.")
 
+    def test_second_message_receives_the_first_exchange_as_context(self) -> None:
+        model = Mock()
+        model.generate.side_effect = [
+            ModelResponse(text="Russia is a country."),
+            ModelResponse(text="Its economy is mixed."),
+        ]
+
+        ChatSession(
+            model,
+            read_input=Mock(
+                side_effect=[
+                    "Tell me about Russia.",
+                    "What about its economy?",
+                    "quit",
+                ]
+            ),
+            write_output=Mock(),
+        ).run()
+
+        second_request = model.generate.call_args_list[1].args[0]
+        self.assertIn("Tell me about Russia.", second_request.prompt)
+        self.assertIn("Russia is a country.", second_request.prompt)
+        self.assertIn("What about its economy?", second_request.prompt)
+
     def test_long_command_uses_the_long_response_cap(self) -> None:
         model = Mock()
         model.generate.return_value = ModelResponse(text="Long reply")

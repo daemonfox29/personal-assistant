@@ -4,22 +4,23 @@ This document is the handoff point between coding sessions. At the end of each s
 
 ## Current status
 
-- Module 0 foundation is complete: Git safety rules, project documentation, source layout, virtual environment, project metadata, and a basic runnable package are in place.
+- Module 0 is complete: Git safety rules, project documentation, source layout, virtual environment, project metadata, a local model adapter, and a runnable chat are in place.
 - The local permission policy is implemented and covered by automated tests.
 - GitHub Actions runs the test suite after each push to `main`.
 - Runtime personal data, browser state, secrets, logs, databases, and model files remain excluded from Git.
 - The assistant has a replaceable language-model interface and a local Ollama adapter configured for `qwen3:14b`.
 - Starting the command-line assistant starts Ollama if needed, preloads the local model, uses a 4K context window, caps normal responses at 400 tokens, and asks Ollama to unload the model after five idle minutes.
-- A minimal local-only chat interface is working and streams response text as the model generates it. It has no saved conversation memory, tools, browser access, personal-data access, or credential access.
+- Shared defaults and safe machine-local environment overrides are centralized in `config.py`.
+- The local-only chat streams responses and remembers recent turns only in RAM while it is open. It has no persistent memory, tools, browser access, personal-data access, credential access, or web capability.
+- Conversation policy is documented separately from the action-permission policy.
 
 ## Outstanding actions
 
 Work through these in order unless project needs change.
 
-- [ ] Define a separate conversation/topic policy for subjects the user wants the assistant to avoid or handle carefully.
-- [ ] Centralize shared model and connection settings in one configuration module, while keeping machine-specific overrides out of Git.
-- [ ] Add bounded, session-only conversation history so a chat remembers earlier turns only while it remains open.
-- [ ] Design the SQLite data boundary and migrations before storing personal data.
+- [ ] Begin Module 1: design the SQLite data boundary and migrations before storing personal data.
+- [ ] Define the assistant's first tool registry and permission-enforcement path before adding any tool.
+- [ ] Add a web/search tool only behind the tool registry and approval layer.
 
 ## Session history
 
@@ -66,3 +67,18 @@ Completed:
 Next:
 
 - Resume with centralized model and connection settings, then bounded session-only conversation history.
+
+### 2026-08-21 03:21 MDT
+
+Completed:
+
+- Centralized non-secret model, connection, response-budget, and session-history settings in `config.py`, with validated machine-local environment overrides.
+- Added bounded session-only conversation context. Recent turns remain in RAM only and are erased when the app closes.
+- Added and documented response-budget commands: normal (400 tokens), `/long` (1,200), `/max` (2,000), and `/limit` (custom 1–2,000).
+- Added the initial conversation policy, which remains separate from action permissions.
+- Updated the README and architecture guide with current behavior and run instructions.
+- Verified the complete unit suite and a real two-turn local chat: the assistant remembered `pineapple` only within that open session.
+
+Next:
+
+- Module 1 starts with a deliberate SQLite data boundary and migration plan, before any personal information is stored.

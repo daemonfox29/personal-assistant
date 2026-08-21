@@ -1,7 +1,6 @@
 """Local Ollama adapter for the shared language-model contract."""
 
 from collections.abc import Callable, Iterator
-from dataclasses import dataclass
 import json
 from typing import Any
 from urllib.request import Request, urlopen
@@ -12,24 +11,13 @@ from personal_assistant.model import (
     ModelResponse,
     ModelStreamChunk,
 )
+from personal_assistant.config import OllamaSettings
 from personal_assistant.ollama_service import OllamaService, OllamaServiceSettings
 
 
 JsonSender = Callable[[str, dict[str, object], float], dict[str, Any]]
 JsonStreamer = Callable[[str, dict[str, object], float], Iterator[dict[str, Any]]]
 ServiceEnsurer = Callable[[], None]
-
-
-@dataclass(frozen=True)
-class OllamaSettings:
-    """Resource-conscious settings for the local Ollama connection."""
-
-    base_url: str = "http://127.0.0.1:11434"
-    model_name: str = "qwen3:14b"
-    context_tokens: int = 4096
-    max_response_tokens: int = 400
-    keep_alive: str = "5m"
-    timeout_seconds: float = 120.0
 
 
 def _send_json(
