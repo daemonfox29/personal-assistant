@@ -19,8 +19,6 @@ Work through these in order unless project needs change.
 - [ ] Define a separate conversation/topic policy for subjects the user wants the assistant to avoid or handle carefully.
 - [ ] Centralize shared model and connection settings in one configuration module, while keeping machine-specific overrides out of Git.
 - [ ] Add bounded, session-only conversation history so a chat remembers earlier turns only while it remains open.
-- [ ] Build a permission-enforcement gateway that uses the policy before any future tool can act.
-- [ ] Add tests for the enforcement gateway, including approval and denial paths.
 - [ ] Design the SQLite data boundary and migrations before storing personal data.
 
 ## Session history
