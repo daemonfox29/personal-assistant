@@ -22,3 +22,7 @@ The current unknown-action fallback remains `DENY` for safety. The completeness 
 ## Future workflow goal
 
 When a feature is added, use automation to create the standard project pieces while requiring a deliberate review of its security policy before the feature is treated as complete.
+
+## Approval interface
+
+After the Module 0.1 approval-receipt foundation is in place, build a small trusted interface that clearly shows the exact action and arguments before the user approves it. Its approval receipt should be one-use and short-lived, so an assistant cannot silently reuse a previous approval for a different action.

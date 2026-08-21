@@ -10,14 +10,22 @@ This document is the handoff point between coding sessions. At the end of each s
 - Runtime personal data, browser state, secrets, logs, databases, and model files remain excluded from Git.
 - The assistant has a replaceable language-model interface and a local Ollama adapter configured for `qwen3:14b`.
 - Starting the command-line assistant starts Ollama if needed, preloads the local model, uses a 4K context window, caps normal responses at 400 tokens, and asks Ollama to unload the model after five idle minutes.
-- Shared defaults and safe machine-local environment overrides are centralized in `config.py`.
-- The local-only chat streams responses and remembers recent turns only in RAM while it is open. It has no persistent memory, tools, browser access, personal-data access, credential access, or web capability.
+- Shared defaults and machine-local environment overrides are centralized in `config.py`.
+- The local-only chat streams responses and has session-only conversation memory while it is open. It has no persistent memory, tools, browser access, personal-data access, credential access, or web capability.
 - Conversation policy is documented separately from the action-permission policy.
 
 ## Outstanding actions
 
-Work through these in order unless project needs change.
+Work through these in order unless project needs change. Module 1 must wait until the Module 0.1 hardening work below is complete.
 
+- [ ] Module 0.1: enforce a truly local-only Ollama connection. Accept only an explicit loopback HTTP address, and prevent proxy use and HTTP redirects. Keep a future remote-model adapter separate and opt-in.
+- [ ] Module 0.1: make session memory genuinely bounded in RAM, using a token-aware budget that includes the system instruction and current user message. Define predictable handling for one message that is too large.
+- [ ] Module 0.1: replace the temporary `user_approved=True` switch with a one-use, short-lived approval receipt tied to the exact requested action and arguments. Only a trusted interface may issue it; the executor must verify it.
+- [ ] Module 0.1: enforce the 2,000-token response ceiling in the shared model adapter, not only in the command-line chat interface.
+- [ ] Module 0.1: move conversation history to structured `system`, `user`, and `assistant` messages before adding tools, so user text cannot impersonate another role.
+- [ ] Module 0.1: sanitize control characters from model output before printing it to the terminal. Add friendly error handling for unavailable Ollama, missing models, malformed responses, and interrupted startup.
+- [ ] Module 0.1: make warm-up lightweight, improve documentation wording about privacy and in-memory clearing, extend secret-file ignore rules, and harden the GitHub Actions workflow (full action SHA pins and least-privilege checkout settings).
+- [ ] Module 0.1: add focused tests for every hardening rule, run the full suite, and test a real local two-turn chat before beginning Module 1.
 - [ ] Begin Module 1: design the SQLite data boundary and migrations before storing personal data.
 - [ ] Define the assistant's first tool registry and permission-enforcement path before adding any tool.
 - [ ] Add a web/search tool only behind the tool registry and approval layer.
@@ -94,3 +102,15 @@ Session close:
 Next session:
 
 - Begin Module 1 by designing the SQLite data boundary and migrations before storing any personal data.
+
+### 2026-08-21 — Module 0 review follow-up
+
+Completed:
+
+- Performed a read-only security, privacy, correctness, and efficiency review of Module 0.
+- Confirmed the repository was clean, the unit test suite passed, and no tracked secret, database, browser-state, log, or model files were found.
+- Identified no active tool or credential exposure in the present conversation-only app, but identified hardening work required before adding SQLite data, tools, or browser workflows.
+
+Next:
+
+- Complete the ordered Module 0.1 hardening checklist above before Module 1.
