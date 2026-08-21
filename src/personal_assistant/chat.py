@@ -13,6 +13,7 @@ InputReader = Callable[[str], str]
 OutputWriter = Callable[[str], None]
 ChunkWriter = Callable[[str], None]
 EXIT_COMMANDS = frozenset({"exit", "quit"})
+LONG_RESPONSE_COMMAND = "/long"
 
 
 def _write_chunk(text: str) -> None:
@@ -53,10 +54,10 @@ class ChatSession:
                 self._say_goodbye()
                 return
 
-            if not prompt.strip():
+            request = self._request_from_prompt(prompt)
+            if request is None:
                 continue
 
-            request = ModelRequest(prompt=prompt)
             if isinstance(self._model, StreamingLanguageModel):
                 self._stream_response(request)
             else:
@@ -65,9 +66,36 @@ class ChatSession:
 
     def _stream_response(self, request: ModelRequest) -> None:
         self._write_chunk("Assistant: ")
-        for text in self._model.stream_generate(request):
-            self._write_chunk(text)
+        limit_reached = False
+        for chunk in self._model.stream_generate(request):
+            self._write_chunk(chunk.text)
+            limit_reached = limit_reached or chunk.done_reason == "length"
         self._write_chunk("\n")
+        if limit_reached:
+            self._write_output(
+                "[Response stopped at its token limit. Use '/long <question>' "
+                "to allow a longer answer.]"
+            )
+
+    def _request_from_prompt(self, prompt: str) -> ModelRequest | None:
+        """Return a request, or ignore blank input and incomplete commands."""
+
+        stripped_prompt = prompt.strip()
+        if not stripped_prompt:
+            return None
+
+        command, separator, long_prompt = stripped_prompt.partition(" ")
+        if command.lower() != LONG_RESPONSE_COMMAND:
+            return ModelRequest(prompt=prompt)
+
+        if not separator or not long_prompt.strip():
+            self._write_output("Usage: /long <question>")
+            return None
+
+        return ModelRequest(
+            prompt=long_prompt.strip(),
+            max_response_tokens=-1,
+        )
 
     def _say_goodbye(self) -> None:
         self._write_output("Goodbye.")

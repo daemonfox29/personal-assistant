@@ -10,6 +10,7 @@ class ModelRequest:
     """A prompt sent to a language model."""
 
     prompt: str
+    max_response_tokens: int | None = None
 
 
 @dataclass(frozen=True)
@@ -17,6 +18,14 @@ class ModelResponse:
     """Text returned by a language model."""
 
     text: str
+
+
+@dataclass(frozen=True)
+class ModelStreamChunk:
+    """One piece of a streamed response and optional completion metadata."""
+
+    text: str
+    done_reason: str | None = None
 
 
 @runtime_checkable
@@ -31,5 +40,5 @@ class LanguageModel(Protocol):
 class StreamingLanguageModel(Protocol):
     """Optional behavior for adapters that can yield a response in pieces."""
 
-    def stream_generate(self, request: ModelRequest) -> Iterator[str]:
-        """Yield response text as it becomes available."""
+    def stream_generate(self, request: ModelRequest) -> Iterator[ModelStreamChunk]:
+        """Yield response pieces as they become available."""

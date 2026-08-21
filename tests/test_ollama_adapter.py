@@ -3,7 +3,7 @@
 import unittest
 from unittest.mock import Mock
 
-from personal_assistant.model import ModelRequest
+from personal_assistant.model import ModelRequest, ModelStreamChunk
 from personal_assistant.ollama_adapter import OllamaModel, OllamaSettings
 
 
@@ -36,6 +36,11 @@ class OllamaAdapterTests(unittest.TestCase):
                 "prompt": "Hello",
                 "stream": False,
                 "think": False,
+                "system": (
+                    "Answer the user's request completely within 400 tokens or fewer. "
+                    "Be concise. If it cannot fit, provide the most useful complete "
+                    "answer possible and offer to continue."
+                ),
                 "keep_alive": "5m",
                 "options": {"num_ctx": 4096, "num_predict": 400},
             },
@@ -99,7 +104,10 @@ class OllamaAdapterTests(unittest.TestCase):
 
         response_chunks = list(model.stream_generate(ModelRequest(prompt="Hello")))
 
-        self.assertEqual(response_chunks, ["Local", " reply"])
+        self.assertEqual(
+            response_chunks,
+            [ModelStreamChunk(text="Local"), ModelStreamChunk(text=" reply")],
+        )
         payload = stream_json.call_args.args[1]
         self.assertTrue(payload["stream"])
         self.assertFalse(payload["think"])
@@ -107,4 +115,20 @@ class OllamaAdapterTests(unittest.TestCase):
         self.assertEqual(
             payload["options"],
             {"num_ctx": 4096, "num_predict": 400},
+        )
+
+    def test_explicit_long_request_removes_the_response_cap(self) -> None:
+        sender = Mock(return_value={"response": "A longer reply"})
+        model = OllamaModel(send_json=sender, ensure_service=Mock())
+
+        model.generate(
+            ModelRequest(prompt="Explain in detail", max_response_tokens=-1)
+        )
+
+        payload = sender.call_args.args[1]
+        self.assertEqual(payload["options"]["num_predict"], -1)
+        self.assertEqual(
+            payload["system"],
+            "The user explicitly requested an unrestricted-length response. "
+            "Answer as completely as needed.",
         )

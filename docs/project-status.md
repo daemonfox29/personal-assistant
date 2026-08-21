@@ -9,7 +9,7 @@ This document is the handoff point between coding sessions. At the end of each s
 - GitHub Actions runs the test suite after each push to `main`.
 - Runtime personal data, browser state, secrets, logs, databases, and model files remain excluded from Git.
 - The assistant has a replaceable language-model interface and a local Ollama adapter configured for `qwen3:14b`.
-- Starting the command-line assistant starts Ollama if needed, preloads the local model, uses a 4K context window, caps responses at 400 tokens, and asks Ollama to unload the model after five idle minutes.
+- Starting the command-line assistant starts Ollama if needed, preloads the local model, uses a 4K context window, caps normal responses at 400 tokens, and asks Ollama to unload the model after five idle minutes.
 - A minimal local-only chat interface is working and streams response text as the model generates it. It has no saved conversation memory, tools, browser access, personal-data access, or credential access.
 
 ## Outstanding actions
@@ -61,6 +61,7 @@ Completed:
 - Kept the original non-streaming `generate()` path as the shared baseline for simple or future model adapters; streaming is an optional extension.
 - Added automated streaming tests and verified one small response against the real local Ollama model.
 - Optimized the initial performance defaults from an 8K context window to 4K and added a 400-token response cap; both can be changed later in `OllamaSettings`.
+- Added a concise-answer instruction, a visible notice when the model reaches its cap, and an explicit `/long <question>` command for uncapped one-off responses.
 
 Next:
 

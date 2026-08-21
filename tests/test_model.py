@@ -6,6 +6,7 @@ from personal_assistant.model import (
     LanguageModel,
     ModelRequest,
     ModelResponse,
+    ModelStreamChunk,
     StreamingLanguageModel,
 )
 
@@ -21,7 +22,7 @@ class StreamingEchoModel(EchoModel):
     """A test-only model that can return text gradually."""
 
     def stream_generate(self, request: ModelRequest):
-        yield request.prompt
+        yield ModelStreamChunk(text=request.prompt)
 
 
 class ModelContractTests(unittest.TestCase):
@@ -43,4 +44,7 @@ class ModelContractTests(unittest.TestCase):
         model = StreamingEchoModel()
 
         self.assertIsInstance(model, StreamingLanguageModel)
-        self.assertEqual(list(model.stream_generate(ModelRequest(prompt="Hello"))), ["Hello"])
+        self.assertEqual(
+            list(model.stream_generate(ModelRequest(prompt="Hello"))),
+            [ModelStreamChunk(text="Hello")],
+        )
