@@ -82,3 +82,15 @@ Completed:
 Next:
 
 - Module 1 starts with a deliberate SQLite data boundary and migration plan, before any personal information is stored.
+
+### 2026-08-21 03:36 MDT
+
+Session close:
+
+- Reviewed the Module 0 resource tradeoffs: 4K context, bounded session history, streaming, and bounded response budgets.
+- Confirmed the session-memory boundary: older recent context is shortened first, and closing the app clears all session context.
+- Module 0 is ready to be pushed as the completed local-chat foundation.
+
+Next session:
+
+- Begin Module 1 by designing the SQLite data boundary and migrations before storing any personal data.
