@@ -2,7 +2,8 @@
 
 import unittest
 
-from personal_assistant.config import load_settings
+from personal_assistant.config import ChatSettings, OllamaSettings, load_settings
+from personal_assistant.local_http import LocalConnectionError
 
 
 class AppSettingsTests(unittest.TestCase):
@@ -12,7 +13,7 @@ class AppSettingsTests(unittest.TestCase):
         settings = load_settings({})
 
         self.assertEqual(settings.ollama.model_name, "qwen3:14b")
-        self.assertEqual(settings.ollama.context_tokens, 4096)
+        self.assertEqual(settings.ollama.context_tokens, 16384)
         self.assertEqual(settings.chat.session_history_characters, 6000)
 
     def test_environment_can_override_machine_local_settings(self) -> None:
@@ -37,6 +38,47 @@ class AppSettingsTests(unittest.TestCase):
             load_settings(
                 {
                     "PERSONAL_ASSISTANT_LONG_RESPONSE_TOKENS": "1201",
+                    "PERSONAL_ASSISTANT_MAX_RESPONSE_TOKENS": "1200",
+                }
+            )
+
+    def test_remote_ollama_environment_override_is_rejected(self) -> None:
+        with self.assertRaises(LocalConnectionError):
+            load_settings(
+                {"PERSONAL_ASSISTANT_OLLAMA_URL": "http://192.168.1.2:11434"}
+            )
+
+    def test_direct_ollama_settings_reject_a_hostname(self) -> None:
+        with self.assertRaises(LocalConnectionError):
+            OllamaSettings(base_url="http://localhost:11434")
+
+    def test_context_window_can_be_increased_for_another_machine(self) -> None:
+        settings = load_settings(
+            {"PERSONAL_ASSISTANT_CONTEXT_TOKENS": "32768"}
+        )
+
+        self.assertEqual(settings.ollama.context_tokens, 32768)
+
+    def test_default_response_limit_cannot_exceed_hard_ceiling(self) -> None:
+        with self.assertRaises(ValueError):
+            OllamaSettings(max_response_tokens=2001)
+
+    def test_chat_ceiling_cannot_exceed_hard_ceiling(self) -> None:
+        with self.assertRaises(ValueError):
+            ChatSettings(maximum_response_tokens=2001)
+
+    def test_direct_chat_settings_keep_long_limit_below_ceiling(self) -> None:
+        with self.assertRaises(ValueError):
+            ChatSettings(
+                long_response_tokens=1500,
+                maximum_response_tokens=1200,
+            )
+
+    def test_default_limit_cannot_exceed_configured_chat_ceiling(self) -> None:
+        with self.assertRaises(ValueError):
+            load_settings(
+                {
+                    "PERSONAL_ASSISTANT_RESPONSE_TOKENS": "1500",
                     "PERSONAL_ASSISTANT_MAX_RESPONSE_TOKENS": "1200",
                 }
             )

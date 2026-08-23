@@ -89,6 +89,48 @@ behavior the test intends to represent, then make the test double accurately
 model that behavior. If production code remains, its important behavior should
 remain tested.
 
+## 2026-08-23 — Context windows, response ceilings, and audit trails
+
+**Confidence: Building**
+
+### What prompted this
+
+The assistant needs concise responses today, a larger context window on a
+future desktop machine, and enough diagnostic history to explain blocked or
+illegitimate operations.
+
+### What I understand now
+
+The context window and response limit are different controls. The context
+window contains the system instruction, conversation history, current message,
+and generated response. The response ceiling limits only the generated portion.
+The current 16K context window—and a future 32K setting—can therefore provide
+more room for instructions and history while retaining a 2,000-token maximum
+answer.
+
+Natural-language requests to the model are advisory. A token ceiling enforced
+by the application is a real resource boundary. Defaults and individual
+requests can be adjusted below that boundary without allowing a prompt or
+future agent to bypass it.
+
+An audit trail should record security decisions and outcomes, not copy all
+application content. Structured identifiers and reason codes make operations
+traceable, while redaction, rotation, retention, and control-character
+sanitization prevent the log from becoming a privacy or security problem.
+
+### Knowledge gaps to revisit
+
+- How token counting differs among model tokenizers.
+- How the application should reserve input and output space dynamically.
+- How append-only or tamper-evident local audit logs work.
+- How to choose useful retention and rotation limits for a personal assistant.
+
+### Practical takeaway
+
+Increase context capacity and response length independently. Log enough
+structured metadata to explain decisions, but keep prompts, personal content,
+credentials, and unsafe raw strings out of routine audit events.
+
 ## Entry template
 
 Copy this section for future entries:

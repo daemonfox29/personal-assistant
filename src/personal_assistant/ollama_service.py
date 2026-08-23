@@ -5,7 +5,9 @@ from dataclasses import dataclass
 import subprocess
 import time
 from urllib.error import URLError
-from urllib.request import Request, urlopen
+from urllib.request import Request
+
+from personal_assistant.local_http import open_local, validate_loopback_http_url
 
 
 HealthCheck = Callable[[str, float], bool]
@@ -26,6 +28,13 @@ class OllamaServiceSettings:
     startup_attempts: int = 20
     retry_interval_seconds: float = 0.25
 
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "base_url",
+            validate_loopback_http_url(self.base_url, base_url=True),
+        )
+
 
 def _is_available(base_url: str, timeout_seconds: float) -> bool:
     """Return whether Ollama's local service responds without loading a model."""
@@ -33,7 +42,7 @@ def _is_available(base_url: str, timeout_seconds: float) -> bool:
     request = Request(f"{base_url}/api/tags", method="GET")
 
     try:
-        with urlopen(request, timeout=timeout_seconds):
+        with open_local(request, timeout_seconds):
             return True
     except URLError:
         return False

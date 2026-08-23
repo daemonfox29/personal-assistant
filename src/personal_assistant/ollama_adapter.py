@@ -3,15 +3,17 @@
 from collections.abc import Callable, Iterator
 import json
 from typing import Any
-from urllib.request import Request, urlopen
+from urllib.request import Request
 
 from personal_assistant.model import (
     LanguageModel,
     ModelRequest,
     ModelResponse,
     ModelStreamChunk,
+    validate_response_token_limit,
 )
 from personal_assistant.config import OllamaSettings
+from personal_assistant.local_http import open_local
 from personal_assistant.ollama_service import OllamaService, OllamaServiceSettings
 
 
@@ -34,7 +36,7 @@ def _send_json(
         method="POST",
     )
 
-    with urlopen(request, timeout=timeout_seconds) as response:
+    with open_local(request, timeout_seconds) as response:
         return json.loads(response.read())
 
 
@@ -52,7 +54,7 @@ def _stream_json(
         method="POST",
     )
 
-    with urlopen(request, timeout=timeout_seconds) as response:
+    with open_local(request, timeout_seconds) as response:
         for line in response:
             if line.strip():
                 yield json.loads(line)
@@ -134,8 +136,7 @@ class OllamaModel(LanguageModel):
             if request.max_response_tokens is not None
             else self._settings.max_response_tokens
         )
-        if response_limit <= 0:
-            raise ValueError("The response token limit must be a positive number.")
+        validate_response_token_limit(response_limit)
         return {
             "model": self._settings.model_name,
             "prompt": request.prompt,

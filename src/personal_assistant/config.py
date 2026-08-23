@@ -4,6 +4,9 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 import os
 
+from personal_assistant.local_http import validate_loopback_http_url
+from personal_assistant.model import validate_response_token_limit
+
 
 @dataclass(frozen=True)
 class OllamaSettings:
@@ -11,10 +14,18 @@ class OllamaSettings:
 
     base_url: str = "http://127.0.0.1:11434"
     model_name: str = "qwen3:14b"
-    context_tokens: int = 4096
+    context_tokens: int = 16384
     max_response_tokens: int = 400
     keep_alive: str = "5m"
     timeout_seconds: float = 120.0
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "base_url",
+            validate_loopback_http_url(self.base_url, base_url=True),
+        )
+        validate_response_token_limit(self.max_response_tokens)
 
 
 @dataclass(frozen=True)
@@ -25,6 +36,14 @@ class ChatSettings:
     long_response_tokens: int = 1200
     maximum_response_tokens: int = 2000
 
+    def __post_init__(self) -> None:
+        validate_response_token_limit(self.long_response_tokens)
+        validate_response_token_limit(self.maximum_response_tokens)
+        if self.long_response_tokens > self.maximum_response_tokens:
+            raise ValueError(
+                "The long response limit cannot exceed the maximum response limit."
+            )
+
 
 @dataclass(frozen=True)
 class AppSettings:
@@ -32,6 +51,13 @@ class AppSettings:
 
     ollama: OllamaSettings = field(default_factory=OllamaSettings)
     chat: ChatSettings = field(default_factory=ChatSettings)
+
+    def __post_init__(self) -> None:
+        if self.ollama.max_response_tokens > self.chat.maximum_response_tokens:
+            raise ValueError(
+                "The default response limit cannot exceed the maximum response "
+                "limit."
+            )
 
 
 def load_settings(
@@ -60,12 +86,6 @@ def load_settings(
             defaults.chat.maximum_response_tokens,
         ),
     )
-    if chat_settings.long_response_tokens > chat_settings.maximum_response_tokens:
-        raise ValueError(
-            "PERSONAL_ASSISTANT_LONG_RESPONSE_TOKENS cannot exceed "
-            "PERSONAL_ASSISTANT_MAX_RESPONSE_TOKENS."
-        )
-
     return AppSettings(
         ollama=OllamaSettings(
             base_url=environment.get(

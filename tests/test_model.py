@@ -4,6 +4,7 @@ import unittest
 
 from personal_assistant.model import (
     LanguageModel,
+    MAX_RESPONSE_TOKENS,
     ModelRequest,
     ModelResponse,
     ModelStreamChunk,
@@ -48,3 +49,22 @@ class ModelContractTests(unittest.TestCase):
             list(model.stream_generate(ModelRequest(prompt="Hello"))),
             [ModelStreamChunk(text="Hello")],
         )
+
+    def test_request_accepts_the_shared_response_ceiling(self) -> None:
+        request = ModelRequest(
+            prompt="Hello",
+            max_response_tokens=MAX_RESPONSE_TOKENS,
+        )
+
+        self.assertEqual(request.max_response_tokens, 2000)
+
+    def test_request_rejects_a_limit_above_the_shared_ceiling(self) -> None:
+        with self.assertRaises(ValueError):
+            ModelRequest(
+                prompt="Hello",
+                max_response_tokens=MAX_RESPONSE_TOKENS + 1,
+            )
+
+    def test_request_rejects_a_non_positive_limit(self) -> None:
+        with self.assertRaises(ValueError):
+            ModelRequest(prompt="Hello", max_response_tokens=0)

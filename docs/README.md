@@ -5,6 +5,8 @@ This folder holds human-readable notes about the assistant's design, decisions, 
 ## Project references
 
 - [Architecture](architecture.md): components, boundaries, and information flow.
+- [Audit logging](audit-logging.md): safe diagnostic events, redaction, and
+  future local audit-trail requirements.
 - [Conversation policy](conversation-policy.md): rules governing what the
   assistant says.
 - [Project status](project-status.md): current implementation state and session

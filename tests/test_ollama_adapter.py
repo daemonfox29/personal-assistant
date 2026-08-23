@@ -42,7 +42,7 @@ class OllamaAdapterTests(unittest.TestCase):
                     "answer possible and offer to continue."
                 ),
                 "keep_alive": "5m",
-                "options": {"num_ctx": 4096, "num_predict": 400},
+                "options": {"num_ctx": 16384, "num_predict": 400},
             },
             120.0,
         )
@@ -114,7 +114,7 @@ class OllamaAdapterTests(unittest.TestCase):
         self.assertEqual(payload["keep_alive"], "5m")
         self.assertEqual(
             payload["options"],
-            {"num_ctx": 4096, "num_predict": 400},
+            {"num_ctx": 16384, "num_predict": 400},
         )
 
     def test_explicit_long_request_uses_its_response_cap(self) -> None:
@@ -139,3 +139,12 @@ class OllamaAdapterTests(unittest.TestCase):
 
         with self.assertRaises(ValueError):
             model.generate(ModelRequest(prompt="Hello", max_response_tokens=0))
+
+    def test_shared_response_ceiling_is_applied_to_ollama(self) -> None:
+        sender = Mock(return_value={"response": "Maximum reply"})
+        model = OllamaModel(send_json=sender, ensure_service=Mock())
+
+        model.generate(ModelRequest(prompt="Hello", max_response_tokens=2000))
+
+        payload = sender.call_args.args[1]
+        self.assertEqual(payload["options"]["num_predict"], 2000)

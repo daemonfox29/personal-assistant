@@ -51,3 +51,7 @@ class OllamaServiceTests(unittest.TestCase):
 
         with self.assertRaises(OllamaUnavailableError):
             service.ensure_available()
+
+    def test_service_settings_reject_a_remote_address(self) -> None:
+        with self.assertRaises(ValueError):
+            OllamaServiceSettings(base_url="http://10.0.0.5:11434")
