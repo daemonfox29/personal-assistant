@@ -85,6 +85,9 @@ An `.env` file is ignored by Git, but this initial version does not automaticall
 ## Safety principles
 
 - The model never receives unrestricted permission to act.
+- Sensitive actions require an opaque, one-use approval receipt bound to the
+  exact action and arguments. Receipts expire after at most five minutes and
+  can be issued only by the future trusted interface, not by the model.
 - Credentials are entered manually and are never stored in memory or logs.
 - Runtime personal data stays local and is excluded from Git.
 - The Ollama adapter can connect only to an explicit loopback address.

@@ -24,6 +24,9 @@ This document is the handoff point between coding sessions. At the end of each s
 - Session memory retains only complete recent turns within a conservative RAM
   token budget. Model requests use separate system, user, and assistant roles,
   reserve response space, and reject a current message that cannot fit.
+- Approval-required actions use opaque receipts bound to the exact action and
+  canonical arguments. Receipts are consumed on first use and expire within a
+  short hard-limited lifetime.
 
 ## Outstanding actions
 
@@ -31,7 +34,7 @@ Work through these in order unless project needs change. Module 1 must wait unti
 
 - [x] Module 0.1: enforce a truly local-only Ollama connection. Accept only an explicit loopback HTTP address, and prevent proxy use and HTTP redirects. Keep a future remote-model adapter separate and opt-in.
 - [x] Module 0.1: make session memory genuinely bounded in RAM, using a token-aware budget that includes the system instruction and current user message. Define predictable handling for one message that is too large.
-- [ ] Module 0.1: replace the temporary `user_approved=True` switch with a one-use, short-lived approval receipt tied to the exact requested action and arguments. Only a trusted interface may issue it; the executor must verify it.
+- [x] Module 0.1: replace the temporary `user_approved=True` switch with a one-use, short-lived approval receipt tied to the exact requested action and arguments. Only a trusted interface may issue it; the executor must verify it.
 - [x] Module 0.1: enforce the 2,000-token response ceiling in the shared model adapter, not only in the command-line chat interface.
 - [x] Module 0.1: move conversation history to structured `system`, `user`, and `assistant` messages before adding tools, so user text cannot impersonate another role.
 - [ ] Module 0.1: sanitize control characters from model output before printing it to the terminal. Add friendly error handling for unavailable Ollama, missing models, malformed responses, and interrupted startup.
@@ -194,3 +197,23 @@ Next:
 
 - Replace the temporary boolean approval switch with a one-use, short-lived
   receipt tied to the exact action and arguments.
+
+### 2026-08-23 — Exact, one-use approval receipts
+
+Completed:
+
+- Replaced the forgeable `user_approved=True` input with opaque receipts held
+  by an in-process approval authority.
+- Bound each receipt to one action and a canonical digest of its exact
+  arguments, with stable handling for reordered mapping keys.
+- Made every verification attempt consume the receipt, whether it succeeds or
+  fails, and enforced a 60-second default lifetime with a five-minute ceiling.
+- Rejected forged, expired, reused, mismatched, and malformed approvals in
+  focused tests. The complete suite passes with 75 tests.
+- Removed expired unused records during authority activity so the receipt
+  registry does not grow indefinitely.
+
+Next:
+
+- Sanitize terminal control characters and add friendly model/startup error
+  handling.

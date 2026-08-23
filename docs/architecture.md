@@ -8,7 +8,9 @@ This project is a local-first personal AI assistant. It should be useful on one 
 
 The language model can suggest an action, but it cannot perform an external or sensitive action on its own.
 
-A separate permission layer decides whether an action is allowed and asks the user for approval when needed.
+A separate permission layer decides whether an action is allowed. Sensitive
+actions must present a short-lived, one-use receipt issued after a trusted
+interface shows the user the exact action and arguments.
 
 ## Main components
 
@@ -18,7 +20,8 @@ A separate permission layer decides whether an action is allowed and asks the us
 - Memory adapter: reads and writes assistant memory.
 - Data layer: stores canonical personal data in SQLite.
 - Tool layer: defines actions the assistant may request, such as reading a local file or using a browser.
-- Permission layer: evaluates requested actions and requires approval when appropriate.
+- Permission layer: evaluates requested actions and consumes an exact-match
+  approval receipt when appropriate.
 - Audit layer: records sanitized security decisions and workflow outcomes with
   correlation identifiers, without storing conversation or personal content by
   default.
