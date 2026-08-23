@@ -2,6 +2,10 @@
 
 Questions and concepts to return to after the project has more working pieces.
 
+Deeper explanations and personal confidence notes live in the
+[learning journal](learning-journal.md). This file remains the shorter backlog
+of open questions.
+
 ## Tool registry and tool execution
 
 - How does the Python program define the set of tools available to the LLM?
