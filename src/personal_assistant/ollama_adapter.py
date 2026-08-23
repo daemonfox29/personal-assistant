@@ -11,8 +11,6 @@ from personal_assistant.local_http import open_local
 from personal_assistant.model import (
     LanguageModel,
     MalformedModelResponseError,
-    MessageRole,
-    ModelMessage,
     ModelNotFoundError,
     ModelRequest,
     ModelRequestError,
@@ -172,12 +170,30 @@ class OllamaModel(LanguageModel):
         raise ModelRequestError("The local model rejected the request.")
 
     def warm_up(self) -> None:
-        """Load the configured model when the assistant application starts."""
+        """Preload the configured model without evaluating a chat prompt."""
 
         self._ensure_available()
-        self._checked_request(
-            ModelRequest(messages=(ModelMessage(MessageRole.USER, ""),))
-        )
+        try:
+            response = self._send_json(
+                f"{self._settings.base_url}/api/chat",
+                {
+                    "model": self._settings.model_name,
+                    "stream": False,
+                    "keep_alive": self._settings.keep_alive,
+                },
+                self._settings.timeout_seconds,
+            )
+        except HTTPError as error:
+            if error.code == 404:
+                raise ModelNotFoundError(
+                    "The configured local model was not found."
+                ) from error
+            raise ModelRequestError("The local model preload failed.") from error
+        except (OSError, TimeoutError, json.JSONDecodeError) as error:
+            raise ModelRequestError("The local model preload failed.") from error
+        if not isinstance(response, dict):
+            raise MalformedModelResponseError("Malformed model preload response.")
+        self._raise_response_error(response)
 
     def _send_request(self, request: ModelRequest) -> dict[str, Any]:
         return self._send_json(

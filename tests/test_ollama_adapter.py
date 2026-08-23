@@ -97,8 +97,8 @@ class OllamaAdapterTests(unittest.TestCase):
             {"num_ctx": 4096, "num_predict": 200},
         )
 
-    def test_warm_up_loads_the_model_with_the_configured_settings(self) -> None:
-        sender = Mock(return_value={"message": {"content": ""}})
+    def test_warm_up_preloads_without_a_prompt_or_generation_options(self) -> None:
+        sender = Mock(return_value={"done": True})
         ensure_service = Mock()
         model = OllamaModel(
             send_json=sender,
@@ -108,13 +108,15 @@ class OllamaAdapterTests(unittest.TestCase):
         model.warm_up()
 
         ensure_service.assert_called_once_with()
-        payload = sender.call_args.args[1]
-        self.assertEqual(
-            payload["messages"],
-            [{"role": "user", "content": ""}],
+        sender.assert_called_once_with(
+            "http://127.0.0.1:11434/api/chat",
+            {
+                "model": "qwen3:14b",
+                "stream": False,
+                "keep_alive": "5m",
+            },
+            120.0,
         )
-        self.assertEqual(payload["model"], "qwen3:14b")
-        self.assertEqual(payload["keep_alive"], "5m")
 
     def test_stream_generate_yields_each_response_piece(self) -> None:
         stream_json = Mock(

@@ -31,3 +31,8 @@ requests are never auto-armed; they require an explicit merge decision.
 
 To conserve the current Actions budget, the workflow does not run again after
 merge. Post-merge verification can be added later if the risk or budget changes.
+
+Reusable Actions are pinned to immutable commit SHAs. Checkout runs read-only,
+does not persist credentials, and does not fetch submodules or LFS content.
+Superseded runs for the same pull request are cancelled to reduce wasted Actions
+usage. Update a pin only after verifying the corresponding upstream release.

@@ -47,6 +47,11 @@ conversation is held only in RAM for the current session. System, user, and
 assistant messages remain separate data structures; history retains only
 complete recent turns within a conservative token budget.
 
+Closing the process drops the application's history references and no
+conversation database exists yet. This is an application retention boundary,
+not guaranteed physical erasure from Python, Ollama, the operating system,
+swap, backups, or crash diagnostics.
+
 Future versions may add bounded worker agents. Worker agents will receive limited tasks and permissions from the coordinator rather than unrestricted access.
 
 ## Data boundaries

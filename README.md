@@ -23,7 +23,8 @@ From the project folder:
 ./.venv/bin/python -m personal_assistant
 ```
 
-The app starts Ollama if needed, preloads the local Qwen model, then opens a terminal chat.
+The app starts Ollama if needed, sends its documented empty preload request
+without evaluating a chat prompt, then opens a terminal chat.
 
 Model output is treated as untrusted terminal text. Control and invisible
 formatting characters are displayed as escaped code points instead of being
@@ -36,10 +37,12 @@ service details.
 - Type `/max <question>` for up to 2,000 response tokens.
 - Type `/limit <1-2000> <question>` to choose a custom response budget.
 
-Recent chat turns are kept in RAM only while the app is open. Complete turns
-are evicted from oldest to newest when they exceed the configured history
-budget. Closing the app clears that session context; nothing is saved to a
-database yet.
+Recent chat turns are referenced in application RAM only while the app is open.
+Complete turns are evicted from oldest to newest when they exceed the configured
+history budget. Closing the app drops the application's references and the app
+does not deliberately save this conversation to a file or database. Python,
+Ollama, macOS, swap, crash reports, or other system facilities may retain bytes
+temporarily; this is not a claim of secure physical memory erasure.
 
 Conversation roles remain structurally separate when sent to the model, so
 user text cannot become a trusted system or assistant message. The context
@@ -86,7 +89,11 @@ addresses are rejected. Ollama requests ignore environment proxy settings and
 refuse HTTP redirects, so the local adapter cannot be redirected through a
 remote service. A future remote-model adapter must be separate and opt-in.
 
-An `.env` file is ignored by Git, but this initial version does not automatically read it. That avoids adding a dependency or accidentally loading secrets before we need them.
+`.env` variants, private-key containers, credential exports, cookie exports,
+token files, password databases, and the local `secrets/` directory are ignored
+by Git. The initial version does not automatically read an `.env` file. Ignore
+rules reduce accidental commits but are not a secret manager or a substitute
+for reviewing staged changes.
 
 ## Safety principles
 

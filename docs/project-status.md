@@ -13,7 +13,10 @@ This document is the handoff point between coding sessions. At the end of each s
   Post-merge runs are intentionally deferred to conserve Actions usage.
 - Runtime personal data, browser state, secrets, logs, databases, and model files remain excluded from Git.
 - The assistant has a replaceable language-model interface and a local Ollama adapter configured for `qwen3:14b`.
-- Starting the command-line assistant starts Ollama if needed, preloads the local model, uses a 16K context window, caps normal responses at 400 tokens, and asks Ollama to unload the model after five idle minutes.
+- Starting the command-line assistant starts Ollama if needed, uses Ollama's
+  empty-request preload without evaluating a chat prompt, uses a 16K context
+  window for real chats, caps normal responses at 400 tokens, and asks Ollama
+  to unload the model after five idle minutes.
 - Shared defaults and machine-local environment overrides are centralized in `config.py`.
 - The local-only chat streams responses and has session-only conversation memory while it is open. It has no persistent memory, tools, browser access, personal-data access, credential access, or web capability.
 - Conversation policy is documented separately from the action-permission policy.
@@ -44,7 +47,7 @@ Work through these in order unless project needs change. Module 1 must wait unti
 - [x] Module 0.1: enforce the 2,000-token response ceiling in the shared model adapter, not only in the command-line chat interface.
 - [x] Module 0.1: move conversation history to structured `system`, `user`, and `assistant` messages before adding tools, so user text cannot impersonate another role.
 - [x] Module 0.1: sanitize control characters from model output before printing it to the terminal. Add friendly error handling for unavailable Ollama, missing models, malformed responses, and interrupted startup.
-- [ ] Module 0.1: make warm-up lightweight, improve documentation wording about privacy and in-memory clearing, extend secret-file ignore rules, and harden the GitHub Actions workflow (full action SHA pins and least-privilege checkout settings).
+- [x] Module 0.1: make warm-up lightweight, improve documentation wording about privacy and in-memory clearing, extend secret-file ignore rules, and harden the GitHub Actions workflow (full action SHA pins and least-privilege checkout settings).
 - [ ] Module 0.1: add focused tests for every hardening rule, run the full suite, and test a real local two-turn chat before beginning Module 1.
 - [ ] Begin Module 1: design the SQLite data boundary and migrations before storing personal data.
 - [ ] Define the assistant's first tool registry and permission-enforcement path before adding any tool.
@@ -244,6 +247,29 @@ Next:
 
 - Make model warm-up lightweight, tighten privacy/clearing documentation and
   secret ignores, and finish GitHub Actions hardening.
+
+### 2026-08-23 — Lightweight preload and repository hardening
+
+Completed:
+
+- Replaced the empty user-message warm-up with Ollama's documented empty API
+  preload, avoiding chat prompt evaluation and 16K generation options at startup.
+- Clarified that closing the app drops application references and prevents
+  deliberate persistence, but does not promise physical erasure from Python,
+  Ollama, macOS, swap, backups, or crash diagnostics.
+- Expanded ignore coverage for credential exports, key containers, tokens,
+  cookie exports, password databases, SSH keys, and local secret directories.
+- Confirmed reusable workflow actions are immutable SHA pins and checkout uses
+  read-only permissions without persisted credentials; made shallow/no-LFS/
+  no-submodule behavior explicit, bounded auto-merge time, and cancelled stale
+  pull-request runs to conserve Actions usage.
+- Added repository-safety regression tests for secret ignores, immutable action
+  pins, and checkout credentials. The complete suite passes with 92 tests.
+
+Next:
+
+- Complete the final Module 0.1 verification gate, including a real local
+  two-turn chat, before beginning Module 1 persistence design.
 
 ### 2026-08-23 — Security doctrine
 
