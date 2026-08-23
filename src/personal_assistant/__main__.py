@@ -17,7 +17,12 @@ def main() -> None:
     model = OllamaModel(settings.ollama)
     model.warm_up()
     print(startup_message())
-    ChatSession(model, settings.chat).run()
+    ChatSession(
+        model,
+        settings.chat,
+        context_window_tokens=settings.ollama.context_tokens,
+        default_response_tokens=settings.ollama.max_response_tokens,
+    ).run()
 
 
 if __name__ == "__main__":

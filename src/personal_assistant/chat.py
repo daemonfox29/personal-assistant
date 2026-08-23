@@ -6,9 +6,14 @@ from personal_assistant.model import (
     LanguageModel,
     ModelRequest,
     StreamingLanguageModel,
+    response_instruction,
+    validate_response_token_limit,
 )
 from personal_assistant.config import ChatSettings
-from personal_assistant.session_memory import SessionConversationMemory
+from personal_assistant.session_memory import (
+    MessageTooLargeError,
+    SessionConversationMemory,
+)
 
 
 InputReader = Callable[[str], str]
@@ -35,6 +40,8 @@ class ChatSession:
         model: LanguageModel,
         settings: ChatSettings = ChatSettings(),
         *,
+        context_window_tokens: int = 16384,
+        default_response_tokens: int = 400,
         read_input: InputReader = input,
         write_output: OutputWriter = print,
         write_chunk: ChunkWriter = _write_chunk,
@@ -44,8 +51,16 @@ class ChatSession:
         self._write_output = write_output
         self._write_chunk = write_chunk
         self._settings = settings
+        self._context_window_tokens = context_window_tokens
+        self._default_response_tokens = validate_response_token_limit(
+            default_response_tokens
+        )
+        if context_window_tokens <= self._default_response_tokens:
+            raise ValueError(
+                "The context window must leave room for model input."
+            )
         self._memory = SessionConversationMemory(
-            settings.session_history_characters
+            settings.session_history_tokens
         )
 
     def run(self) -> None:
@@ -193,11 +208,31 @@ class ChatSession:
         user_text: str,
         *,
         max_response_tokens: int | None = None,
-    ) -> PreparedRequest:
+    ) -> PreparedRequest | None:
+        response_limit = (
+            self._default_response_tokens
+            if max_response_tokens is None
+            else validate_response_token_limit(max_response_tokens)
+        )
+        input_token_limit = self._context_window_tokens - response_limit
+
+        try:
+            messages = self._memory.messages_for_request(
+                system_text=response_instruction(response_limit),
+                user_text=user_text,
+                input_token_limit=input_token_limit,
+            )
+        except MessageTooLargeError:
+            self._write_output(
+                "That message is too large for the current context window. "
+                "Shorten it and try again."
+            )
+            return None
+
         return (
             ModelRequest(
-                prompt=self._memory.prompt_with_history(user_text),
-                max_response_tokens=max_response_tokens,
+                messages=messages,
+                max_response_tokens=response_limit,
             ),
             user_text,
         )

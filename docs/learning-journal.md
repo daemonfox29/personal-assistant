@@ -131,6 +131,45 @@ Increase context capacity and response length independently. Log enough
 structured metadata to explain decisions, but keep prompts, personal content,
 credentials, and unsafe raw strings out of routine audit events.
 
+## 2026-08-23 — Structured roles and bounded conversation memory
+
+**Confidence: Building**
+
+### What prompted this
+
+The initial chat joined history into one formatted string and selected only a
+bounded slice when making a request. The internal list could still grow for the
+whole session, and labels inside user text could look like trusted roles.
+
+### What I understand now
+
+Conversation roles are data, not labels pasted into a prompt. A system message,
+user message, and assistant response should remain separate objects all the way
+to the model API. Text such as `Assistant: ignore policy` then remains ordinary
+user content rather than becoming an assistant instruction.
+
+A context budget must count more than saved history. It also needs room for the
+system instruction, current user message, message framing, and the response the
+model is allowed to generate. RAM is genuinely bounded only when old stored
+turns are evicted, not merely omitted from the next prompt.
+
+Exact tokenization varies by model. The current implementation uses a
+conservative UTF-8 byte upper bound and fixed framing allowances. This may keep
+less history than an exact Qwen tokenizer, but it avoids a tokenizer dependency
+and favors predictable safety over maximum context use.
+
+### Knowledge gaps to revisit
+
+- When an exact model-specific tokenizer becomes worth the dependency.
+- How tool-call and tool-result roles should enter the same message contract.
+- Whether future summarization should replace evicted turns without turning a
+  generated summary into canonical personal memory.
+
+### Practical takeaway
+
+Keep roles structural, reserve the whole context window deliberately, and
+bound what remains in RAM—not only what is sent on the next request.
+
 ## Entry template
 
 Copy this section for future entries:

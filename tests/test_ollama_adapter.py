@@ -3,8 +3,29 @@
 import unittest
 from unittest.mock import Mock
 
-from personal_assistant.model import ModelRequest, ModelStreamChunk
+from personal_assistant.model import (
+    MessageRole,
+    ModelMessage,
+    ModelRequest,
+    ModelStreamChunk,
+    response_instruction,
+)
 from personal_assistant.ollama_adapter import OllamaModel, OllamaSettings
+
+
+def chat_request(
+    text: str,
+    *,
+    max_response_tokens: int | None = None,
+) -> ModelRequest:
+    response_limit = max_response_tokens or 400
+    return ModelRequest(
+        messages=(
+            ModelMessage(MessageRole.SYSTEM, response_instruction(response_limit)),
+            ModelMessage(MessageRole.USER, text),
+        ),
+        max_response_tokens=max_response_tokens,
+    )
 
 
 class OllamaAdapterTests(unittest.TestCase):
@@ -18,29 +39,30 @@ class OllamaAdapterTests(unittest.TestCase):
         sender.assert_not_called()
 
     def test_generate_uses_the_expected_local_settings(self) -> None:
-        sender = Mock(return_value={"response": "Local reply"})
+        sender = Mock(return_value={"message": {"content": "Local reply"}})
         ensure_service = Mock()
         model = OllamaModel(
             send_json=sender,
             ensure_service=ensure_service,
         )
 
-        response = model.generate(ModelRequest(prompt="Hello"))
+        response = model.generate(chat_request("Hello"))
 
         self.assertEqual(response.text, "Local reply")
         ensure_service.assert_called_once_with()
         sender.assert_called_once_with(
-            "http://127.0.0.1:11434/api/generate",
+            "http://127.0.0.1:11434/api/chat",
             {
                 "model": "qwen3:14b",
-                "prompt": "Hello",
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": response_instruction(400),
+                    },
+                    {"role": "user", "content": "Hello"},
+                ],
                 "stream": False,
                 "think": False,
-                "system": (
-                    "Answer the user's request completely within 400 tokens or fewer. "
-                    "Be concise. If it cannot fit, provide the most useful complete "
-                    "answer possible and offer to continue."
-                ),
                 "keep_alive": "5m",
                 "options": {"num_ctx": 16384, "num_predict": 400},
             },
@@ -48,7 +70,7 @@ class OllamaAdapterTests(unittest.TestCase):
         )
 
     def test_settings_can_be_changed_without_changing_the_adapter(self) -> None:
-        sender = Mock(return_value={"response": "Alternative reply"})
+        sender = Mock(return_value={"message": {"content": "Alternative reply"}})
         settings = OllamaSettings(
             model_name="qwen3:8b",
             context_tokens=4096,
@@ -61,7 +83,7 @@ class OllamaAdapterTests(unittest.TestCase):
             ensure_service=Mock(),
         )
 
-        model.generate(ModelRequest(prompt="Hello"))
+        model.generate(chat_request("Hello", max_response_tokens=200))
 
         payload = sender.call_args.args[1]
         self.assertEqual(payload["model"], "qwen3:8b")
@@ -72,7 +94,7 @@ class OllamaAdapterTests(unittest.TestCase):
         )
 
     def test_warm_up_loads_the_model_with_the_configured_settings(self) -> None:
-        sender = Mock(return_value={"response": ""})
+        sender = Mock(return_value={"message": {"content": ""}})
         ensure_service = Mock()
         model = OllamaModel(
             send_json=sender,
@@ -83,7 +105,10 @@ class OllamaAdapterTests(unittest.TestCase):
 
         ensure_service.assert_called_once_with()
         payload = sender.call_args.args[1]
-        self.assertEqual(payload["prompt"], "")
+        self.assertEqual(
+            payload["messages"],
+            [{"role": "user", "content": ""}],
+        )
         self.assertEqual(payload["model"], "qwen3:14b")
         self.assertEqual(payload["keep_alive"], "5m")
 
@@ -91,8 +116,8 @@ class OllamaAdapterTests(unittest.TestCase):
         stream_json = Mock(
             return_value=iter(
                 [
-                    {"response": "Local"},
-                    {"response": " reply"},
+                    {"message": {"content": "Local"}},
+                    {"message": {"content": " reply"}},
                     {"done": True},
                 ]
             )
@@ -102,7 +127,7 @@ class OllamaAdapterTests(unittest.TestCase):
             ensure_service=Mock(),
         )
 
-        response_chunks = list(model.stream_generate(ModelRequest(prompt="Hello")))
+        response_chunks = list(model.stream_generate(chat_request("Hello")))
 
         self.assertEqual(
             response_chunks,
@@ -118,33 +143,31 @@ class OllamaAdapterTests(unittest.TestCase):
         )
 
     def test_explicit_long_request_uses_its_response_cap(self) -> None:
-        sender = Mock(return_value={"response": "A longer reply"})
+        sender = Mock(return_value={"message": {"content": "A longer reply"}})
         model = OllamaModel(send_json=sender, ensure_service=Mock())
 
         model.generate(
-            ModelRequest(prompt="Explain in detail", max_response_tokens=1200)
+            chat_request("Explain in detail", max_response_tokens=1200)
         )
 
         payload = sender.call_args.args[1]
         self.assertEqual(payload["options"]["num_predict"], 1200)
         self.assertEqual(
-            payload["system"],
-            "Answer the user's request completely within 1200 tokens or fewer. "
-            "Be concise. If it cannot fit, provide the most useful complete "
-            "answer possible and offer to continue.",
+            payload["messages"][0],
+            {"role": "system", "content": response_instruction(1200)},
         )
 
     def test_non_positive_response_cap_is_rejected(self) -> None:
         model = OllamaModel(send_json=Mock(), ensure_service=Mock())
 
         with self.assertRaises(ValueError):
-            model.generate(ModelRequest(prompt="Hello", max_response_tokens=0))
+            model.generate(chat_request("Hello", max_response_tokens=0))
 
     def test_shared_response_ceiling_is_applied_to_ollama(self) -> None:
-        sender = Mock(return_value={"response": "Maximum reply"})
+        sender = Mock(return_value={"message": {"content": "Maximum reply"}})
         model = OllamaModel(send_json=sender, ensure_service=Mock())
 
-        model.generate(ModelRequest(prompt="Hello", max_response_tokens=2000))
+        model.generate(chat_request("Hello", max_response_tokens=2000))
 
         payload = sender.call_args.args[1]
         self.assertEqual(payload["options"]["num_predict"], 2000)

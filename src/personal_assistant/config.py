@@ -32,7 +32,7 @@ class OllamaSettings:
 class ChatSettings:
     """Interaction settings for the local command-line chat."""
 
-    session_history_characters: int = 6000
+    session_history_tokens: int = 6000
     long_response_tokens: int = 1200
     maximum_response_tokens: int = 2000
 
@@ -70,10 +70,10 @@ def load_settings(
     defaults = AppSettings()
 
     chat_settings = ChatSettings(
-        session_history_characters=_positive_integer(
+        session_history_tokens=_positive_integer(
             environment,
-            "PERSONAL_ASSISTANT_HISTORY_CHARACTERS",
-            defaults.chat.session_history_characters,
+            "PERSONAL_ASSISTANT_HISTORY_TOKENS",
+            defaults.chat.session_history_tokens,
         ),
         long_response_tokens=_positive_integer(
             environment,

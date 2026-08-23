@@ -7,6 +7,8 @@ from urllib.request import Request
 
 from personal_assistant.model import (
     LanguageModel,
+    MessageRole,
+    ModelMessage,
     ModelRequest,
     ModelResponse,
     ModelStreamChunk,
@@ -85,7 +87,7 @@ class OllamaModel(LanguageModel):
 
         response = self._send_request(request)
 
-        return ModelResponse(text=response["response"])
+        return ModelResponse(text=response["message"]["content"])
 
     def stream_generate(self, request: ModelRequest) -> Iterator[ModelStreamChunk]:
         """Yield response text as Ollama generates it."""
@@ -93,7 +95,8 @@ class OllamaModel(LanguageModel):
         self._ensure_service()
 
         for response in self._stream_request(request):
-            text = response.get("response", "")
+            message = response.get("message", {})
+            text = message.get("content", "") if isinstance(message, dict) else ""
             done_reason = response.get("done_reason")
             response_text = text if isinstance(text, str) else ""
             completion_reason = (
@@ -109,18 +112,20 @@ class OllamaModel(LanguageModel):
         """Load the configured model when the assistant application starts."""
 
         self._ensure_service()
-        self._send_request(ModelRequest(prompt=""))
+        self._send_request(
+            ModelRequest(messages=(ModelMessage(MessageRole.USER, ""),))
+        )
 
     def _send_request(self, request: ModelRequest) -> dict[str, Any]:
         return self._send_json(
-            f"{self._settings.base_url}/api/generate",
+            f"{self._settings.base_url}/api/chat",
             self._request_payload(request, stream=False),
             self._settings.timeout_seconds,
         )
 
     def _stream_request(self, request: ModelRequest) -> Iterator[dict[str, Any]]:
         return self._stream_json(
-            f"{self._settings.base_url}/api/generate",
+            f"{self._settings.base_url}/api/chat",
             self._request_payload(request, stream=True),
             self._settings.timeout_seconds,
         )
@@ -139,20 +144,15 @@ class OllamaModel(LanguageModel):
         validate_response_token_limit(response_limit)
         return {
             "model": self._settings.model_name,
-            "prompt": request.prompt,
+            "messages": [
+                {"role": message.role.value, "content": message.content}
+                for message in request.messages
+            ],
             "stream": stream,
             "think": False,
-            "system": self._response_instruction(response_limit),
             "keep_alive": self._settings.keep_alive,
             "options": {
                 "num_ctx": self._settings.context_tokens,
                 "num_predict": response_limit,
             },
         }
-
-    def _response_instruction(self, response_limit: int) -> str:
-        return (
-            f"Answer the user's request completely within {response_limit} tokens "
-            "or fewer. Be concise. If it cannot fit, provide the most useful "
-            "complete answer possible and offer to continue."
-        )

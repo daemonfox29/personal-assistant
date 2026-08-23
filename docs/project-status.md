@@ -21,16 +21,19 @@ This document is the handoff point between coding sessions. At the end of each s
   loopback HTTP addresses, ignore environment proxies, and refuse redirects.
 - The shared model request contract enforces a 2,000-token response ceiling;
   normal, long, and machine-local defaults remain configurable beneath it.
+- Session memory retains only complete recent turns within a conservative RAM
+  token budget. Model requests use separate system, user, and assistant roles,
+  reserve response space, and reject a current message that cannot fit.
 
 ## Outstanding actions
 
 Work through these in order unless project needs change. Module 1 must wait until the Module 0.1 hardening work below is complete.
 
 - [x] Module 0.1: enforce a truly local-only Ollama connection. Accept only an explicit loopback HTTP address, and prevent proxy use and HTTP redirects. Keep a future remote-model adapter separate and opt-in.
-- [ ] Module 0.1: make session memory genuinely bounded in RAM, using a token-aware budget that includes the system instruction and current user message. Define predictable handling for one message that is too large.
+- [x] Module 0.1: make session memory genuinely bounded in RAM, using a token-aware budget that includes the system instruction and current user message. Define predictable handling for one message that is too large.
 - [ ] Module 0.1: replace the temporary `user_approved=True` switch with a one-use, short-lived approval receipt tied to the exact requested action and arguments. Only a trusted interface may issue it; the executor must verify it.
 - [x] Module 0.1: enforce the 2,000-token response ceiling in the shared model adapter, not only in the command-line chat interface.
-- [ ] Module 0.1: move conversation history to structured `system`, `user`, and `assistant` messages before adding tools, so user text cannot impersonate another role.
+- [x] Module 0.1: move conversation history to structured `system`, `user`, and `assistant` messages before adding tools, so user text cannot impersonate another role.
 - [ ] Module 0.1: sanitize control characters from model output before printing it to the terminal. Add friendly error handling for unavailable Ollama, missing models, malformed responses, and interrupted startup.
 - [ ] Module 0.1: make warm-up lightweight, improve documentation wording about privacy and in-memory clearing, extend secret-file ignore rules, and harden the GitHub Actions workflow (full action SHA pins and least-privilege checkout settings).
 - [ ] Module 0.1: add focused tests for every hardening rule, run the full suite, and test a real local two-turn chat before beginning Module 1.
@@ -171,3 +174,23 @@ Next:
 
 - Replace character-counted session history with a token-aware RAM budget and
   structured conversation roles in one coordinated change.
+
+### 2026-08-23 — Structured, token-bounded session memory
+
+Completed:
+
+- Replaced flattened prompt strings with explicit system, user, and assistant
+  messages sent through Ollama's chat endpoint.
+- Bounded stored RAM history using complete-turn eviction and a conservative
+  token estimate that reserves room for the current request and response.
+- Added predictable rejection for a current message that cannot fit instead of
+  silently truncating it or sending an oversized request.
+- Added focused role, RAM-budget, request-budget, oversized-message, adapter,
+  and chat tests. The complete suite passes with 65 tests.
+- Verified a real two-turn local Qwen chat retained the session code
+  `cobalt-731` through the structured message path.
+
+Next:
+
+- Replace the temporary boolean approval switch with a one-use, short-lived
+  receipt tied to the exact action and arguments.
