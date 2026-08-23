@@ -28,7 +28,7 @@ A separate permission layer decides whether an action is allowed and asks the us
 
 Current Module 0 chat flow:
 
-User request → command-line interface → session-only RAM context → model adapter → local Ollama model → streamed response
+User request → command-line interface → token-bounded structured messages → model adapter → local Ollama model → streamed response
 
 Future action flow:
 
@@ -36,7 +36,10 @@ User request → coordinator → model and/or tools → permission layer → app
 
 ## Initial scope
 
-The first version uses one local model and a command-line interface. Recent conversation is held only in RAM for the current session.
+The first version uses one local model and a command-line interface. Recent
+conversation is held only in RAM for the current session. System, user, and
+assistant messages remain separate data structures; history retains only
+complete recent turns within a conservative token budget.
 
 Future versions may add bounded worker agents. Worker agents will receive limited tasks and permissions from the coordinator rather than unrestricted access.
 

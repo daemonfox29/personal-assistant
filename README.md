@@ -30,7 +30,16 @@ The app starts Ollama if needed, preloads the local Qwen model, then opens a ter
 - Type `/max <question>` for up to 2,000 response tokens.
 - Type `/limit <1-2000> <question>` to choose a custom response budget.
 
-Recent chat turns are kept in RAM only while the app is open. Closing it clears that session context; nothing is saved to a database yet.
+Recent chat turns are kept in RAM only while the app is open. Complete turns
+are evicted from oldest to newest when they exceed the configured history
+budget. Closing the app clears that session context; nothing is saved to a
+database yet.
+
+Conversation roles remain structurally separate when sent to the model, so
+user text cannot become a trusted system or assistant message. The context
+budget conservatively counts the system instruction, current message, recent
+turns, message framing, and reserved response space. An individual message
+that cannot fit is rejected with a request to shorten it.
 
 The model uses a 400-token normal response budget and an application-wide hard
 ceiling of 2,000 response tokens. Commands and future UI settings may choose a
@@ -61,7 +70,7 @@ Available overrides include:
 - `PERSONAL_ASSISTANT_CONTEXT_TOKENS`
 - `PERSONAL_ASSISTANT_RESPONSE_TOKENS`
 - `PERSONAL_ASSISTANT_KEEP_ALIVE`
-- `PERSONAL_ASSISTANT_HISTORY_CHARACTERS`
+- `PERSONAL_ASSISTANT_HISTORY_TOKENS`
 - `PERSONAL_ASSISTANT_LONG_RESPONSE_TOKENS`
 - `PERSONAL_ASSISTANT_MAX_RESPONSE_TOKENS`
 

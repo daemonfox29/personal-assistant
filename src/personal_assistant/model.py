@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 from collections.abc import Iterator
+from enum import StrEnum
 from typing import Protocol, runtime_checkable
 
 
@@ -20,14 +21,47 @@ def validate_response_token_limit(value: int) -> int:
     return value
 
 
+def response_instruction(response_limit: int) -> str:
+    """Return the shared system instruction for one response budget."""
+
+    validate_response_token_limit(response_limit)
+    return (
+        f"Answer the user's request completely within {response_limit} tokens "
+        "or fewer. Be concise. If it cannot fit, provide the most useful "
+        "complete answer possible and offer to continue."
+    )
+
+
+class MessageRole(StrEnum):
+    """Roles that remain structurally separate in a model request."""
+
+    SYSTEM = "system"
+    USER = "user"
+    ASSISTANT = "assistant"
+
+
+@dataclass(frozen=True)
+class ModelMessage:
+    """One trusted role-tagged message in a model conversation."""
+
+    role: MessageRole
+    content: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.role, MessageRole):
+            raise ValueError("A model message must use a recognized role.")
+
+
 @dataclass(frozen=True)
 class ModelRequest:
-    """A prompt sent to a language model."""
+    """Structured messages sent to a language model."""
 
-    prompt: str
+    messages: tuple[ModelMessage, ...]
     max_response_tokens: int | None = None
 
     def __post_init__(self) -> None:
+        if not self.messages:
+            raise ValueError("A model request must contain at least one message.")
         if self.max_response_tokens is not None:
             validate_response_token_limit(self.max_response_tokens)
 

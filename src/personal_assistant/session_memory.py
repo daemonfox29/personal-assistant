@@ -1,6 +1,28 @@
-"""Temporary in-memory conversation context for one chat session."""
+"""Token-bounded structured conversation context for one chat session."""
 
 from dataclasses import dataclass
+
+from personal_assistant.model import MessageRole, ModelMessage
+
+
+MESSAGE_OVERHEAD_TOKENS = 8
+REQUEST_OVERHEAD_TOKENS = 32
+
+
+class MessageTooLargeError(ValueError):
+    """Raised when the current request cannot fit without conversation history."""
+
+
+def conservative_token_count(text: str) -> int:
+    """Return a safe model-independent upper bound for ordinary text tokens."""
+
+    return len(text.encode("utf-8"))
+
+
+def message_token_count(message: ModelMessage) -> int:
+    """Count conservative content tokens plus role/framing overhead."""
+
+    return conservative_token_count(message.content) + MESSAGE_OVERHEAD_TOKENS
 
 
 @dataclass(frozen=True)
@@ -10,63 +32,79 @@ class ConversationTurn:
     user_text: str
     assistant_text: str
 
+    def messages(self) -> tuple[ModelMessage, ModelMessage]:
+        return (
+            ModelMessage(MessageRole.USER, self.user_text),
+            ModelMessage(MessageRole.ASSISTANT, self.assistant_text),
+        )
+
+    def token_count(self) -> int:
+        return sum(message_token_count(message) for message in self.messages())
+
 
 class SessionConversationMemory:
-    """Keep recent conversation context in RAM and never write it to disk."""
+    """Keep bounded, complete conversation turns in RAM only."""
 
-    def __init__(self, character_limit: int) -> None:
-        if character_limit <= 0:
+    def __init__(self, token_limit: int) -> None:
+        if token_limit <= 0:
             raise ValueError("The session history limit must be greater than zero.")
 
-        self._character_limit = character_limit
+        self._token_limit = token_limit
+        self._stored_tokens = 0
         self._turns: list[ConversationTurn] = []
 
     def add_turn(self, user_text: str, assistant_text: str) -> None:
-        """Remember a completed exchange for the rest of this session only."""
+        """Remember a completed exchange without exceeding the RAM budget."""
 
-        self._turns.append(
-            ConversationTurn(
-                user_text=user_text,
-                assistant_text=assistant_text,
+        turn = ConversationTurn(user_text, assistant_text)
+        turn_tokens = turn.token_count()
+
+        if turn_tokens > self._token_limit:
+            self._turns.clear()
+            self._stored_tokens = 0
+            return
+
+        self._turns.append(turn)
+        self._stored_tokens += turn_tokens
+
+        while self._stored_tokens > self._token_limit:
+            removed_turn = self._turns.pop(0)
+            self._stored_tokens -= removed_turn.token_count()
+
+    def messages_for_request(
+        self,
+        *,
+        system_text: str,
+        user_text: str,
+        input_token_limit: int,
+    ) -> tuple[ModelMessage, ...]:
+        """Return complete recent turns that fit with system and user messages."""
+
+        system_message = ModelMessage(MessageRole.SYSTEM, system_text)
+        user_message = ModelMessage(MessageRole.USER, user_text)
+        required_tokens = (
+            REQUEST_OVERHEAD_TOKENS
+            + message_token_count(system_message)
+            + message_token_count(user_message)
+        )
+
+        if required_tokens > input_token_limit:
+            raise MessageTooLargeError(
+                "The system instruction and current message exceed the input budget."
             )
-        )
 
-    def prompt_with_history(self, user_text: str) -> str:
-        """Add the most recent conversation turns before a new user message."""
-
-        history = self._recent_history()
-        if not history:
-            return user_text
-
-        return (
-            "Recent conversation context:\n"
-            f"{history}\n"
-            "Current user message:\n"
-            f"{user_text}"
-        )
-
-    def _recent_history(self) -> str:
-        selected_turns: list[str] = []
-        selected_characters = 0
+        selected_turns: list[ConversationTurn] = []
+        selected_tokens = required_tokens
 
         for turn in reversed(self._turns):
-            formatted_turn = (
-                f"User: {turn.user_text}\n"
-                f"Assistant: {turn.assistant_text}\n"
-            )
-            remaining_characters = self._character_limit - selected_characters
-            if remaining_characters <= 0:
+            turn_tokens = turn.token_count()
+            if selected_tokens + turn_tokens > input_token_limit:
                 break
+            selected_turns.append(turn)
+            selected_tokens += turn_tokens
 
-            if len(formatted_turn) <= remaining_characters:
-                selected_turns.append(formatted_turn)
-                selected_characters += len(formatted_turn)
-                continue
-
-            selected_turns.append(
-                "[Earlier context was shortened]\n"
-                + formatted_turn[-remaining_characters:]
-            )
-            break
-
-        return "".join(reversed(selected_turns))
+        messages: list[ModelMessage] = [system_message]
+        for turn in reversed(selected_turns):
+            messages.extend(turn.messages())
+        messages.append(user_message)
+        return tuple(messages)

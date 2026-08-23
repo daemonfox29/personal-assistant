@@ -14,19 +14,21 @@ class AppSettingsTests(unittest.TestCase):
 
         self.assertEqual(settings.ollama.model_name, "qwen3:14b")
         self.assertEqual(settings.ollama.context_tokens, 16384)
-        self.assertEqual(settings.chat.session_history_characters, 6000)
+        self.assertEqual(settings.chat.session_history_tokens, 6000)
 
     def test_environment_can_override_machine_local_settings(self) -> None:
         settings = load_settings(
             {
                 "PERSONAL_ASSISTANT_MODEL_NAME": "qwen3:8b",
                 "PERSONAL_ASSISTANT_CONTEXT_TOKENS": "2048",
+                "PERSONAL_ASSISTANT_HISTORY_TOKENS": "1000",
                 "PERSONAL_ASSISTANT_LONG_RESPONSE_TOKENS": "900",
             }
         )
 
         self.assertEqual(settings.ollama.model_name, "qwen3:8b")
         self.assertEqual(settings.ollama.context_tokens, 2048)
+        self.assertEqual(settings.chat.session_history_tokens, 1000)
         self.assertEqual(settings.chat.long_response_tokens, 900)
 
     def test_non_positive_environment_value_is_rejected(self) -> None:
