@@ -13,7 +13,10 @@ A modular, local-first personal AI assistant built in Python.
 
 ## Project status
 
-Module 0 is complete: a safe local chat foundation with replaceable components.
+Module 0 and its Module 0.1 hardening gate are complete: a tested local chat
+foundation with replaceable components and deterministic safety boundaries.
+Module 1 persistence design is next; tools and persistent personal data are not
+enabled yet.
 
 ## Run the local chat
 
@@ -23,17 +26,26 @@ From the project folder:
 ./.venv/bin/python -m personal_assistant
 ```
 
-The app starts Ollama if needed, preloads the local Qwen model, then opens a terminal chat.
+The app starts Ollama if needed, sends its documented empty preload request
+without evaluating a chat prompt, then opens a terminal chat.
+
+Model output is treated as untrusted terminal text. Control and invisible
+formatting characters are displayed as escaped code points instead of being
+executed by the terminal. Expected Ollama, model, response, configuration, and
+interruption failures produce short user-safe messages without exposing raw
+service details.
 
 - Type `quit` or `exit` to close the app.
 - Type `/long <question>` for up to 1,200 response tokens.
 - Type `/max <question>` for up to 2,000 response tokens.
 - Type `/limit <1-2000> <question>` to choose a custom response budget.
 
-Recent chat turns are kept in RAM only while the app is open. Complete turns
-are evicted from oldest to newest when they exceed the configured history
-budget. Closing the app clears that session context; nothing is saved to a
-database yet.
+Recent chat turns are referenced in application RAM only while the app is open.
+Complete turns are evicted from oldest to newest when they exceed the configured
+history budget. Closing the app drops the application's references and the app
+does not deliberately save this conversation to a file or database. Python,
+Ollama, macOS, swap, crash reports, or other system facilities may retain bytes
+temporarily; this is not a claim of secure physical memory erasure.
 
 Conversation roles remain structurally separate when sent to the model, so
 user text cannot become a trusted system or assistant message. The context
@@ -80,11 +92,22 @@ addresses are rejected. Ollama requests ignore environment proxy settings and
 refuse HTTP redirects, so the local adapter cannot be redirected through a
 remote service. A future remote-model adapter must be separate and opt-in.
 
-An `.env` file is ignored by Git, but this initial version does not automatically read it. That avoids adding a dependency or accidentally loading secrets before we need them.
+`.env` variants, private-key containers, credential exports, cookie exports,
+token files, password databases, and the local `secrets/` directory are ignored
+by Git. The initial version does not automatically read an `.env` file. Ignore
+rules reduce accidental commits but are not a secret manager or a substitute
+for reviewing staged changes.
 
 ## Safety principles
 
+The complete project doctrine and review checklist live in
+[`docs/security-principles.md`](docs/security-principles.md). These assumptions
+govern future model, memory, browser, tool, data, interface, and audit choices.
+
 - The model never receives unrestricted permission to act.
+- Sensitive actions require an opaque, one-use approval receipt bound to the
+  exact action and arguments. Receipts expire after at most five minutes and
+  can be issued only by the future trusted interface, not by the model.
 - Credentials are entered manually and are never stored in memory or logs.
 - Runtime personal data stays local and is excluded from Git.
 - The Ollama adapter can connect only to an explicit loopback address.

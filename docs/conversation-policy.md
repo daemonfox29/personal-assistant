@@ -12,10 +12,15 @@ A harmless conversation response must never grant access to files, personal data
 - It responds only after the user enters a prompt. It does not start background tasks or act on its own.
 - It is given a response budget and is asked to finish its answer within that budget.
 - It retains token-bounded recent conversation context only while the
-  command-line app remains open. Closing the app erases that context.
+  command-line app remains open. Closing the app drops the application's
+  references; this is not guaranteed physical erasure from process or operating
+  system memory.
 - System, user, and assistant roles remain structurally separate. Text entered
   by a user cannot promote itself into a trusted role by including labels such
   as `System:` or `Assistant:`.
+- Model output is sanitized at the terminal boundary. Newlines and tabs remain
+  readable, while control characters, invisible formatting characters, and
+  variation selectors are exposed as literal Unicode code points.
 - The application does not currently impose topic-specific content rules. The selected local model may still have its own behavior or limitations, which the application does not claim to override.
 
 ## Future topic decisions

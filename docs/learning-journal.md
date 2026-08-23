@@ -189,6 +189,78 @@ bound what remains in RAM—not only what is sent on the next request. Treat
 structured roles as one defense layer, while keeping action authorization in a
 separate permission system that model-generated text cannot bypass.
 
+## 2026-08-23 — Approval receipts versus approval booleans
+
+**Confidence: Building**
+
+### What prompted this
+
+The first authorization gateway accepted `user_approved=True`. That boolean
+said approval happened, but it did not prove what the user approved, when they
+approved it, or whether the same approval had already been used.
+
+### What I understand now
+
+An approval receipt is a narrow, temporary capability. The trusted interface
+issues an unpredictable opaque token only after showing the exact action and
+arguments to the user. The authority stores the approved action, a canonical
+digest of its arguments, and an expiration time. The executor must present the
+same token for the same request.
+
+The receipt is removed on its first verification attempt, even if the action
+or arguments do not match. It therefore cannot be replayed after success or
+recovered after someone tries to redirect it. A forged random token has no
+matching authority record, and an expired token fails closed.
+
+The model should never own the approval authority or call its issue method.
+Otherwise, it could approve its own requests and the security boundary would
+be meaningless. A future trusted interface will show the action to the user
+and issue the receipt; the executor will only verify and consume it.
+
+### Knowledge gaps to revisit
+
+- How the trusted UI should display complex arguments clearly enough for
+  informed approval.
+- When separate processes would require signed receipts instead of an
+  in-memory authority registry.
+- Which receipt outcomes should enter the redacted audit trail.
+
+### Practical takeaway
+
+Approval should authorize one precisely described operation, once, for a short
+time. A general yes/no flag is not durable proof of user intent.
+
+## 2026-08-23 — Model output is untrusted terminal input
+
+**Confidence: Building**
+
+### What prompted this
+
+A local model normally returns readable text, but it can also return terminal
+control sequences, invisible Unicode formatting, malformed JSON, or low-level
+service errors. Printing those values directly would let untrusted output alter
+the display or expose machine details.
+
+### What I understand now
+
+The terminal is another execution boundary. An escape character can clear the
+screen, rewrite a title, move the cursor, or disguise what was printed even
+though it looks like ordinary text in Python. The output boundary now preserves
+useful newlines and tabs but displays unsafe controls and invisible formatting
+as literal Unicode code points.
+
+Expected failures should also cross a typed boundary. The Ollama adapter
+classifies unavailable service, missing model, failed request, and malformed
+response conditions. The interface prints fixed user-safe messages instead of
+raw exception text, while unexpected programming bugs remain visible during
+development rather than being hidden by a catch-all handler.
+
+### Practical takeaway
+
+Local does not automatically mean trusted. Validate model responses, sanitize
+their output at the final renderer, and expose only the minimum safe error
+category to the user.
+
 ## Entry template
 
 Copy this section for future entries:

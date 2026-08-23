@@ -4,13 +4,17 @@ import unittest
 from unittest.mock import Mock
 
 from personal_assistant.model import (
+    MalformedModelResponseError,
     MessageRole,
     ModelMessage,
     ModelRequest,
     ModelStreamChunk,
+    ModelNotFoundError,
+    ModelUnavailableError,
     response_instruction,
 )
 from personal_assistant.ollama_adapter import OllamaModel, OllamaSettings
+from personal_assistant.ollama_service import OllamaUnavailableError
 
 
 def chat_request(
@@ -93,8 +97,8 @@ class OllamaAdapterTests(unittest.TestCase):
             {"num_ctx": 4096, "num_predict": 200},
         )
 
-    def test_warm_up_loads_the_model_with_the_configured_settings(self) -> None:
-        sender = Mock(return_value={"message": {"content": ""}})
+    def test_warm_up_preloads_without_a_prompt_or_generation_options(self) -> None:
+        sender = Mock(return_value={"done": True})
         ensure_service = Mock()
         model = OllamaModel(
             send_json=sender,
@@ -104,13 +108,15 @@ class OllamaAdapterTests(unittest.TestCase):
         model.warm_up()
 
         ensure_service.assert_called_once_with()
-        payload = sender.call_args.args[1]
-        self.assertEqual(
-            payload["messages"],
-            [{"role": "user", "content": ""}],
+        sender.assert_called_once_with(
+            "http://127.0.0.1:11434/api/chat",
+            {
+                "model": "qwen3:14b",
+                "stream": False,
+                "keep_alive": "5m",
+            },
+            120.0,
         )
-        self.assertEqual(payload["model"], "qwen3:14b")
-        self.assertEqual(payload["keep_alive"], "5m")
 
     def test_stream_generate_yields_each_response_piece(self) -> None:
         stream_json = Mock(
@@ -171,3 +177,37 @@ class OllamaAdapterTests(unittest.TestCase):
 
         payload = sender.call_args.args[1]
         self.assertEqual(payload["options"]["num_predict"], 2000)
+
+    def test_missing_model_error_is_classified_without_exposing_raw_text(self) -> None:
+        model = OllamaModel(
+            send_json=Mock(return_value={"error": "model qwen-secret not found"}),
+            ensure_service=Mock(),
+        )
+
+        with self.assertRaises(ModelNotFoundError):
+            model.generate(chat_request("Hello"))
+
+    def test_malformed_non_streaming_response_is_rejected(self) -> None:
+        model = OllamaModel(
+            send_json=Mock(return_value={"message": {"content": 42}}),
+            ensure_service=Mock(),
+        )
+
+        with self.assertRaises(MalformedModelResponseError):
+            model.generate(chat_request("Hello"))
+
+    def test_malformed_streaming_response_is_rejected(self) -> None:
+        model = OllamaModel(
+            stream_json=Mock(return_value=iter([{"message": "not-an-object"}])),
+            ensure_service=Mock(),
+        )
+
+        with self.assertRaises(MalformedModelResponseError):
+            list(model.stream_generate(chat_request("Hello")))
+
+    def test_unavailable_service_is_translated_to_model_boundary_error(self) -> None:
+        ensure_service = Mock(side_effect=OllamaUnavailableError("internal detail"))
+        model = OllamaModel(ensure_service=ensure_service)
+
+        with self.assertRaises(ModelUnavailableError):
+            model.generate(chat_request("Hello"))

@@ -5,6 +5,8 @@ This folder holds human-readable notes about the assistant's design, decisions, 
 ## Project references
 
 - [Architecture](architecture.md): components, boundaries, and information flow.
+- [Security principles](security-principles.md): the threat assumptions and
+  decision rules that govern every capability.
 - [Audit logging](audit-logging.md): safe diagnostic events, redaction, and
   future local audit-trail requirements.
 - [Conversation policy](conversation-policy.md): rules governing what the

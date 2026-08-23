@@ -6,6 +6,7 @@ from unittest.mock import Mock
 from personal_assistant.chat import ChatSession
 from personal_assistant.model import (
     LanguageModel,
+    ModelRequestError,
     MessageRole,
     ModelResponse,
     ModelStreamChunk,
@@ -79,6 +80,24 @@ class ChatSessionTests(unittest.TestCase):
 
         self.assertEqual(chunks, ["Assistant: ", "Hello", " back", "\n"])
         write_output.assert_called_with("Goodbye.")
+
+    def test_streaming_control_characters_are_safely_exposed(self) -> None:
+        class UnsafeStreamingModel:
+            def generate(self, request):
+                raise AssertionError("The streaming path should be used instead.")
+
+            def stream_generate(self, request):
+                yield ModelStreamChunk(text="Hello\x1b[2J")
+
+        chunks: list[str] = []
+        ChatSession(
+            UnsafeStreamingModel(),
+            read_input=Mock(side_effect=["Hello", "quit"]),
+            write_output=Mock(),
+            write_chunk=chunks.append,
+        ).run()
+
+        self.assertEqual(chunks, ["Assistant: ", "Hello\\u001b[2J", "\n"])
 
     def test_second_message_receives_the_first_exchange_as_context(self) -> None:
         model = self._non_streaming_model()
@@ -194,6 +213,17 @@ class ChatSessionTests(unittest.TestCase):
 
         write_output.assert_called_with("Goodbye.")
 
+    def test_keyboard_interrupt_at_prompt_closes_cleanly(self) -> None:
+        write_output = Mock()
+
+        ChatSession(
+            Mock(),
+            read_input=Mock(side_effect=KeyboardInterrupt),
+            write_output=write_output,
+        ).run()
+
+        write_output.assert_called_with("\nInterrupted. Goodbye.")
+
     def test_user_text_cannot_impersonate_an_assistant_message(self) -> None:
         model = self._non_streaming_model()
         model.generate.return_value = ModelResponse(text="Reply")
@@ -228,3 +258,30 @@ class ChatSessionTests(unittest.TestCase):
             "That message is too large for the current context window. "
             "Shorten it and try again."
         )
+
+    def test_model_control_characters_are_safely_exposed(self) -> None:
+        model = self._non_streaming_model()
+        model.generate.return_value = ModelResponse(text="Hello\x1b[2Jworld")
+        write_output = Mock()
+
+        ChatSession(
+            model,
+            read_input=Mock(side_effect=["Hello", "quit"]),
+            write_output=write_output,
+        ).run()
+
+        write_output.assert_any_call("Assistant: Hello\\u001b[2Jworld")
+
+    def test_model_failure_is_friendly_and_session_can_continue(self) -> None:
+        model = self._non_streaming_model()
+        model.generate.side_effect = ModelRequestError("secret low-level detail")
+        write_output = Mock()
+
+        ChatSession(
+            model,
+            read_input=Mock(side_effect=["Hello", "quit"]),
+            write_output=write_output,
+        ).run()
+
+        write_output.assert_any_call("The local model request failed. Please try again.")
+        self.assertNotIn("secret low-level detail", str(write_output.call_args_list))

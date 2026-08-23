@@ -9,6 +9,26 @@ from typing import Protocol, runtime_checkable
 MAX_RESPONSE_TOKENS = 2000
 
 
+class ModelError(RuntimeError):
+    """A safe, expected failure at the language-model boundary."""
+
+
+class ModelUnavailableError(ModelError):
+    """The configured model service cannot currently be reached."""
+
+
+class ModelNotFoundError(ModelError):
+    """The configured model is not installed or available."""
+
+
+class MalformedModelResponseError(ModelError):
+    """The model service returned data that violates the adapter contract."""
+
+
+class ModelRequestError(ModelError):
+    """The model request failed for another safe-to-report reason."""
+
+
 def validate_response_token_limit(value: int) -> int:
     """Return a valid response limit or reject values outside the hard ceiling."""
 
@@ -42,7 +62,7 @@ class MessageRole(StrEnum):
 
 @dataclass(frozen=True)
 class ModelMessage:
-    """One trusted role-tagged message in a model conversation."""
+    """One structurally role-tagged message in a model conversation."""
 
     role: MessageRole
     content: str

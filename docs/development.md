@@ -1,5 +1,11 @@
 # Development Notes
 
+## Security review
+
+Before implementing or approving a new capability, apply the checklist in
+[`security-principles.md`](security-principles.md). A feature that cannot answer
+those questions is not ready to receive real authority.
+
 ## Before committing a project-level change
 
 Review `pyproject.toml` whenever a change:
@@ -25,3 +31,8 @@ requests are never auto-armed; they require an explicit merge decision.
 
 To conserve the current Actions budget, the workflow does not run again after
 merge. Post-merge verification can be added later if the risk or budget changes.
+
+Reusable Actions are pinned to immutable commit SHAs. Checkout runs read-only,
+does not persist credentials, and does not fetch submodules or LFS content.
+Superseded runs for the same pull request are cancelled to reduce wasted Actions
+usage. Update a pin only after verifying the corresponding upstream release.

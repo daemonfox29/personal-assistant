@@ -76,7 +76,10 @@ class OllamaService:
         if self._is_available():
             return
 
-        self._launch_service()
+        try:
+            self._launch_service()
+        except (OSError, subprocess.SubprocessError) as error:
+            raise OllamaUnavailableError("Ollama could not be started.") from error
 
         for _ in range(self._settings.startup_attempts):
             self._sleep(self._settings.retry_interval_seconds)

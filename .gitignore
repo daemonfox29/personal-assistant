@@ -239,6 +239,25 @@ dist/
 !.env.example
 *.pem
 *.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+*.kdbx
+*.token
+*.secret
+.secrets
+.secrets.*
+.netrc
+credentials.json
+credentials.*.json
+service-account*.json
+cookies*.json
+auth.json
+id_rsa
+id_rsa.*
+id_ed25519
+id_ed25519.*
 secrets/
 config/local.*
 
