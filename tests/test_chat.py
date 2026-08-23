@@ -4,7 +4,11 @@ import unittest
 from unittest.mock import Mock
 
 from personal_assistant.chat import ChatSession
-from personal_assistant.model import ModelResponse, ModelStreamChunk
+from personal_assistant.model import (
+    LanguageModel,
+    ModelResponse,
+    ModelStreamChunk,
+)
 
 
 class StreamingTestModel:
@@ -21,8 +25,14 @@ class StreamingTestModel:
 class ChatSessionTests(unittest.TestCase):
     """Verify input is sent to the model and exit remains local."""
 
+    @staticmethod
+    def _non_streaming_model() -> Mock:
+        """Return a test double that implements only the base model contract."""
+
+        return Mock(spec=LanguageModel)
+
     def test_message_is_sent_to_the_model_and_answer_is_displayed(self) -> None:
-        model = Mock()
+        model = self._non_streaming_model()
         model.generate.return_value = ModelResponse(text="Hello back")
         read_input = Mock(side_effect=["Hello", "quit"])
         write_output = Mock()
@@ -38,7 +48,7 @@ class ChatSessionTests(unittest.TestCase):
         write_output.assert_called_with("Goodbye.")
 
     def test_empty_message_is_not_sent_to_the_model(self) -> None:
-        model = Mock()
+        model = self._non_streaming_model()
         read_input = Mock(side_effect=["   ", "exit"])
         write_output = Mock()
 
@@ -67,7 +77,7 @@ class ChatSessionTests(unittest.TestCase):
         write_output.assert_called_with("Goodbye.")
 
     def test_second_message_receives_the_first_exchange_as_context(self) -> None:
-        model = Mock()
+        model = self._non_streaming_model()
         model.generate.side_effect = [
             ModelResponse(text="Russia is a country."),
             ModelResponse(text="Its economy is mixed."),
@@ -91,7 +101,7 @@ class ChatSessionTests(unittest.TestCase):
         self.assertIn("What about its economy?", second_request.prompt)
 
     def test_long_command_uses_the_long_response_cap(self) -> None:
-        model = Mock()
+        model = self._non_streaming_model()
         model.generate.return_value = ModelResponse(text="Long reply")
         read_input = Mock(side_effect=["/long Explain the history", "quit"])
 
@@ -102,7 +112,7 @@ class ChatSessionTests(unittest.TestCase):
         self.assertEqual(request.max_response_tokens, 1200)
 
     def test_max_command_uses_the_largest_response_cap(self) -> None:
-        model = Mock()
+        model = self._non_streaming_model()
         model.generate.return_value = ModelResponse(text="Custom reply")
         read_input = Mock(side_effect=["/max Explain the topic", "quit"])
 
@@ -113,7 +123,7 @@ class ChatSessionTests(unittest.TestCase):
         self.assertEqual(request.max_response_tokens, 2000)
 
     def test_limit_command_uses_a_custom_response_cap(self) -> None:
-        model = Mock()
+        model = self._non_streaming_model()
         model.generate.return_value = ModelResponse(text="Custom reply")
         read_input = Mock(side_effect=["/limit 800 Explain the topic", "quit"])
 
@@ -124,7 +134,7 @@ class ChatSessionTests(unittest.TestCase):
         self.assertEqual(request.max_response_tokens, 800)
 
     def test_limit_command_rejects_a_limit_above_2000(self) -> None:
-        model = Mock()
+        model = self._non_streaming_model()
         write_output = Mock()
 
         ChatSession(
