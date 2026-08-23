@@ -34,3 +34,10 @@ Implement the bounded, redacted local audit writer described in
 The audit trail should diagnose blocked redirects, permission decisions,
 approval receipts, tool execution, and database operations without recording
 prompts, responses, credentials, or personal record content by default.
+
+## Post-merge CI verification
+
+If the project risk or GitHub Actions budget increases, add a `push` trigger for
+`main` so the test suite verifies the exact merged commit. The current workflow
+runs only on pull requests targeting `main`, avoiding a duplicate job for every
+merge while the project has a limited Actions budget.

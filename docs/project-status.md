@@ -6,7 +6,10 @@ This document is the handoff point between coding sessions. At the end of each s
 
 - Module 0 is complete: Git safety rules, project documentation, source layout, virtual environment, project metadata, a local model adapter, and a runnable chat are in place.
 - The local permission policy is implemented and covered by automated tests.
-- GitHub Actions runs the test suite after each push to `main`.
+- GitHub Actions is configured to test pull requests targeting `main` before
+  merge. Repository branch protection still needs to require the `Tests / test`
+  check and block direct pushes. Post-merge runs are intentionally deferred to
+  conserve the current Actions budget.
 - Runtime personal data, browser state, secrets, logs, databases, and model files remain excluded from Git.
 - The assistant has a replaceable language-model interface and a local Ollama adapter configured for `qwen3:14b`.
 - Starting the command-line assistant starts Ollama if needed, preloads the local model, uses a 16K context window, caps normal responses at 400 tokens, and asks Ollama to unload the model after five idle minutes.
