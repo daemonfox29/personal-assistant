@@ -8,7 +8,8 @@ This document is the handoff point between coding sessions. At the end of each s
 - The local permission policy is implemented and covered by automated tests.
 - GitHub Actions is configured to test pull requests targeting `main` before
   merge. The public repository has an active ruleset requiring the `test`
-  check and blocking force pushes and deletion, with auto-merge enabled.
+  check and blocking force pushes and deletion. Non-draft pull requests from
+  the repository owner's own branches automatically enable squash auto-merge.
   Post-merge runs are intentionally deferred to conserve Actions usage.
 - Runtime personal data, browser state, secrets, logs, databases, and model files remain excluded from Git.
 - The assistant has a replaceable language-model interface and a local Ollama adapter configured for `qwen3:14b`.
