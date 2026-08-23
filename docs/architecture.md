@@ -12,6 +12,9 @@ A separate permission layer decides whether an action is allowed. Sensitive
 actions must present a short-lived, one-use receipt issued after a trusted
 interface shows the user the exact action and arguments.
 
+All components and future capabilities must follow the threat assumptions and
+review questions in [Security Principles](security-principles.md).
+
 ## Main components
 
 - Interface: how I communicate with the assistant.

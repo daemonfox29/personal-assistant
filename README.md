@@ -84,6 +84,10 @@ An `.env` file is ignored by Git, but this initial version does not automaticall
 
 ## Safety principles
 
+The complete project doctrine and review checklist live in
+[`docs/security-principles.md`](docs/security-principles.md). These assumptions
+govern future model, memory, browser, tool, data, interface, and audit choices.
+
 - The model never receives unrestricted permission to act.
 - Sensitive actions require an opaque, one-use approval receipt bound to the
   exact action and arguments. Receipts expire after at most five minutes and

@@ -1,5 +1,11 @@
 # Development Notes
 
+## Security review
+
+Before implementing or approving a new capability, apply the checklist in
+[`security-principles.md`](security-principles.md). A feature that cannot answer
+those questions is not ready to receive real authority.
+
 ## Before committing a project-level change
 
 Review `pyproject.toml` whenever a change:

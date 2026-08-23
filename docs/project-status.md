@@ -17,6 +17,9 @@ This document is the handoff point between coding sessions. At the end of each s
 - Shared defaults and machine-local environment overrides are centralized in `config.py`.
 - The local-only chat streams responses and has session-only conversation memory while it is open. It has no persistent memory, tools, browser access, personal-data access, credential access, or web capability.
 - Conversation policy is documented separately from the action-permission policy.
+- `docs/security-principles.md` is the governing threat model and review
+  checklist for every future capability; design decisions should explicitly
+  follow it rather than relying on model behavior for safety.
 - The Ollama adapter and service health check now accept only explicit numeric
   loopback HTTP addresses, ignore environment proxies, and refuse redirects.
 - The shared model request contract enforces a 2,000-token response ceiling;
@@ -212,6 +215,24 @@ Completed:
   focused tests. The complete suite passes with 75 tests.
 - Removed expired unused records during authority activity so the receipt
   registry does not grow indefinitely.
+
+Next:
+
+- Sanitize terminal control characters and add friendly model/startup error
+  handling.
+
+### 2026-08-23 — Security doctrine
+
+Completed:
+
+- Established a first-class security doctrine covering hostile inputs,
+  model fallibility, least privilege, exact authorization, executor isolation,
+  secret handling, data minimization, memory provenance, sandbox limits,
+  deterministic-code bugs, resource bounds, audit safety, and user control.
+- Added a twelve-question security review that every new capability must pass
+  before receiving real authority.
+- Linked the doctrine from the documentation index, architecture, development
+  workflow, and main README so it remains part of future decisions.
 
 Next:
 
