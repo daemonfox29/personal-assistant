@@ -19,5 +19,9 @@ Actions runs the complete test suite for that pull request. The repository's
 prevent direct pushes, so the workflow is an enforced gate rather than an
 informational result.
 
+Non-draft pull requests opened by the repository owner from branches in this
+repository automatically enable squash auto-merge. External and forked pull
+requests are never auto-armed; they require an explicit merge decision.
+
 To conserve the current Actions budget, the workflow does not run again after
 merge. Post-merge verification can be added later if the risk or budget changes.
