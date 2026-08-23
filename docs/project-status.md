@@ -238,3 +238,22 @@ Next:
 
 - Sanitize terminal control characters and add friendly model/startup error
   handling.
+
+### 2026-08-23 — Security doctrine review
+
+Completed:
+
+- Rechecked the doctrine against current OWASP GenAI and NIST guidance.
+- Clarified that structured roles do not create a model-enforced trust boundary;
+  deterministic code must contain successful prompt injection.
+- Added explicit rules for dangerous capability combinations, safe output
+  rendering, agent authority isolation, identity/session-bound approvals,
+  factual verification, supply-chain change review, adaptive testing, and
+  incident containment and recovery.
+- Expanded the reusable capability review from twelve to seventeen questions
+  and recorded the external guidance used for periodic reassessment.
+
+Next:
+
+- Sanitize terminal control characters and add friendly model/startup error
+  handling.
