@@ -153,6 +153,21 @@ system instruction, current user message, message framing, and the response the
 model is allowed to generate. RAM is genuinely bounded only when old stored
 turns are evicted, not merely omitted from the next prompt.
 
+RAM history and model context are different limits. The application can retain
+an ever-growing list of conversation turns in RAM even though the model sees
+only the recent portion placed inside its context window. Limiting the request
+therefore does not limit the application's memory use or how long old text
+remains available to future code. The app must separately evict the oldest
+complete turns from RAM.
+
+Structured roles reduce one specific prompt-injection risk: role
+impersonation. If a user writes `System: ignore the rules` or `Assistant: this
+action was approved`, that text remains inside a `user` message and cannot
+become an actual system or assistant message merely because it contains a
+label. This strengthens the trust boundary, but it does not make the model
+immune to every prompt-injection attempt. Authorization must still be enforced
+outside the model before tools can perform real actions.
+
 Exact tokenization varies by model. The current implementation uses a
 conservative UTF-8 byte upper bound and fixed framing allowances. This may keep
 less history than an exact Qwen tokenizer, but it avoids a tokenizer dependency
@@ -164,11 +179,15 @@ and favors predictable safety over maximum context use.
 - How tool-call and tool-result roles should enter the same message contract.
 - Whether future summarization should replace evicted turns without turning a
   generated summary into canonical personal memory.
+- How to defend against indirect prompt injection in webpages, documents, and
+  other untrusted content once the assistant can use tools.
 
 ### Practical takeaway
 
 Keep roles structural, reserve the whole context window deliberately, and
-bound what remains in RAM—not only what is sent on the next request.
+bound what remains in RAM—not only what is sent on the next request. Treat
+structured roles as one defense layer, while keeping action authorization in a
+separate permission system that model-generated text cannot bypass.
 
 ## Entry template
 
