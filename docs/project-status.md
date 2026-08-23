@@ -4,7 +4,10 @@ This document is the handoff point between coding sessions. At the end of each s
 
 ## Current status
 
-- Module 0 is complete: Git safety rules, project documentation, source layout, virtual environment, project metadata, a local model adapter, and a runnable chat are in place.
+- Module 0 and the Module 0.1 hardening gate are complete: Git safety rules,
+  project documentation, source layout, virtual environment, project metadata,
+  deterministic security boundaries, a local model adapter, and a runnable chat
+  are in place. Module 1 persistence design may begin.
 - The local permission policy is implemented and covered by automated tests.
 - GitHub Actions is configured to test pull requests targeting `main` before
   merge. The public repository has an active ruleset requiring the `test`
@@ -48,7 +51,7 @@ Work through these in order unless project needs change. Module 1 must wait unti
 - [x] Module 0.1: move conversation history to structured `system`, `user`, and `assistant` messages before adding tools, so user text cannot impersonate another role.
 - [x] Module 0.1: sanitize control characters from model output before printing it to the terminal. Add friendly error handling for unavailable Ollama, missing models, malformed responses, and interrupted startup.
 - [x] Module 0.1: make warm-up lightweight, improve documentation wording about privacy and in-memory clearing, extend secret-file ignore rules, and harden the GitHub Actions workflow (full action SHA pins and least-privilege checkout settings).
-- [ ] Module 0.1: add focused tests for every hardening rule, run the full suite, and test a real local two-turn chat before beginning Module 1.
+- [x] Module 0.1: add focused tests for every hardening rule, run the full suite, and test a real local two-turn chat before beginning Module 1.
 - [ ] Begin Module 1: design the SQLite data boundary and migrations before storing personal data.
 - [ ] Define the assistant's first tool registry and permission-enforcement path before adding any tool.
 - [ ] Add a web/search tool only behind the tool registry and approval layer.
@@ -270,6 +273,36 @@ Next:
 
 - Complete the final Module 0.1 verification gate, including a real local
   two-turn chat, before beginning Module 1 persistence design.
+
+### 2026-08-23 — Module 0.1 final verification gate
+
+Gate result: **Passed with no blocking findings.**
+
+Evidence:
+
+- Ran all 92 automated tests, including authorization replay/mismatch/expiry,
+  local-only networking, structured roles, bounded session memory, terminal
+  sanitization, malformed model responses, secret ignores, and workflow pins.
+- Confirmed the installed Python environment has no broken requirements and the
+  Git object database passes its integrity check.
+- Confirmed no tracked filenames match the protected secret/credential patterns
+  and no tracked source contains the scanned private-key or common-token
+  signatures.
+- Reviewed execution and network primitives: there is no general `eval`, `exec`,
+  shell execution, or unrestricted HTTP client. The only process launch is the
+  fixed macOS Ollama launcher, and model HTTP remains behind the validated
+  loopback-only opener.
+- Ran the real application with local `qwen3:14b` through startup, empty preload,
+  structured streaming, session memory, terminal rendering, and clean shutdown.
+  It remembered and returned the two-turn session code `amber-927` exactly.
+- Rechecked the implemented boundaries against `docs/security-principles.md`.
+  Module 0.1 grants no browser, tool, persistent-memory, credential, or remote
+  model capability, so those future surfaces remain closed by default.
+
+Decision:
+
+- Module 0.1 is complete. Begin Module 1 with persistence boundary and migration
+  design before writing personal data.
 
 ### 2026-08-23 — Security doctrine
 

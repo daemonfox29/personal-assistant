@@ -13,7 +13,10 @@ A modular, local-first personal AI assistant built in Python.
 
 ## Project status
 
-Module 0 is complete: a safe local chat foundation with replaceable components.
+Module 0 and its Module 0.1 hardening gate are complete: a tested local chat
+foundation with replaceable components and deterministic safety boundaries.
+Module 1 persistence design is next; tools and persistent personal data are not
+enabled yet.
 
 ## Run the local chat
 
