@@ -230,6 +230,37 @@ and issue the receipt; the executor will only verify and consume it.
 Approval should authorize one precisely described operation, once, for a short
 time. A general yes/no flag is not durable proof of user intent.
 
+## 2026-08-23 — Model output is untrusted terminal input
+
+**Confidence: Building**
+
+### What prompted this
+
+A local model normally returns readable text, but it can also return terminal
+control sequences, invisible Unicode formatting, malformed JSON, or low-level
+service errors. Printing those values directly would let untrusted output alter
+the display or expose machine details.
+
+### What I understand now
+
+The terminal is another execution boundary. An escape character can clear the
+screen, rewrite a title, move the cursor, or disguise what was printed even
+though it looks like ordinary text in Python. The output boundary now preserves
+useful newlines and tabs but displays unsafe controls and invisible formatting
+as literal Unicode code points.
+
+Expected failures should also cross a typed boundary. The Ollama adapter
+classifies unavailable service, missing model, failed request, and malformed
+response conditions. The interface prints fixed user-safe messages instead of
+raw exception text, while unexpected programming bugs remain visible during
+development rather than being hidden by a catch-all handler.
+
+### Practical takeaway
+
+Local does not automatically mean trusted. Validate model responses, sanitize
+their output at the final renderer, and expose only the minimum safe error
+category to the user.
+
 ## Entry template
 
 Copy this section for future entries:

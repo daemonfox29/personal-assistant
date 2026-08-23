@@ -25,6 +25,12 @@ From the project folder:
 
 The app starts Ollama if needed, preloads the local Qwen model, then opens a terminal chat.
 
+Model output is treated as untrusted terminal text. Control and invisible
+formatting characters are displayed as escaped code points instead of being
+executed by the terminal. Expected Ollama, model, response, configuration, and
+interruption failures produce short user-safe messages without exposing raw
+service details.
+
 - Type `quit` or `exit` to close the app.
 - Type `/long <question>` for up to 1,200 response tokens.
 - Type `/max <question>` for up to 2,000 response tokens.

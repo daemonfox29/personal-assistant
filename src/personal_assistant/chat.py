@@ -4,11 +4,16 @@ from collections.abc import Callable
 
 from personal_assistant.model import (
     LanguageModel,
+    MalformedModelResponseError,
+    ModelError,
+    ModelNotFoundError,
     ModelRequest,
+    ModelUnavailableError,
     StreamingLanguageModel,
     response_instruction,
     validate_response_token_limit,
 )
+from personal_assistant.terminal_output import sanitize_terminal_text
 from personal_assistant.config import ChatSettings
 from personal_assistant.session_memory import (
     MessageTooLargeError,
@@ -81,6 +86,9 @@ class ChatSession:
             except EOFError:
                 self._say_goodbye()
                 return
+            except KeyboardInterrupt:
+                self._write_output("\nInterrupted. Goodbye.")
+                return
 
             if prompt.strip().lower() in EXIT_COMMANDS:
                 self._say_goodbye()
@@ -91,12 +99,21 @@ class ChatSession:
                 continue
             request, user_text = prepared_request
 
-            if isinstance(self._model, StreamingLanguageModel):
-                response_text = self._stream_response(request)
-            else:
-                response = self._model.generate(request)
-                self._write_output(f"Assistant: {response.text}")
-                response_text = response.text
+            try:
+                if isinstance(self._model, StreamingLanguageModel):
+                    response_text = self._stream_response(request)
+                else:
+                    response = self._model.generate(request)
+                    response_text = sanitize_terminal_text(response.text)
+                    self._write_output(f"Assistant: {response_text}")
+            except KeyboardInterrupt:
+                self._write_output("\nRequest cancelled. Goodbye.")
+                return
+            except ModelError as error:
+                if isinstance(self._model, StreamingLanguageModel):
+                    self._write_chunk("\n")
+                self._write_output(self._friendly_model_error(error))
+                continue
 
             self._memory.add_turn(user_text, response_text)
 
@@ -105,8 +122,9 @@ class ChatSession:
         limit_reached = False
         response_pieces: list[str] = []
         for chunk in self._model.stream_generate(request):
-            self._write_chunk(chunk.text)
-            response_pieces.append(chunk.text)
+            safe_text = sanitize_terminal_text(chunk.text)
+            self._write_chunk(safe_text)
+            response_pieces.append(safe_text)
             limit_reached = limit_reached or chunk.done_reason == "length"
         self._write_chunk("\n")
         if limit_reached:
@@ -115,6 +133,15 @@ class ChatSession:
                 "or '/max <question>' for a longer answer.]"
             )
         return "".join(response_pieces)
+
+    def _friendly_model_error(self, error: ModelError) -> str:
+        if isinstance(error, ModelUnavailableError):
+            return "Ollama is unavailable. Check that it is installed and try again."
+        if isinstance(error, ModelNotFoundError):
+            return "The configured local model is not installed."
+        if isinstance(error, MalformedModelResponseError):
+            return "Ollama returned an unreadable response. Please try again."
+        return "The local model request failed. Please try again."
 
     def _long_request(
         self,

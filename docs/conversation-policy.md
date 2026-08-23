@@ -16,6 +16,9 @@ A harmless conversation response must never grant access to files, personal data
 - System, user, and assistant roles remain structurally separate. Text entered
   by a user cannot promote itself into a trusted role by including labels such
   as `System:` or `Assistant:`.
+- Model output is sanitized at the terminal boundary. Newlines and tabs remain
+  readable, while control characters, invisible formatting characters, and
+  variation selectors are exposed as literal Unicode code points.
 - The application does not currently impose topic-specific content rules. The selected local model may still have its own behavior or limitations, which the application does not claim to override.
 
 ## Future topic decisions

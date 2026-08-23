@@ -30,6 +30,9 @@ This document is the handoff point between coding sessions. At the end of each s
 - Approval-required actions use opaque receipts bound to the exact action and
   canonical arguments. Receipts are consumed on first use and expire within a
   short hard-limited lifetime.
+- Terminal output escapes control and invisible formatting characters. Expected
+  local-model, malformed-response, configuration, and interruption failures
+  fail closed with fixed user-safe messages.
 
 ## Outstanding actions
 
@@ -40,7 +43,7 @@ Work through these in order unless project needs change. Module 1 must wait unti
 - [x] Module 0.1: replace the temporary `user_approved=True` switch with a one-use, short-lived approval receipt tied to the exact requested action and arguments. Only a trusted interface may issue it; the executor must verify it.
 - [x] Module 0.1: enforce the 2,000-token response ceiling in the shared model adapter, not only in the command-line chat interface.
 - [x] Module 0.1: move conversation history to structured `system`, `user`, and `assistant` messages before adding tools, so user text cannot impersonate another role.
-- [ ] Module 0.1: sanitize control characters from model output before printing it to the terminal. Add friendly error handling for unavailable Ollama, missing models, malformed responses, and interrupted startup.
+- [x] Module 0.1: sanitize control characters from model output before printing it to the terminal. Add friendly error handling for unavailable Ollama, missing models, malformed responses, and interrupted startup.
 - [ ] Module 0.1: make warm-up lightweight, improve documentation wording about privacy and in-memory clearing, extend secret-file ignore rules, and harden the GitHub Actions workflow (full action SHA pins and least-privilege checkout settings).
 - [ ] Module 0.1: add focused tests for every hardening rule, run the full suite, and test a real local two-turn chat before beginning Module 1.
 - [ ] Begin Module 1: design the SQLite data boundary and migrations before storing personal data.
@@ -220,6 +223,27 @@ Next:
 
 - Sanitize terminal control characters and add friendly model/startup error
   handling.
+
+### 2026-08-23 — Safe terminal output and model failures
+
+Completed:
+
+- Added one terminal-output boundary that preserves readable newlines and tabs
+  while escaping executable controls and invisible Unicode formatting channels.
+- Applied sanitization to both complete and streaming model responses before
+  display or reuse as session history.
+- Added typed model-boundary failures for unavailable Ollama, missing models,
+  malformed responses, and failed requests without surfacing raw service text.
+- Made startup, active chat, end-of-input, and keyboard interruption paths fail
+  with clear fixed messages and no traceback for expected failures.
+- Expanded focused malformed-response, control-character, invisible-Unicode,
+  service-launch, friendly-error, and interruption coverage. The complete suite
+  passes with 89 tests.
+
+Next:
+
+- Make model warm-up lightweight, tighten privacy/clearing documentation and
+  secret ignores, and finish GitHub Actions hardening.
 
 ### 2026-08-23 — Security doctrine
 

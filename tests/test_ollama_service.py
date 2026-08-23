@@ -1,6 +1,7 @@
 """Checks for the local Ollama service manager."""
 
 import unittest
+import subprocess
 from unittest.mock import Mock
 
 from personal_assistant.ollama_service import (
@@ -47,6 +48,15 @@ class OllamaServiceTests(unittest.TestCase):
             health_check=Mock(return_value=False),
             launch_service=Mock(),
             sleep=Mock(),
+        )
+
+        with self.assertRaises(OllamaUnavailableError):
+            service.ensure_available()
+
+    def test_failed_application_launch_becomes_unavailable_error(self) -> None:
+        service = OllamaService(
+            health_check=Mock(return_value=False),
+            launch_service=Mock(side_effect=subprocess.SubprocessError("detail")),
         )
 
         with self.assertRaises(OllamaUnavailableError):
