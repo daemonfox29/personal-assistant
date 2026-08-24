@@ -12,6 +12,8 @@ This folder holds human-readable notes about the assistant's design, decisions, 
 - [Module 1 persistent memory](module-1-memory-spec.md): approved encrypted
   storage, retrieval, revision, backup, authorization, and acceptance-test
   contract.
+- [Encrypted SQLite provider spike](encrypted-database-spike.md): SQLCipher
+  selection, verified guarantees, tradeoffs, and remaining platform checks.
 - [Conversation policy](conversation-policy.md): rules governing what the
   assistant says.
 - [Project status](project-status.md): current implementation state and session

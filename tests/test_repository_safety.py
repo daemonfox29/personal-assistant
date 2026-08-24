@@ -9,6 +9,11 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 
 
 class RepositorySafetyTests(unittest.TestCase):
+    def test_encrypted_database_dependency_is_exactly_pinned(self) -> None:
+        project_metadata = (REPOSITORY_ROOT / "pyproject.toml").read_text()
+
+        self.assertIn('"sqlcipher3==0.6.2"', project_metadata)
+
     def test_common_secret_files_are_ignored(self) -> None:
         ignore_rules = (REPOSITORY_ROOT / ".gitignore").read_text()
 

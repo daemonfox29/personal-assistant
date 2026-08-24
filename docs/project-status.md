@@ -7,8 +7,8 @@ This document is the handoff point between coding sessions. At the end of each s
 - Module 0 and the Module 0.1 hardening gate are complete: Git safety rules,
   project documentation, source layout, virtual environment, project metadata,
   deterministic security boundaries, a local model adapter, and a runnable chat
-  are in place. The Module 1 persistent-memory specification is approved, and
-  its bounded redacted audit-writer prerequisite is implemented.
+  are in place. The Module 1 persistent-memory specification, bounded redacted
+  audit writer, and synthetic SQLCipher connection boundary are implemented.
 - The local permission policy is implemented and covered by automated tests.
 - GitHub Actions is configured to test pull requests targeting `main` before
   merge. The public repository has an active ruleset requiring the `test`
@@ -43,7 +43,12 @@ This document is the handoff point between coding sessions. At the end of each s
 - Typed audit events accept no free-form message content. The replaceable local
   JSON Lines writer enforces restrictive permissions, event and file ceilings,
   bounded rotation, symbolic-link refusal, and safe failure messages. It is not
-  connected to model, tool, or personal-data operations yet.
+  connected to normal chat, model, tool, or personal-data repository operations
+  yet; the synthetic encrypted-database boundary now uses its open events.
+- The encrypted database boundary pins `sqlcipher3` 0.6.2, requires SQLCipher 4
+  cipher status, codec support, and FTS5, accepts keys only through a replaceable
+  provider, refuses unsafe paths and plaintext fallback, and emits content-free
+  database-open audit events. It has been tested only with synthetic data.
 
 ## Outstanding actions
 
@@ -62,8 +67,11 @@ Work through these in order unless project needs change. Module 1 must wait unti
   storing personal data.
 - [x] Module 1 prerequisite: implement the bounded, redacted audit writer before
   persistent personal-data operations are enabled.
-- [ ] Module 1: verify and select a cross-platform encrypted SQLite provider and
-  key-provider boundary using synthetic data.
+- [x] Module 1: select SQLCipher behind a replaceable encrypted SQLite and key-
+  provider boundary; verify it locally on macOS ARM64 using synthetic data.
+- [ ] Module 1 portability: confirm the pinned SQLCipher boundary in the batched
+  Linux GitHub Actions run and add Windows verification before distributing a
+  packaged Windows build.
 - [ ] Module 1: implement and test checksummed migrations, typed repositories,
   bounded retrieval, memory suggestions, and encrypted backup/restore in the
   order defined by `docs/module-1-memory-spec.md`.
@@ -71,6 +79,38 @@ Work through these in order unless project needs change. Module 1 must wait unti
 - [ ] Add a web/search tool only behind the tool registry and approval layer.
 
 ## Session history
+
+### 2026-08-24 — Encrypted SQLite provider spike
+
+Completed:
+
+- Compared standard SQLite, application-level field encryption, SQLite SEE,
+  and SQLCipher; selected SQLCipher Community behind replaceable project-owned
+  database and key-provider interfaces.
+- Pinned `sqlcipher3` 0.6.2 and verified its bundled SQLCipher 4.12.0 Community
+  engine on the current Apple-silicon Mac.
+- Added a fail-closed connection boundary requiring an explicit absolute path,
+  fresh 256-bit key, audit sink, supported cipher status and major version,
+  codec support, FTS5, foreign keys, trusted-schema restrictions, bounded
+  timeouts, extension-loading disablement, and restrictive POSIX permissions.
+- Proved with temporary synthetic data that the file lacks the plaintext SQLite
+  header, ordinary SQLite cannot read it, the correct key reopens it, a wrong
+  key fails safely, and substituting ordinary SQLite cannot satisfy the
+  encryption requirement.
+- Added content-free database-open audit events and verified that audit failure
+  prevents key acquisition and database creation.
+- Added dependency-pinning, key-lifetime, unsafe-path, error-redaction, and
+  connection-cleanup tests. The complete suite passes with 117 tests.
+- Added `docs/encrypted-database-spike.md` with the decision evidence,
+  limitations, and remaining platform checks. No real key, runtime database,
+  recovery passphrase, or personal record was created.
+
+Next:
+
+- Implement the checksummed forward-only migration runner and initial schema
+  using temporary encrypted databases and synthetic data.
+- Confirm Linux compatibility in the eventual batched PR run and Windows before
+  distributing a packaged Windows build.
 
 ### 2026-08-24 — Bounded redacted audit writer
 

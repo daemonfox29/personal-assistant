@@ -71,6 +71,10 @@ not preserve a potentially sensitive raw location.
 - [ ] Integrate typed events into each model, authorization, tool, database, and
   backup boundary as that boundary is implemented or deliberately revised.
 
+The encrypted-database connection boundary now emits start, success, and safe
+failure events. Repository queries, migrations, backups, model requests,
+authorization decisions, and tools still require their own integrations.
+
 The writer accepts only typed enums, UUIDs, bounded integers, and allowlisted
 safe labels. It has no free-form message field. This makes prompt, response,
 credential, URL, path, exception-text, and personal-record logging unavailable

@@ -579,8 +579,9 @@ history.
 ## Implementation order
 
 1. [x] Implement typed redacted audit events and the bounded local audit writer.
-2. [ ] Spike and select the cross-platform encrypted SQLite provider and key-
-   provider interface using synthetic data.
+2. [x] Spike and select SQLCipher behind the cross-platform encrypted SQLite and
+   key-provider interfaces using synthetic data. Confirm Linux in the batched PR
+   run and Windows before distributing a packaged Windows build.
 3. [ ] Implement the migration runner and initial schema.
 4. [ ] Implement typed repository operations, revisions, entities, links,
    lifecycle rules, and deletion ledger.

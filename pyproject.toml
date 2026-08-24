@@ -8,7 +8,9 @@ version = "0.1.0"
 description = "A modular, local-first personal AI assistant"
 readme = "README.md"
 requires-python = ">=3.11"
-dependencies = []
+dependencies = [
+    "sqlcipher3==0.6.2",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]
