@@ -7,7 +7,8 @@ This document is the handoff point between coding sessions. At the end of each s
 - Module 0 and the Module 0.1 hardening gate are complete: Git safety rules,
   project documentation, source layout, virtual environment, project metadata,
   deterministic security boundaries, a local model adapter, and a runnable chat
-  are in place. Module 1 persistence design may begin.
+  are in place. The Module 1 persistent-memory specification is approved;
+  implementation has not begun.
 - The local permission policy is implemented and covered by automated tests.
 - GitHub Actions is configured to test pull requests targeting `main` before
   merge. The public repository has an active ruleset requiring the `test`
@@ -52,13 +53,44 @@ Work through these in order unless project needs change. Module 1 must wait unti
 - [x] Module 0.1: sanitize control characters from model output before printing it to the terminal. Add friendly error handling for unavailable Ollama, missing models, malformed responses, and interrupted startup.
 - [x] Module 0.1: make warm-up lightweight, improve documentation wording about privacy and in-memory clearing, extend secret-file ignore rules, and harden the GitHub Actions workflow (full action SHA pins and least-privilege checkout settings).
 - [x] Module 0.1: add focused tests for every hardening rule, run the full suite, and test a real local two-turn chat before beginning Module 1.
-- [ ] Begin Module 1: design the SQLite data boundary and migrations before storing personal data.
+- [x] Begin Module 1: design the encrypted SQLite data boundary, memory
+  lifecycle, retrieval rules, migrations, backup, and acceptance tests before
+  storing personal data.
+- [ ] Module 1 prerequisite: implement the bounded, redacted audit writer before
+  persistent personal-data operations are enabled.
+- [ ] Module 1: verify and select a cross-platform encrypted SQLite provider and
+  key-provider boundary using synthetic data.
+- [ ] Module 1: implement and test checksummed migrations, typed repositories,
+  bounded retrieval, memory suggestions, and encrypted backup/restore in the
+  order defined by `docs/module-1-memory-spec.md`.
 - [ ] Define the assistant's first tool registry and permission-enforcement path before adding any tool.
 - [ ] Add a web/search tool only behind the tool registry and approval layer.
-- [ ] Add a bounded, redacted local audit writer before tools or persistent
-  personal-data operations are enabled.
 
 ## Session history
+
+### 2026-08-24 — Module 1 persistent-memory specification
+
+Completed:
+
+- Defined the encrypted, cross-platform SQLite boundary and forward-only
+  checksummed migration contract.
+- Specified typed records, append-only revisions, entities, profiles,
+  provenance, scopes, sensitivity, mention rules, contradictions, evidence-
+  linked insights, candidate memory suggestions, and deletion behavior.
+- Defined bounded indexed retrieval, measurable performance targets, retrieval
+  receipts, daily encrypted external-drive backup, verified restore, and
+  non-destructive future maintenance.
+- Defined passcode-backed high-risk authorization without a separate login for
+  ordinary conversation, while keeping foundational guardrails unavailable to
+  conversational override.
+- Added focused acceptance criteria and an ordered implementation plan. No
+  database or personal-data persistence code was added.
+
+Next:
+
+- Implement the bounded redacted audit writer required before personal-data
+  operations.
+- Spike the encrypted SQLite and key-provider boundary using synthetic data.
 
 ### 2026-08-21 01:09 MDT
 

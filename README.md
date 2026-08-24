@@ -15,8 +15,8 @@ A modular, local-first personal AI assistant built in Python.
 
 Module 0 and its Module 0.1 hardening gate are complete: a tested local chat
 foundation with replaceable components and deterministic safety boundaries.
-Module 1 persistence design is next; tools and persistent personal data are not
-enabled yet.
+The Module 1 encrypted persistent-memory specification is approved;
+implementation is next. Tools and persistent personal data are not enabled yet.
 
 ## Run the local chat
 

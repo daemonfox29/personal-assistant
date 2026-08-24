@@ -46,8 +46,11 @@ not preserve a potentially sensitive raw location.
 - Use a structured format with control-character sanitization.
 - Apply restrictive file permissions, bounded size, rotation, and a defined
   retention period.
-- Logging failure must never change an allow/deny decision or disable a safety
-  boundary.
+- Logging failure must never turn a denial into an allowance or disable a safety
+  boundary. Operations designated as audit-required fail closed before they
+  execute when their minimum event cannot be recorded. Emergency lock, safe
+  shutdown, and other containment paths must remain available and surface a
+  trusted local warning when normal logging is unavailable.
 - Correlation identifiers should connect a user request, model request,
   permission decision, approval receipt, tool execution, and result.
 - Diagnostic verbosity should be configurable, while minimum security events
