@@ -41,3 +41,33 @@ If the project risk or GitHub Actions budget increases, add a `push` trigger for
 `main` so the test suite verifies the exact merged commit. The current workflow
 runs only on pull requests targeting `main`, avoiding a duplicate job for every
 merge while the project has a limited Actions budget.
+
+## Memory, privacy, and backup settings interface
+
+Add a non-technical configuration interface for persistent memory after the
+Module 1 data boundary is implemented. It should let the user:
+
+- search and inspect confirmed memories, tentative suggestions, linked entity
+  profiles, sources, and revision history;
+- see a concise, deterministic explanation of why a memory was retrieved,
+  without recording or exposing model chain-of-thought;
+- confirm, correct, reject, edit, delete, or permanently purge a memory;
+- configure global and subject-specific mention policies, including
+  `may mention when relevant`, `ask before mentioning`, `only when directly
+  asked`, and `never mention`;
+- view effective settings after global, conversation, topic, and session
+  overrides are applied;
+- configure a cross-platform encrypted database and portable recovery method,
+  with optional operating-system credential-store integration;
+- choose an external-drive backup destination, run or schedule one daily
+  backup, set retention and size limits, verify backup health, and perform a
+  guided restore; and
+- review sanitized audit events for memory changes, backup operations, and
+  restores without exposing personal record contents.
+
+The first backup policy should favor one verified daily snapshot to an
+external drive. Backups must remain encrypted, excluded from Git, bounded by a
+configurable storage limit, and restorable across macOS, Windows, and Linux.
+Before a restore, create a pre-restore snapshot when space permits, verify the
+candidate backup, explain what will change, require explicit approval, and
+reapply the permanent-deletion ledger so purged records are not resurrected.
