@@ -582,7 +582,7 @@ history.
 2. [x] Spike and select SQLCipher behind the cross-platform encrypted SQLite and
    key-provider interfaces using synthetic data. Confirm Linux in the batched PR
    run and Windows before distributing a packaged Windows build.
-3. [ ] Implement the migration runner and initial schema.
+3. [x] Implement the migration runner and initial schema.
 4. [ ] Implement typed repository operations, revisions, entities, links,
    lifecycle rules, and deletion ledger.
 5. [ ] Implement deterministic bounded retrieval and retrieval receipts.

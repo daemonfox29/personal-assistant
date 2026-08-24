@@ -8,7 +8,8 @@ This document is the handoff point between coding sessions. At the end of each s
   project documentation, source layout, virtual environment, project metadata,
   deterministic security boundaries, a local model adapter, and a runnable chat
   are in place. The Module 1 persistent-memory specification, bounded redacted
-  audit writer, and synthetic SQLCipher connection boundary are implemented.
+  audit writer, synthetic SQLCipher connection boundary, and checksummed
+  forward-only migration layer are implemented.
 - The local permission policy is implemented and covered by automated tests.
 - GitHub Actions is configured to test pull requests targeting `main` before
   merge. The public repository has an active ruleset requiring the `test`
@@ -49,6 +50,10 @@ This document is the handoff point between coding sessions. At the end of each s
   cipher status, codec support, and FTS5, accepts keys only through a replaceable
   provider, refuses unsafe paths and plaintext fallback, and emits content-free
   database-open audit events. It has been tested only with synthetic data.
+- The encrypted schema is built from 13 fixed, packaged, single-statement SQL
+  migrations. Exact SHA-256 history is stored in the database; missing,
+  duplicate, reordered, changed, unknown, or untracked history fails closed.
+  The entire pending migration batch commits atomically or rolls back.
 
 ## Outstanding actions
 
@@ -72,13 +77,43 @@ Work through these in order unless project needs change. Module 1 must wait unti
 - [ ] Module 1 portability: confirm the pinned SQLCipher boundary in the batched
   Linux GitHub Actions run and add Windows verification before distributing a
   packaged Windows build.
-- [ ] Module 1: implement and test checksummed migrations, typed repositories,
-  bounded retrieval, memory suggestions, and encrypted backup/restore in the
-  order defined by `docs/module-1-memory-spec.md`.
+- [x] Module 1: implement and test the checksummed migration runner and initial
+  encrypted schema using synthetic data only.
+- [ ] Module 1: implement typed repositories, bounded retrieval, memory
+  suggestions, and encrypted backup/restore in the order defined by
+  `docs/module-1-memory-spec.md`.
 - [ ] Define the assistant's first tool registry and permission-enforcement path before adding any tool.
 - [ ] Add a web/search tool only behind the tool registry and approval layer.
 
 ## Session history
+
+### 2026-08-24 — Checksummed encrypted schema migrations
+
+Completed:
+
+- Added 13 fixed, packaged, forward-only SQL migrations for the migration
+  ledger, memory records and revisions, entities and aliases, record links,
+  feedback, deletion ledger, and bounded lookup indexes.
+- Added exact SHA-256 verification and strict contiguous ordering. The runner
+  accepts stored history only when it is an exact prefix of the packaged
+  history and refuses altered, missing, duplicate, reordered, newer, malformed,
+  or untracked schema state.
+- Applied the complete pending batch in one encrypted transaction so any failed
+  statement rolls back all pending schema changes.
+- Added content-free migration audit events and synthetic tests covering fresh
+  migration, idempotent reruns, history tampering, source defects, rollback,
+  untracked schema, audit failure, encryption, and error redaction. The complete
+  suite passes with 128 tests.
+- Kept the schema disconnected from chat and repository operations; no real
+  personal data or runtime database was created.
+
+Next:
+
+- Implement typed repository envelopes, append-only revision writes, entities,
+  links, lifecycle transitions, optimistic concurrency, and purge-ledger rules
+  using temporary synthetic encrypted databases.
+- Confirm Linux compatibility in the eventual batched PR run and Windows before
+  distributing a packaged Windows build.
 
 ### 2026-08-24 — Encrypted SQLite provider spike
 
