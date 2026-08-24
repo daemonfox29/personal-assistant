@@ -81,3 +81,29 @@ Initial defaults:
   with a warning before backup coverage would be lost; and
 - show tentative memory suggestions in a review inbox, but exclude them from
   ordinary retrieval until the user confirms them.
+
+## Portable encrypted import and export
+
+After the Module 1 memory MVP is working, add a versioned, cross-platform
+import and export format. Exports must be encrypted by default both while
+stored and while transferred. Import must validate the schema version, data
+types, size, integrity, and provenance before changing the live database.
+Plaintext export, if it is ever supported, must require an explicit warning and
+approval and must never be the default.
+
+## Memory maintenance and model-upgrade review
+
+Investigate a non-destructive maintenance process for large memory stores. It
+may expire unconfirmed suggestions, archive transient records outside normal
+retrieval, consolidate redundant records, rebuild indexes, and recommend
+cleanup when configured count or size thresholds are reached. It must not
+silently delete confirmed memories or remove evidence supporting an insight.
+Permanent deletion remains an explicit user action and must update the purge
+ledger.
+
+Keep canonical records, relationships, provenance, and revisions independent
+of any one language model or embedding format. A future upgraded model may
+reassess existing records and propose more nuanced tentative insights, while
+preserving the original evidence and recording the model/version that made the
+proposal. Derived indexes and embeddings must remain replaceable and
+rebuildable.
