@@ -1,0 +1,1 @@
+CREATE VIRTUAL TABLE record_search USING fts5(record_id UNINDEXED, content, status UNINDEXED, sensitivity UNINDEXED, mention_policy UNINDEXED, scope_type UNINDEXED, scope_id UNINDEXED, kind UNINDEXED, valid_from UNINDEXED, valid_until UNINDEXED, primary_entity_id UNINDEXED, updated_at UNINDEXED, tokenize = 'unicode61')

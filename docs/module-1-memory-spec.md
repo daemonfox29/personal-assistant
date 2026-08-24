@@ -585,7 +585,7 @@ history.
 3. [x] Implement the migration runner and initial schema.
 4. [x] Implement typed repository operations, revisions, entities, links,
    lifecycle rules, and deletion ledger.
-5. [ ] Implement deterministic bounded retrieval and retrieval receipts.
+5. [x] Implement deterministic bounded retrieval and retrieval receipts.
 6. [ ] Implement explicit remember and automatic quarantined-candidate workflows.
 7. [ ] Implement encrypted daily backup, verification, and guided restore.
 8. [ ] Integrate persistent memory into chat only after all preceding boundaries

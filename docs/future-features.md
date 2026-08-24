@@ -66,6 +66,20 @@ pull-request workflow does not spend the limited Actions budget on an unused
 platform. Treat Windows support as unverified until this gate passes; package
 availability alone is not proof of runtime compatibility.
 
+## Reassess the Python dependency workflow
+
+At a later maintenance milestone, reassess whether `uv` is still the right
+package and environment workflow for the project. Review its maintenance and
+security posture, lockfile behavior, supported Python versions, CI performance,
+and macOS, Windows, and Linux installation experience. Compare it with the
+then-current `pip` ecosystem and other mature alternatives.
+
+Do not change tools merely because another option is newer. Keep `uv` while it
+continues to provide understandable, reproducible, cross-platform environments
+with acceptable maintenance cost. Any migration must preserve dependency
+pinning, package-hash verification, clean-environment testing, and a documented
+rollback path.
+
 ## Memory, privacy, and backup settings interface
 
 Add a non-technical configuration interface for persistent memory after the

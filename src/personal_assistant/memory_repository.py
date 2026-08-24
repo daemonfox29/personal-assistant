@@ -4,8 +4,10 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from enum import StrEnum
 from hashlib import sha256
 import json
+import re
 from time import monotonic
 from typing import Any
 from uuid import UUID, uuid4
@@ -60,6 +62,52 @@ PAYLOAD_VERSION = 1
 CANDIDATE_LIFETIME = timedelta(days=30)
 MINIMUM_INSIGHT_EVIDENCE = 3
 MAX_EXPIRY_BATCH = 100
+MAX_RETRIEVAL_RECORDS = 12
+MAX_RETRIEVAL_TOKENS = 2_500
+MAX_RETRIEVAL_QUERY_CHARS = 1_000
+MAX_RETRIEVAL_SCOPES = 8
+MAX_RETRIEVAL_ENTITIES = 8
+MAX_RETRIEVAL_CANDIDATES = 96
+RETRIEVAL_RECORD_OVERHEAD_TOKENS = 16
+_RETRIEVAL_TERM = re.compile(r"[\w]+", re.UNICODE)
+_RETRIEVAL_STOP_WORDS = {
+    "a",
+    "about",
+    "an",
+    "and",
+    "are",
+    "did",
+    "do",
+    "does",
+    "how",
+    "i",
+    "is",
+    "me",
+    "my",
+    "not",
+    "or",
+    "tell",
+    "the",
+    "was",
+    "were",
+    "what",
+    "when",
+    "where",
+    "who",
+    "why",
+}
+
+
+def _normalized_retrieval_terms(query: str) -> tuple[str, ...]:
+    terms: list[str] = []
+    for term in _RETRIEVAL_TERM.findall(query.casefold()):
+        if term in _RETRIEVAL_STOP_WORDS:
+            continue
+        if term not in terms:
+            terms.append(term)
+        if len(terms) == 16:
+            break
+    return tuple(terms)
 
 
 class MemoryRepositoryError(RuntimeError):
@@ -88,6 +136,117 @@ class RepositoryIntegrityError(MemoryRepositoryError):
 
 class RepositoryOperationError(MemoryRepositoryError):
     """The repository operation failed without exposing database details."""
+
+
+class RetrievalMode(StrEnum):
+    """Deterministic mention boundary for one retrieval request."""
+
+    ORDINARY = "ordinary"
+    DIRECT = "direct"
+
+
+class RetrievalExclusion(StrEnum):
+    """Content-free reasons why otherwise matching records were not returned."""
+
+    UNCONFIRMED = "unconfirmed"
+    OUT_OF_SCOPE = "out_of_scope"
+    NOT_CURRENT = "not_current"
+    MENTION_RESTRICTED = "mention_restricted"
+    SENSITIVITY_RESTRICTED = "sensitivity_restricted"
+    RESULT_LIMIT = "result_limit"
+    TOKEN_LIMIT = "token_limit"
+
+
+@dataclass(frozen=True)
+class RetrievalRequest:
+    """A bounded structured request; raw query text is never written to audit."""
+
+    query: str
+    scopes: tuple[Scope, ...] = ()
+    entity_ids: tuple[UUID, ...] = ()
+    kinds: tuple[RecordKind, ...] = ()
+    mode: RetrievalMode = RetrievalMode.ORDINARY
+    max_records: int = MAX_RETRIEVAL_RECORDS
+    token_limit: int = MAX_RETRIEVAL_TOKENS
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.query, str):
+            raise MemoryValidationError("Retrieval query must be text.")
+        query = " ".join(self.query.split())
+        if len(query) > MAX_RETRIEVAL_QUERY_CHARS:
+            raise MemoryValidationError("Retrieval query is too large.")
+        if not query and not self.entity_ids:
+            raise MemoryValidationError(
+                "Retrieval requires query text or a resolved entity."
+            )
+        if query and not _normalized_retrieval_terms(query) and not self.entity_ids:
+            raise MemoryValidationError("Retrieval query has no searchable terms.")
+        if not isinstance(self.scopes, tuple) or not all(
+            isinstance(scope, Scope) and scope.type is not ScopeType.GLOBAL
+            for scope in self.scopes
+        ):
+            raise MemoryValidationError("Retrieval scopes are invalid.")
+        if len(self.scopes) > MAX_RETRIEVAL_SCOPES or len(set(self.scopes)) != len(
+            self.scopes
+        ):
+            raise MemoryValidationError("Retrieval scopes exceed their limit.")
+        if not isinstance(self.entity_ids, tuple) or not all(
+            isinstance(entity_id, UUID) for entity_id in self.entity_ids
+        ):
+            raise MemoryValidationError("Retrieval entity IDs are invalid.")
+        if (
+            len(self.entity_ids) > MAX_RETRIEVAL_ENTITIES
+            or len(set(self.entity_ids)) != len(self.entity_ids)
+        ):
+            raise MemoryValidationError("Retrieval entity IDs exceed their limit.")
+        if not isinstance(self.kinds, tuple) or not all(
+            isinstance(kind, RecordKind) for kind in self.kinds
+        ):
+            raise MemoryValidationError("Retrieval kinds are invalid.")
+        if len(set(self.kinds)) != len(self.kinds):
+            raise MemoryValidationError("Retrieval kinds must be unique.")
+        if not isinstance(self.mode, RetrievalMode):
+            raise MemoryValidationError("Retrieval mode is invalid.")
+        if (
+            isinstance(self.max_records, bool)
+            or not isinstance(self.max_records, int)
+            or not 1 <= self.max_records <= MAX_RETRIEVAL_RECORDS
+        ):
+            raise MemoryValidationError("Retrieval record limit is invalid.")
+        if (
+            isinstance(self.token_limit, bool)
+            or not isinstance(self.token_limit, int)
+            or not 1 <= self.token_limit <= MAX_RETRIEVAL_TOKENS
+        ):
+            raise MemoryValidationError("Retrieval token limit is invalid.")
+        object.__setattr__(self, "query", query)
+
+
+@dataclass(frozen=True)
+class RetrievedMemory:
+    """One selected record and its deterministic, non-generative reason labels."""
+
+    record: "MemoryRecord"
+    token_count: int
+    reasons: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class RetrievalReceipt:
+    """Content-free explanation and resource measurements for one retrieval."""
+
+    selected_record_ids: tuple[UUID, ...]
+    applied_rules: tuple[str, ...]
+    exclusion_counts: tuple[tuple[RetrievalExclusion, int], ...]
+    records_examined: int
+    records_returned: int
+    tokens_returned: int
+
+
+@dataclass(frozen=True)
+class RetrievalResult:
+    memories: tuple[RetrievedMemory, ...]
+    receipt: RetrievalReceipt
 
 
 @dataclass(frozen=True)
@@ -245,6 +404,83 @@ class MemoryRepository:
         ):
             with self._connection_provider.connect(correlation_id) as connection:
                 return self._load_record(connection, record_id)
+
+    def retrieve(
+        self,
+        request: RetrievalRequest,
+        correlation_id: UUID,
+    ) -> RetrievalResult:
+        """Return only deterministically eligible records within both hard limits."""
+
+        if not isinstance(request, RetrievalRequest):
+            raise MemoryValidationError("Retrieval request is invalid.")
+        with self._audited(
+            correlation_id,
+            AuditOperation.REPOSITORY_READ,
+            "record_retrieve",
+        ):
+            with self._connection_provider.connect(correlation_id) as connection:
+                now = self._now()
+                candidates = self._retrieval_candidates(connection, request, now)
+                exclusions = {reason: 0 for reason in RetrievalExclusion}
+                ranked: list[tuple[int, float, str, MemoryRecord, tuple[str, ...]]] = []
+                query_terms = self._retrieval_terms(request.query)
+                for record_id, text_match, entity_match in candidates:
+                    record = self._load_record(connection, record_id)
+                    exclusion = self._retrieval_exclusion(record, request, now)
+                    if exclusion is not None:
+                        exclusions[exclusion] += 1
+                        continue
+                    score, reasons = self._retrieval_rank(
+                        record,
+                        request,
+                        query_terms,
+                        text_match=text_match,
+                        entity_match=entity_match,
+                    )
+                    ranked.append(
+                        (
+                            score,
+                            record.updated_at.timestamp(),
+                            str(record.record_id),
+                            record,
+                            reasons,
+                        )
+                    )
+
+                ranked.sort(key=lambda item: (-item[0], -item[1], item[2]))
+                selected: list[RetrievedMemory] = []
+                tokens_returned = 0
+                for _, _, _, record, reasons in ranked:
+                    if len(selected) >= request.max_records:
+                        exclusions[RetrievalExclusion.RESULT_LIMIT] += 1
+                        continue
+                    token_count = self._retrieval_token_count(record)
+                    if tokens_returned + token_count > request.token_limit:
+                        exclusions[RetrievalExclusion.TOKEN_LIMIT] += 1
+                        continue
+                    selected.append(RetrievedMemory(record, token_count, reasons))
+                    tokens_returned += token_count
+
+        rules = (
+            "confirmed_only",
+            "applicable_scope_only",
+            "currently_valid_only",
+            "restricted_requires_separate_authorization",
+            "mention_policy_enforced",
+            "deterministic_specificity_relevance_recency_rank",
+            "record_limit_enforced",
+            "token_limit_enforced",
+        )
+        receipt = RetrievalReceipt(
+            tuple(item.record.record_id for item in selected),
+            rules,
+            tuple((reason, count) for reason, count in exclusions.items() if count),
+            len(candidates),
+            len(selected),
+            tokens_returned,
+        )
+        return RetrievalResult(tuple(selected), receipt)
 
     def get_record_history(
         self,
@@ -654,6 +890,10 @@ class MemoryRepository:
                     current = self._load_record(connection, record_id)
                     self._require_version(current.row_version, expected_version)
                     now = self._now()
+                    connection.execute(
+                        "DELETE FROM record_search WHERE record_id = ?",
+                        (str(record_id),),
+                    )
                     connection.execute(
                         "DELETE FROM records WHERE record_id = ?",
                         (str(record_id),),
@@ -1079,6 +1319,20 @@ class MemoryRepository:
             content_hash,
             now,
         )
+        self._replace_search_index(
+            connection,
+            record_id,
+            draft.payload,
+            status=draft.status,
+            sensitivity=draft.sensitivity,
+            mention_policy=draft.mention_policy,
+            scope=draft.scope,
+            kind=draft.kind,
+            valid_from=draft.valid_from,
+            valid_until=draft.valid_until,
+            primary_entity_id=draft.primary_entity_id,
+            updated_at=now,
+        )
         return self._load_record(connection, record_id)
 
     def _append_revision(
@@ -1152,7 +1406,234 @@ class MemoryRepository:
             raise RepositoryConflictError(
                 "Record changed before the update completed."
             )
+        self._replace_search_index(
+            connection,
+            current.record_id,
+            payload,
+            status=status,
+            sensitivity=sensitivity,
+            mention_policy=mention_policy,
+            scope=scope,
+            kind=current.kind,
+            valid_from=valid_from,
+            valid_until=valid_until,
+            primary_entity_id=primary_entity_id,
+            updated_at=now,
+        )
         return self._load_record(connection, current.record_id)
+
+    @staticmethod
+    def _replace_search_index(
+        connection: Any,
+        record_id: UUID,
+        payload: MemoryPayload,
+        *,
+        status: RecordStatus,
+        sensitivity: Sensitivity,
+        mention_policy: MentionPolicy,
+        scope: Scope,
+        kind: RecordKind,
+        valid_from: datetime | None,
+        valid_until: datetime | None,
+        primary_entity_id: UUID | None,
+        updated_at: datetime,
+    ) -> None:
+        connection.execute(
+            "DELETE FROM record_search WHERE record_id = ?",
+            (str(record_id),),
+        )
+        connection.execute(
+            "INSERT INTO record_search (record_id, content, status, sensitivity, "
+            "mention_policy, scope_type, scope_id, kind, valid_from, valid_until, "
+            "primary_entity_id, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                str(record_id),
+                canonical_json(payload_to_data(payload)),
+                status.value,
+                sensitivity.value,
+                mention_policy.value,
+                scope.type.value,
+                None if scope.id is None else str(scope.id),
+                kind.value,
+                MemoryRepository._format_datetime(valid_from),
+                MemoryRepository._format_datetime(valid_until),
+                None if primary_entity_id is None else str(primary_entity_id),
+                updated_at.isoformat(),
+            ),
+        )
+
+    def _retrieval_candidates(
+        self,
+        connection: Any,
+        request: RetrievalRequest,
+        now: datetime,
+    ) -> tuple[tuple[UUID, bool, bool], ...]:
+        found: dict[UUID, list[bool]] = {}
+        mention_policies = [MentionPolicy.MAY_MENTION_WHEN_RELEVANT.value]
+        if request.mode is RetrievalMode.DIRECT:
+            mention_policies.append(MentionPolicy.ONLY_WHEN_DIRECTLY_ASKED.value)
+        scope_keys = [f"{scope.type.value}:{scope.id}" for scope in request.scopes]
+        kind_values = [kind.value for kind in request.kinds]
+        common_parameters = (
+            Sensitivity.RESTRICTED.value,
+            canonical_json(mention_policies),
+            now.isoformat(),
+            now.isoformat(),
+            canonical_json(scope_keys),
+            canonical_json(kind_values),
+            canonical_json(kind_values),
+        )
+
+        if request.entity_ids:
+            rows = connection.execute(
+                "SELECT r.record_id FROM records r "
+                "WHERE r.primary_entity_id IN (SELECT value FROM json_each(?)) "
+                "AND r.status = 'confirmed' AND r.sensitivity <> ? "
+                "AND r.mention_policy IN (SELECT value FROM json_each(?)) "
+                "AND (r.valid_from IS NULL OR r.valid_from <= ?) "
+                "AND (r.valid_until IS NULL OR r.valid_until >= ?) "
+                "AND (r.scope_type = 'global' OR (r.scope_type || ':' || r.scope_id) "
+                "IN (SELECT value FROM json_each(?))) "
+                "AND (json_array_length(?) = 0 OR r.kind IN "
+                "(SELECT value FROM json_each(?))) "
+                "ORDER BY r.updated_at DESC, r.record_id LIMIT ?",
+                (
+                    canonical_json(
+                        [str(entity_id) for entity_id in request.entity_ids]
+                    ),
+                )
+                + common_parameters
+                + (MAX_RETRIEVAL_CANDIDATES,),
+            ).fetchall()
+            for row in rows:
+                try:
+                    found[UUID(row[0])] = [False, True]
+                except (TypeError, ValueError) as error:
+                    raise RepositoryIntegrityError(
+                        "Stored entity index is invalid."
+                    ) from error
+
+        terms = self._retrieval_terms(request.query)
+        if terms and len(found) < MAX_RETRIEVAL_CANDIDATES:
+            expression = " AND ".join(f'"{term}"' for term in terms)
+            rows = connection.execute(
+                "SELECT record_id FROM record_search "
+                "WHERE record_search MATCH ? "
+                "AND status = 'confirmed' AND sensitivity <> ? "
+                "AND mention_policy IN (SELECT value FROM json_each(?)) "
+                "AND (valid_from IS NULL OR valid_from <= ?) "
+                "AND (valid_until IS NULL OR valid_until >= ?) "
+                "AND (scope_type = 'global' OR (scope_type || ':' || scope_id) "
+                "IN (SELECT value FROM json_each(?))) "
+                "AND (json_array_length(?) = 0 OR kind IN "
+                "(SELECT value FROM json_each(?))) "
+                "ORDER BY bm25(record_search), updated_at DESC, record_id LIMIT ?",
+                (
+                    expression,
+                )
+                + common_parameters
+                + (MAX_RETRIEVAL_CANDIDATES,),
+            ).fetchall()
+            for row in rows:
+                try:
+                    record_id = UUID(row[0])
+                except (TypeError, ValueError) as error:
+                    raise RepositoryIntegrityError(
+                        "Stored search index is invalid."
+                    ) from error
+                if record_id in found:
+                    found[record_id][0] = True
+                elif len(found) < MAX_RETRIEVAL_CANDIDATES:
+                    found[record_id] = [True, False]
+        return tuple(
+            (record_id, matches[0], matches[1])
+            for record_id, matches in found.items()
+        )
+
+    @staticmethod
+    def _retrieval_terms(query: str) -> tuple[str, ...]:
+        return _normalized_retrieval_terms(query)
+
+    @staticmethod
+    def _retrieval_exclusion(
+        record: MemoryRecord,
+        request: RetrievalRequest,
+        now: datetime,
+    ) -> RetrievalExclusion | None:
+        if record.status is not RecordStatus.CONFIRMED:
+            return RetrievalExclusion.UNCONFIRMED
+        if record.valid_from is not None and record.valid_from > now:
+            return RetrievalExclusion.NOT_CURRENT
+        if record.valid_until is not None and record.valid_until < now:
+            return RetrievalExclusion.NOT_CURRENT
+        if record.scope.type is not ScopeType.GLOBAL and record.scope not in request.scopes:
+            return RetrievalExclusion.OUT_OF_SCOPE
+        if request.kinds and record.kind not in request.kinds:
+            return RetrievalExclusion.OUT_OF_SCOPE
+        if record.sensitivity is Sensitivity.RESTRICTED:
+            return RetrievalExclusion.SENSITIVITY_RESTRICTED
+        if record.mention_policy in {
+            MentionPolicy.NEVER_MENTION,
+            MentionPolicy.ASK_BEFORE_MENTIONING,
+        }:
+            return RetrievalExclusion.MENTION_RESTRICTED
+        if (
+            record.mention_policy is MentionPolicy.ONLY_WHEN_DIRECTLY_ASKED
+            and request.mode is not RetrievalMode.DIRECT
+        ):
+            return RetrievalExclusion.MENTION_RESTRICTED
+        return None
+
+    @staticmethod
+    def _retrieval_rank(
+        record: MemoryRecord,
+        request: RetrievalRequest,
+        query_terms: tuple[str, ...],
+        *,
+        text_match: bool,
+        entity_match: bool,
+    ) -> tuple[int, tuple[str, ...]]:
+        score = 0
+        reasons: list[str] = []
+        if entity_match and record.primary_entity_id in request.entity_ids:
+            score += 100
+            reasons.append("resolved_entity_match")
+        if record.scope.type is ScopeType.GLOBAL:
+            score += 10
+            reasons.append("global_scope")
+        else:
+            score += 80 + (len(request.scopes) - request.scopes.index(record.scope))
+            reasons.append("specific_scope_match")
+        if text_match:
+            search_text = canonical_json(payload_to_data(record.revision.payload)).casefold()
+            matched_terms = sum(term in search_text for term in query_terms)
+            score += 20 * matched_terms
+            reasons.append("full_text_match")
+        kind_score = {
+            RecordKind.POLICY_PREFERENCE: 35,
+            RecordKind.PREFERENCE: 30,
+            RecordKind.FACT: 30,
+            RecordKind.EVENT: 20,
+            RecordKind.INSIGHT: 20,
+            RecordKind.NOTE: 10,
+        }[record.kind]
+        score += kind_score
+        reasons.append("kind_priority")
+        provenance_score = {
+            SourceType.EXPLICIT_USER: 12,
+            SourceType.TRUSTED_INTERFACE: 10,
+            SourceType.MIGRATION: 8,
+            SourceType.MODEL_CANDIDATE: 6,
+        }[record.revision.provenance.source_type]
+        score += provenance_score
+        reasons.append("provenance_priority")
+        return score, tuple(reasons)
+
+    @staticmethod
+    def _retrieval_token_count(record: MemoryRecord) -> int:
+        payload = canonical_json(payload_to_data(record.revision.payload))
+        return len(payload.encode("utf-8")) + RETRIEVAL_RECORD_OVERHEAD_TOKENS
 
     @staticmethod
     def _insert_revision_row(

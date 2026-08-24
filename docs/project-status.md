@@ -11,7 +11,9 @@ This document is the handoff point between coding sessions. At the end of each s
   audit writer, synthetic SQLCipher connection boundary, and checksummed
   forward-only migration layer are implemented. Typed encrypted repository
   operations now cover records, revisions, entities, links, lifecycle, and the
-  permanent deletion ledger using synthetic data only.
+  permanent deletion ledger using synthetic data only. Deterministic retrieval
+  now filters and ranks confirmed records through an encrypted FTS5 index,
+  enforces record and token ceilings, and returns content-free receipts.
 - The local permission policy is implemented and covered by automated tests.
 - GitHub Actions is configured to test pull requests targeting `main` before
   merge. The public repository has an active ruleset requiring the `test`
@@ -55,7 +57,7 @@ This document is the handoff point between coding sessions. At the end of each s
   cipher status, codec support, and FTS5, accepts keys only through a replaceable
   provider, refuses unsafe paths and plaintext fallback, and emits content-free
   database-open audit events. It has been tested only with synthetic data.
-- The encrypted schema is built from 15 fixed, packaged, single-statement SQL
+- The encrypted schema is built from 17 fixed, packaged, single-statement SQL
   migrations. Exact SHA-256 history is stored in the database; missing,
   duplicate, reordered, changed, unknown, or untracked history fails closed.
   The entire pending migration batch commits atomically or rolls back.
@@ -87,7 +89,7 @@ Work through these in order unless project needs change. Module 1 must wait unti
 - [x] Module 1: implement typed records and payloads, append-only revision
   snapshots, entities, aliases, record and entity links, lifecycle transitions,
   optimistic concurrency, candidate expiry, and the permanent deletion ledger.
-- [ ] Module 1: implement bounded retrieval and retrieval receipts.
+- [x] Module 1: implement bounded retrieval and retrieval receipts.
 - [ ] Module 1: implement explicit remember and quarantined automatic memory-
   suggestion workflows.
 - [ ] Module 1: implement encrypted backup, verification, and guided restore.
@@ -95,6 +97,44 @@ Work through these in order unless project needs change. Module 1 must wait unti
 - [ ] Add a web/search tool only behind the tool registry and approval layer.
 
 ## Session history
+
+### 2026-08-24 — Deterministic bounded memory retrieval
+
+Completed:
+
+- Added a typed retrieval request, selected-memory result, and content-free
+  receipt with selected opaque IDs, applied deterministic rules, exclusion
+  counts for post-ranking resource limits, records examined, records returned,
+  and conservatively estimated tokens returned.
+- Added an encrypted FTS5 search index with non-content control fields so
+  status, scope, sensitivity, mention policy, validity, and kind filters apply
+  before the bounded candidate set is ranked.
+- Ranked a maximum of 96 candidates by resolved entity, scope specificity,
+  full-text relevance, memory kind, provenance, recency, and stable opaque ID;
+  returned at most 12 records and 2,500 conservatively estimated tokens.
+- Kept candidates, archived or deleted records, expired records, inapplicable
+  scopes, `ask_before_mentioning`, and `never_mention` records out of ordinary
+  retrieval. Direct mode may include `only_when_directly_asked` records, but
+  restricted records remain unavailable until separate high-risk
+  authentication is implemented.
+- Updated the derived search index atomically on create, revision, lifecycle
+  change, and purge. Added forward migrations that create and backfill the
+  index from the current revision of an existing version-15 database.
+- Added synthetic tests for privacy filters, direct-request policy, scope and
+  entity ranking, count and token limits, revisions, purges, query injection,
+  content-free auditing, migration backfill, and fixed parameterized SQL.
+- Added an opt-in benchmark so normal PR CI does not spend its budget building
+  a 100,000-record fixture. On the primary development Mac, 30 measured queries
+  over 100,000 encrypted synthetic records reported 9.05 ms median and 9.31 ms
+  p95 retrieval, 96 examined candidates, 12 returned records, 1,297 estimated
+  tokens, and a 138,780,672-byte database.
+
+Next:
+
+- Implement explicit remember and quarantined automatic memory-suggestion
+  workflows without connecting persistent memory to normal chat yet.
+- Confirm SQLCipher, migrations, retrieval, and the locked `uv` environment in
+  the eventual batched Linux pull-request run.
 
 ### 2026-08-24 — Typed encrypted memory repository and uv adoption
 

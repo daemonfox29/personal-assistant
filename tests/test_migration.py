@@ -4,6 +4,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 from uuid import UUID, uuid4
+from hashlib import sha256
 
 from personal_assistant.audit import (
     AuditOperation,
@@ -26,6 +27,7 @@ from personal_assistant.migration import (
     PackageMigrationSource,
     SCHEMA_COMPATIBILITY,
 )
+from personal_assistant.memory_types import canonical_json
 
 
 SYNTHETIC_KEY = bytes(range(32))
@@ -174,7 +176,7 @@ class MigrationTests(unittest.TestCase):
             current_runner, _ = self._runner(database)
             result = current_runner.migrate(uuid4())
 
-            self.assertEqual(result.applied_versions, (14, 15))
+            self.assertEqual(result.applied_versions, (14, 15, 16, 17))
             with database.connect(uuid4()) as connection:
                 tables = {
                     row[0]
@@ -184,6 +186,72 @@ class MigrationTests(unittest.TestCase):
                 }
             self.assertIn("records", tables)
             self.assertIn("entity_links", tables)
+
+    def test_search_migration_backfills_current_revision_from_prior_schema(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            database = self._database(Path(temporary_directory) / "memory.db")
+            migrations = PackageMigrationSource().load()
+            prior_runner, _ = self._runner(database, migrations=migrations[:15])
+            prior_runner.migrate(uuid4())
+            record_id = uuid4()
+            timestamp = "2026-01-01T12:00:00+00:00"
+            snapshot = canonical_json(
+                {
+                    "schema_version": 1,
+                    "kind": "fact",
+                    "status": "confirmed",
+                    "sensitivity": "normal",
+                    "mention_policy": "may_mention_when_relevant",
+                    "scope_type": "global",
+                    "scope_id": None,
+                    "primary_entity_id": None,
+                    "valid_from": None,
+                    "valid_until": None,
+                    "candidate_expires_at": None,
+                    "payload": {
+                        "type": "fact",
+                        "subject": "synthetic subject",
+                        "statement": "backfilled synthetic needle",
+                    },
+                }
+            )
+            with database.connect(uuid4()) as connection:
+                connection.execute(
+                    "INSERT INTO records (record_id, kind, status, sensitivity, "
+                    "mention_policy, scope_type, scope_id, primary_entity_id, "
+                    "current_revision, valid_from, valid_until, candidate_expires_at, "
+                    "created_at, updated_at, row_version) "
+                    "VALUES (?, 'fact', 'confirmed', 'normal', "
+                    "'may_mention_when_relevant', 'global', NULL, NULL, 1, NULL, "
+                    "NULL, NULL, ?, ?, 1)",
+                    (str(record_id), timestamp, timestamp),
+                )
+                connection.execute(
+                    "INSERT INTO record_revisions (record_id, revision, "
+                    "payload_version, payload_json, source_type, source_ref, "
+                    "reason_code, actor_type, model_version, previous_hash, "
+                    "content_hash, created_at) VALUES (?, 1, 1, ?, "
+                    "'explicit_user', 'synthetic-user-turn', 'created', 'user', "
+                    "NULL, NULL, ?, ?)",
+                    (
+                        str(record_id),
+                        snapshot,
+                        sha256(snapshot.encode("utf-8")).hexdigest(),
+                        timestamp,
+                    ),
+                )
+                connection.commit()
+
+            current_runner, _ = self._runner(database)
+            result = current_runner.migrate(uuid4())
+
+            self.assertEqual(result.applied_versions, (16, 17))
+            with database.connect(uuid4()) as connection:
+                rows = connection.execute(
+                    "SELECT record_id FROM record_search "
+                    "WHERE record_search MATCH 'backfilled'"
+                ).fetchall()
+            self.assertEqual(rows, [(str(record_id),)])
 
     def test_missing_duplicate_and_reordered_sources_are_rejected_before_open(self) -> None:
         migrations = PackageMigrationSource().load()
