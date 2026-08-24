@@ -1,5 +1,7 @@
 # Tests
 
-This folder will hold automated checks for the assistant's code.
+This folder holds automated checks for the assistant's code.
 
-We will add tests alongside each feature as the project grows.
+Tests are added alongside each feature. They use mocks, temporary directories,
+and synthetic data; personal information, credentials, live audit logs, and
+persistent databases do not belong in fixtures or test output.

@@ -7,8 +7,8 @@ This document is the handoff point between coding sessions. At the end of each s
 - Module 0 and the Module 0.1 hardening gate are complete: Git safety rules,
   project documentation, source layout, virtual environment, project metadata,
   deterministic security boundaries, a local model adapter, and a runnable chat
-  are in place. The Module 1 persistent-memory specification is approved;
-  implementation has not begun.
+  are in place. The Module 1 persistent-memory specification is approved, and
+  its bounded redacted audit-writer prerequisite is implemented.
 - The local permission policy is implemented and covered by automated tests.
 - GitHub Actions is configured to test pull requests targeting `main` before
   merge. The public repository has an active ruleset requiring the `test`
@@ -40,6 +40,10 @@ This document is the handoff point between coding sessions. At the end of each s
 - Terminal output escapes control and invisible formatting characters. Expected
   local-model, malformed-response, configuration, and interruption failures
   fail closed with fixed user-safe messages.
+- Typed audit events accept no free-form message content. The replaceable local
+  JSON Lines writer enforces restrictive permissions, event and file ceilings,
+  bounded rotation, symbolic-link refusal, and safe failure messages. It is not
+  connected to model, tool, or personal-data operations yet.
 
 ## Outstanding actions
 
@@ -56,7 +60,7 @@ Work through these in order unless project needs change. Module 1 must wait unti
 - [x] Begin Module 1: design the encrypted SQLite data boundary, memory
   lifecycle, retrieval rules, migrations, backup, and acceptance tests before
   storing personal data.
-- [ ] Module 1 prerequisite: implement the bounded, redacted audit writer before
+- [x] Module 1 prerequisite: implement the bounded, redacted audit writer before
   persistent personal-data operations are enabled.
 - [ ] Module 1: verify and select a cross-platform encrypted SQLite provider and
   key-provider boundary using synthetic data.
@@ -67,6 +71,31 @@ Work through these in order unless project needs change. Module 1 must wait unti
 - [ ] Add a web/search tool only behind the tool registry and approval layer.
 
 ## Session history
+
+### 2026-08-24 — Bounded redacted audit writer
+
+Completed:
+
+- Added typed audit components, operations, outcomes, reason codes, UUID
+  correlation, bounded durations, and allowlisted metadata without a free-form
+  message field.
+- Added a replaceable audit-sink protocol and an in-memory test sink.
+- Added an explicitly configured JSON Lines writer with restrictive POSIX
+  permissions, one-line structured events, a 16 KiB event ceiling, a 1 MiB file
+  ceiling, five retained rotations, synchronous disk flush, and symbolic-link
+  refusal.
+- Added focused tests for validation, injection attempts, size bounds,
+  permissions, rotation, retention, unsafe targets, and non-sensitive error
+  messages. The complete suite passes with 106 tests.
+- Kept the writer disconnected from normal chat; no runtime audit file or
+  personal-data store is created by this change.
+
+Next:
+
+- Spike the cross-platform encrypted SQLite and key-provider boundary with
+  synthetic data.
+- Integrate typed audit events as each model, authorization, database, backup,
+  and future tool boundary is enabled or revised.
 
 ### 2026-08-24 — Module 1 persistent-memory specification
 

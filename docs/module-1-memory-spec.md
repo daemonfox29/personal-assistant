@@ -578,16 +578,16 @@ history.
 
 ## Implementation order
 
-1. Implement typed redacted audit events and the bounded local audit writer.
-2. Spike and select the cross-platform encrypted SQLite provider and key-
+1. [x] Implement typed redacted audit events and the bounded local audit writer.
+2. [ ] Spike and select the cross-platform encrypted SQLite provider and key-
    provider interface using synthetic data.
-3. Implement the migration runner and initial schema.
-4. Implement typed repository operations, revisions, entities, links,
+3. [ ] Implement the migration runner and initial schema.
+4. [ ] Implement typed repository operations, revisions, entities, links,
    lifecycle rules, and deletion ledger.
-5. Implement deterministic bounded retrieval and retrieval receipts.
-6. Implement explicit remember and automatic quarantined-candidate workflows.
-7. Implement encrypted daily backup, verification, and guided restore.
-8. Integrate persistent memory into chat only after all preceding boundaries
+5. [ ] Implement deterministic bounded retrieval and retrieval receipts.
+6. [ ] Implement explicit remember and automatic quarantined-candidate workflows.
+7. [ ] Implement encrypted daily backup, verification, and guided restore.
+8. [ ] Integrate persistent memory into chat only after all preceding boundaries
    and tests pass, then verify restart-persistent recall with synthetic data.
 
 Each step is locally tested and committed. Pushes and pull requests remain

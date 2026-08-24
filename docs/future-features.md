@@ -27,13 +27,14 @@ When a feature is added, use automation to create the standard project pieces wh
 
 After the Module 0.1 approval-receipt foundation is in place, build a small trusted interface that clearly shows the exact action and arguments before the user approves it. Its approval receipt should be one-use and short-lived, so an assistant cannot silently reuse a previous approval for a different action.
 
-## Local audit trail
+## Audit trail integrations
 
-Implement the bounded, redacted local audit writer described in
-`docs/audit-logging.md` before tools or personal-data operations are enabled.
-The audit trail should diagnose blocked redirects, permission decisions,
-approval receipts, tool execution, and database operations without recording
-prompts, responses, credentials, or personal record content by default.
+The bounded, redacted local audit writer described in `docs/audit-logging.md` is
+implemented. Integrate its typed events into blocked redirects, permission
+decisions, approval receipts, tool execution, and database operations as those
+capabilities are built. Each integration needs focused tests proving it does not
+record prompts, responses, credentials, URLs, paths, exception text, or personal
+record content.
 
 ## Post-merge CI verification
 
