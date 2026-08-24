@@ -76,11 +76,31 @@ Initial defaults:
 
 - offer automatic unlock through the current operating system's credential
   store, while retaining a separate portable recovery passphrase;
+- do not require a separate login for ordinary conversation; require a local
+  passcode or passphrase entered through the trusted interface for each exact
+  high-risk operation;
 - retain seven verified, encrypted daily backups;
 - limit one backup to 2 GiB and the complete retained backup set to 10 GiB,
   with a warning before backup coverage would be lost; and
 - show tentative memory suggestions in a review inbox, but exclude them from
   ordinary retrieval until the user confirms them.
+
+High-risk operations should initially include restricted or bulk memory access,
+exports, permanent deletion, backup restore, encryption-key changes, lowering
+privacy restrictions, enabling external or remote capabilities, and changing
+minimum audit protections. The credential must never enter chat, model context,
+or logs. Failed attempts must be rate-limited and audited, and successful
+authentication must issue only a short-lived, one-use approval for the exact
+displayed operation.
+
+The interface may adjust behavior within documented safe ranges, including
+memory categories, mention policies, retrieval limits, backup schedules, and
+enabled registered tools. Foundational invariants are not runtime toggles: the
+model cannot issue its own approval, memories cannot grant authority,
+credentials cannot enter model context, unknown actions remain denied, and the
+executor remains the only route to capabilities. The owner can deliberately
+change those invariants through the normal source-review and testing workflow,
+but not through a conversational instruction to the running assistant.
 
 ## Portable encrypted import and export
 
