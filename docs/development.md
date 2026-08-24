@@ -15,7 +15,28 @@ Review `pyproject.toml` whenever a change:
 - changes package metadata or source layout;
 - adds or changes test, formatting, linting, or build tooling.
 
-If `pyproject.toml` changes, update any related documentation and verify the project still installs and tests successfully.
+If `pyproject.toml` changes, update `uv.lock` deliberately with `uv lock`, update
+related documentation, and verify the locked project still installs and tests
+successfully. CI uses `uv sync --locked`, so an out-of-date lockfile fails
+instead of silently selecting different dependencies.
+
+## Local environment and tests
+
+Use the project-pinned `uv` 0.12.5 workflow:
+
+```bash
+uv sync --locked
+uv run --locked --no-sync python -m unittest discover -s tests -v
+```
+
+`uv sync` installs the project as editable into `.venv`. The `--locked` option
+requires `uv.lock` to match `pyproject.toml`; `--no-sync` on the test command
+then proves the already-synchronized environment is sufficient. Use `uv lock`
+only when intentionally changing dependency metadata, inspect the resulting
+diff and package hashes, and commit `pyproject.toml` and `uv.lock` together.
+
+The package still uses `setuptools` as its build backend. Adopting `uv` does not
+require a build-backend migration.
 
 ## Change workflow
 

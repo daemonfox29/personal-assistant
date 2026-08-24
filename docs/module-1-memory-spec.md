@@ -583,7 +583,7 @@ history.
    key-provider interfaces using synthetic data. Confirm Linux in the batched PR
    run and Windows before distributing a packaged Windows build.
 3. [x] Implement the migration runner and initial schema.
-4. [ ] Implement typed repository operations, revisions, entities, links,
+4. [x] Implement typed repository operations, revisions, entities, links,
    lifecycle rules, and deletion ledger.
 5. [ ] Implement deterministic bounded retrieval and retrieval receipts.
 6. [ ] Implement explicit remember and automatic quarantined-candidate workflows.

@@ -116,6 +116,7 @@ class MigrationTests(unittest.TestCase):
                         "record_revisions",
                         "entities",
                         "entity_aliases",
+                        "entity_links",
                         "record_links",
                         "memory_feedback",
                         "deletion_ledger",
@@ -159,6 +160,30 @@ class MigrationTests(unittest.TestCase):
                     "SELECT count(*) FROM schema_migrations"
                 ).fetchone()[0]
             self.assertEqual(count, first.current_version)
+
+    def test_new_entity_link_migrations_apply_forward_from_prior_schema(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            database = self._database(Path(temporary_directory) / "memory.db")
+            migrations = PackageMigrationSource().load()
+            prior_runner, _ = self._runner(
+                database,
+                migrations=migrations[:13],
+            )
+            prior_runner.migrate(uuid4())
+
+            current_runner, _ = self._runner(database)
+            result = current_runner.migrate(uuid4())
+
+            self.assertEqual(result.applied_versions, (14, 15))
+            with database.connect(uuid4()) as connection:
+                tables = {
+                    row[0]
+                    for row in connection.execute(
+                        "SELECT name FROM sqlite_master WHERE type = 'table'"
+                    ).fetchall()
+                }
+            self.assertIn("records", tables)
+            self.assertIn("entity_links", tables)
 
     def test_missing_duplicate_and_reordered_sources_are_rejected_before_open(self) -> None:
         migrations = PackageMigrationSource().load()
@@ -258,7 +283,10 @@ class MigrationTests(unittest.TestCase):
                     ).fetchall()
                 ]
             self.assertNotIn(5, versions)
-            self.assertEqual(len(versions), 12)
+            self.assertEqual(
+                len(versions),
+                len(PackageMigrationSource().load()) - 1,
+            )
 
     def test_failing_pending_batch_rolls_back_completely(self) -> None:
         with TemporaryDirectory() as temporary_directory:

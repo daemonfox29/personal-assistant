@@ -9,7 +9,9 @@ This document is the handoff point between coding sessions. At the end of each s
   deterministic security boundaries, a local model adapter, and a runnable chat
   are in place. The Module 1 persistent-memory specification, bounded redacted
   audit writer, synthetic SQLCipher connection boundary, and checksummed
-  forward-only migration layer are implemented.
+  forward-only migration layer are implemented. Typed encrypted repository
+  operations now cover records, revisions, entities, links, lifecycle, and the
+  permanent deletion ledger using synthetic data only.
 - The local permission policy is implemented and covered by automated tests.
 - GitHub Actions is configured to test pull requests targeting `main` before
   merge. The public repository has an active ruleset requiring the `test`
@@ -23,6 +25,9 @@ This document is the handoff point between coding sessions. At the end of each s
   window for real chats, caps normal responses at 400 tokens, and asks Ollama
   to unload the model after five idle minutes.
 - Shared defaults and machine-local environment overrides are centralized in `config.py`.
+- Project dependency management uses pinned `uv` 0.12.5, a committed
+  cross-platform `uv.lock`, locked local synchronization, and locked CI
+  execution. `setuptools` remains the package build backend.
 - The local-only chat streams responses and has session-only conversation memory while it is open. It has no persistent memory, tools, browser access, personal-data access, credential access, or web capability.
 - Conversation policy is documented separately from the action-permission policy.
 - `docs/security-principles.md` is the governing threat model and review
@@ -44,13 +49,13 @@ This document is the handoff point between coding sessions. At the end of each s
 - Typed audit events accept no free-form message content. The replaceable local
   JSON Lines writer enforces restrictive permissions, event and file ceilings,
   bounded rotation, symbolic-link refusal, and safe failure messages. It is not
-  connected to normal chat, model, tool, or personal-data repository operations
-  yet; the synthetic encrypted-database boundary now uses its open events.
+  connected to normal chat, model, or tool operations; the encrypted-database,
+  migration, and synthetic repository boundaries now emit typed events.
 - The encrypted database boundary pins `sqlcipher3` 0.6.2, requires SQLCipher 4
   cipher status, codec support, and FTS5, accepts keys only through a replaceable
   provider, refuses unsafe paths and plaintext fallback, and emits content-free
   database-open audit events. It has been tested only with synthetic data.
-- The encrypted schema is built from 13 fixed, packaged, single-statement SQL
+- The encrypted schema is built from 15 fixed, packaged, single-statement SQL
   migrations. Exact SHA-256 history is stored in the database; missing,
   duplicate, reordered, changed, unknown, or untracked history fails closed.
   The entire pending migration batch commits atomically or rolls back.
@@ -79,13 +84,55 @@ Work through these in order unless project needs change. Module 1 must wait unti
   packaged Windows build.
 - [x] Module 1: implement and test the checksummed migration runner and initial
   encrypted schema using synthetic data only.
-- [ ] Module 1: implement typed repositories, bounded retrieval, memory
-  suggestions, and encrypted backup/restore in the order defined by
-  `docs/module-1-memory-spec.md`.
+- [x] Module 1: implement typed records and payloads, append-only revision
+  snapshots, entities, aliases, record and entity links, lifecycle transitions,
+  optimistic concurrency, candidate expiry, and the permanent deletion ledger.
+- [ ] Module 1: implement bounded retrieval and retrieval receipts.
+- [ ] Module 1: implement explicit remember and quarantined automatic memory-
+  suggestion workflows.
+- [ ] Module 1: implement encrypted backup, verification, and guided restore.
 - [ ] Define the assistant's first tool registry and permission-enforcement path before adding any tool.
 - [ ] Add a web/search tool only behind the tool registry and approval layer.
 
 ## Session history
+
+### 2026-08-24 — Typed encrypted memory repository and uv adoption
+
+Completed:
+
+- Added registered, bounded payload types for facts, preferences, events, notes,
+  insights, and policy preferences; typed provenance, sensitivity, mention,
+  scope, entity, alias, and link values; and conservative rejection of
+  credential-associated or unsafe-control content.
+- Added fixed parameterized repository methods for encrypted record creation,
+  inspection, correction, control changes, candidate confirmation/rejection,
+  archival, restoration, soft deletion, atomic supersession, bounded candidate
+  expiry, and permanent purge.
+- Stored a canonical full-envelope snapshot for every append-only revision,
+  linked revision hashes, and enforced optimistic row versions so stale writes
+  fail without overwriting newer state.
+- Added stable entities, exact normalized aliases that preserve ambiguous
+  matches, record and entity links, three-distinct-evidence enforcement for
+  insights, feedback records, and purge-ledger suppression.
+- Kept model output quarantined to expiring candidate records. It cannot create
+  confirmed memory or directly change an existing memory, alias, or entity
+  link.
+- Added content-free repository audit events and synthetic encrypted tests for
+  injection-shaped text, lifecycle rules, stale writes, ambiguity, tampering,
+  purge, model-boundary attempts, and audit failure before mutation. The full
+  suite passes with 154 tests.
+- Installed and pinned `uv` 0.12.5, committed its cross-platform lockfile,
+  required locked local and CI installs, and retained `setuptools` as the build
+  backend.
+- Kept all persistent-memory operations disconnected from chat; no real
+  personal data, key, audit log, or runtime database was created.
+
+Next:
+
+- Implement deterministic bounded retrieval and content-free retrieval receipts
+  over confirmed records only.
+- Confirm the SQLCipher and locked `uv` workflow in the eventual Linux PR run;
+  retain Windows as an explicit pre-distribution verification gate.
 
 ### 2026-08-24 — Checksummed encrypted schema migrations
 

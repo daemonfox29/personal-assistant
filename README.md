@@ -16,16 +16,31 @@ A modular, local-first personal AI assistant built in Python.
 Module 0 and its Module 0.1 hardening gate are complete: a tested local chat
 foundation with replaceable components and deterministic safety boundaries.
 The Module 1 encrypted persistent-memory specification is approved;
-implementation now includes the audit foundation and a verified SQLCipher
-connection boundary using synthetic data. Tools and persistent personal data
-are not enabled yet.
+implementation now includes the audit foundation, verified SQLCipher boundary,
+checksummed migrations, and a typed revisioned repository using synthetic data.
+Tools and persistent personal data are not enabled yet.
+
+## Set up the project
+
+The project uses `uv` 0.12.5 for locked, cross-platform dependency management.
+After installing that pinned version of
+[`uv`](https://docs.astral.sh/uv/getting-started/installation/), run:
+
+```bash
+uv sync --locked
+```
+
+The committed `uv.lock` records package hashes and compatible SQLCipher wheels
+for the supported Python 3.11–3.14 range. Do not edit it manually. `setuptools`
+remains the package build backend; `uv` manages resolution, installation,
+environments, and project commands.
 
 ## Run the local chat
 
 From the project folder:
 
 ```bash
-./.venv/bin/python -m personal_assistant
+uv run --locked python -m personal_assistant
 ```
 
 The app starts Ollama if needed, sends its documented empty preload request
@@ -66,7 +81,7 @@ Safe shared defaults are in `src/personal_assistant/config.py`.
 For a machine-local temporary override, set an environment variable before running the app:
 
 ```bash
-PERSONAL_ASSISTANT_MODEL_NAME=qwen3:8b ./.venv/bin/python -m personal_assistant
+PERSONAL_ASSISTANT_MODEL_NAME=qwen3:8b uv run --locked python -m personal_assistant
 ```
 
 The shared default context window is 16,384 tokens. It can be changed
@@ -74,7 +89,7 @@ independently of the 2,000-token response ceiling; for example, a machine with
 more model capacity can use 32K:
 
 ```bash
-PERSONAL_ASSISTANT_CONTEXT_TOKENS=32768 ./.venv/bin/python -m personal_assistant
+PERSONAL_ASSISTANT_CONTEXT_TOKENS=32768 uv run --locked python -m personal_assistant
 ```
 
 Available overrides include:

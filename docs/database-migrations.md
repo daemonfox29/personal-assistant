@@ -32,10 +32,10 @@ file and adding focused forward- and failure-path tests.
 
 The initial migrations create the ledger plus the structural tables described
 in the approved memory specification: records, append-only revisions, entities,
-aliases, record links, memory feedback, and the permanent deletion ledger.
-They also create narrow lookup indexes for later bounded retrieval.
+aliases, record and entity links, memory feedback, and the permanent deletion
+ledger. They also create narrow lookup indexes for later bounded retrieval.
 
 This schema does not by itself authorize persistence. There is still no chat
-integration and no real personal data is stored. Typed repository validators,
-lifecycle operations, retrieval policy, backup/recovery, and their tests remain
-required before persistent memory can be enabled.
+integration and no real personal data is stored. The typed repository is now
+implemented, but retrieval policy, workflow coordination, backup/recovery, and
+their tests remain required before persistent memory can be enabled.

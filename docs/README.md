@@ -14,6 +14,8 @@ This folder holds human-readable notes about the assistant's design, decisions, 
   contract.
 - [Encrypted SQLite provider spike](encrypted-database-spike.md): SQLCipher
   selection, verified guarantees, tradeoffs, and remaining platform checks.
+- [Typed memory repository](memory-repository.md): validated payloads,
+  revisions, entities, lifecycle, purge, and current access boundaries.
 - [Conversation policy](conversation-policy.md): rules governing what the
   assistant says.
 - [Project status](project-status.md): current implementation state and session
