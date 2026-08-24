@@ -43,6 +43,29 @@ If the project risk or GitHub Actions budget increases, add a `push` trigger for
 runs only on pull requests targeting `main`, avoiding a duplicate job for every
 merge while the project has a limited Actions budget.
 
+## Windows compatibility verification
+
+Before this assistant is distributed or used with real personal data on
+Windows, add an explicit Windows release gate. At minimum, verify on a supported
+Windows 11 environment that:
+
+- the pinned Python and SQLCipher packages install without an unencrypted
+  SQLite fallback;
+- encrypted databases can be created, closed, reopened, migrated, backed up,
+  and restored;
+- a synthetic encrypted database is readable across macOS and Windows when the
+  same key is supplied, while the wrong key and ordinary SQLite both fail;
+- Windows path, file-permission, atomic-replace, external-drive, and credential-
+  store behavior satisfy the same fail-closed security contract;
+- the complete automated test suite passes; and
+- installation and recovery instructions are tested by following them from a
+  clean machine or virtual machine.
+
+Add Windows CI only at an appropriate release milestone so the current
+pull-request workflow does not spend the limited Actions budget on an unused
+platform. Treat Windows support as unverified until this gate passes; package
+availability alone is not proof of runtime compatibility.
+
 ## Memory, privacy, and backup settings interface
 
 Add a non-technical configuration interface for persistent memory after the
