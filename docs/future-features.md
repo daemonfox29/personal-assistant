@@ -71,3 +71,13 @@ configurable storage limit, and restorable across macOS, Windows, and Linux.
 Before a restore, create a pre-restore snapshot when space permits, verify the
 candidate backup, explain what will change, require explicit approval, and
 reapply the permanent-deletion ledger so purged records are not resurrected.
+
+Initial defaults:
+
+- offer automatic unlock through the current operating system's credential
+  store, while retaining a separate portable recovery passphrase;
+- retain seven verified, encrypted daily backups;
+- limit one backup to 2 GiB and the complete retained backup set to 10 GiB,
+  with a warning before backup coverage would be lost; and
+- show tentative memory suggestions in a review inbox, but exclude them from
+  ordinary retrieval until the user confirms them.
