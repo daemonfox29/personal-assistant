@@ -93,6 +93,16 @@ or logs. Failed attempts must be rate-limited and audited, and successful
 authentication must issue only a short-lived, one-use approval for the exact
 displayed operation.
 
+Risk classification must consider potential harm to the user's safety,
+finances, privacy, mental or physical health, reputation, and overall
+wellbeing, whether the risk comes from error, ignorance, compromised input, or
+malicious intent. The model may flag uncertainty or recommend a higher risk
+level, but it cannot lower the deterministic policy's classification. Unknown
+or ambiguous consequential actions fail closed for clarification or stronger
+authorization. A passcode proves user intent for an otherwise permitted action;
+it does not override a permanent denial or replace independent verification
+required for medical, financial, legal, or other consequential decisions.
+
 The interface may adjust behavior within documented safe ranges, including
 memory categories, mention policies, retrieval limits, backup schedules, and
 enabled registered tools. Foundational invariants are not runtime toggles: the
