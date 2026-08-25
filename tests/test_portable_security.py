@@ -136,6 +136,54 @@ class PortableSecurityTests(unittest.TestCase):
         self.assertNotIn(PASSCODE, repr(self.audit.events))
         self.assertEqual(self.audit.events[-1].outcome, AuditOutcome.SUCCEEDED)
 
+    def test_receipt_expiry_uses_monotonic_clock_not_wall_clock(self) -> None:
+        self._setup()
+        wall = [100.0]
+        monotonic = [10.0]
+        gate = PasscodeApprovalGate(
+            self.manager,
+            audit_sink=self.audit,
+            clock=lambda: wall[0],
+            receipt_clock=lambda: monotonic[0],
+        )
+        arguments = {"snapshot_name": "synthetic.db"}
+        grant = gate.approve(
+            ActionKind.MEMORY_BACKUP_RESTORE,
+            arguments,
+            PASSCODE,
+            uuid4(),
+        )
+        wall[0] = -10_000.0
+        monotonic[0] = 11.0
+
+        self.assertTrue(
+            authorize_action(
+                ActionKind.MEMORY_BACKUP_RESTORE,
+                arguments=arguments,
+                approval_receipt=grant.receipt,
+                approval_authority=grant.authority,
+            ).allowed
+        )
+
+    def test_existing_process_lock_blocks_parallel_passcode_check(self) -> None:
+        self._setup()
+        state_path = self.manifest.parent / "approval-rate-limit.json"
+        lock_path = state_path.with_name(f".{state_path.name}.lock")
+        lock_path.write_text("locked\n", encoding="utf-8")
+        gate = PasscodeApprovalGate(
+            self.manager,
+            audit_sink=self.audit,
+            state_path=state_path,
+        )
+
+        with self.assertRaisesRegex(PasscodeVerificationError, "already in progress"):
+            gate.approve(
+                ActionKind.MEMORY_BACKUP_RESTORE,
+                {"snapshot_name": "synthetic.db"},
+                PASSCODE,
+                uuid4(),
+            )
+
     def test_passcode_failures_are_rate_limited(self) -> None:
         self._setup()
         now = 100.0

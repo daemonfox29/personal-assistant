@@ -245,7 +245,11 @@ class PostResponseMemoryWorker:
 
         turn_id = uuid4()
         if self._cancelled.is_set():
-            self._emit(turn_id, AuditOutcome.CANCELLED, AuditReasonCode.USER_CANCELLED)
+            self._safe_emit(
+                turn_id,
+                AuditOutcome.CANCELLED,
+                AuditReasonCode.USER_CANCELLED,
+            )
             return False
         try:
             self._queue.put_nowait(
@@ -257,7 +261,11 @@ class PostResponseMemoryWorker:
                 )
             )
         except Full:
-            self._emit(turn_id, AuditOutcome.SKIPPED, AuditReasonCode.RESOURCE_LIMIT)
+            self._safe_emit(
+                turn_id,
+                AuditOutcome.SKIPPED,
+                AuditReasonCode.RESOURCE_LIMIT,
+            )
             return False
         return True
 
@@ -278,22 +286,40 @@ class PostResponseMemoryWorker:
                 turn = self._queue.get(timeout=0.1)
             except Empty:
                 continue
-            suggestions = self._analyzer.analyze(
-                turn.user_text,
-                turn.assistant_text,
-                turn.source_ref,
-                turn.correlation_id,
-            )
-            if self._cancelled.is_set():
-                continue
             try:
+                suggestions = self._analyzer.analyze(
+                    turn.user_text,
+                    turn.assistant_text,
+                    turn.source_ref,
+                    turn.correlation_id,
+                )
+                if self._cancelled.is_set():
+                    continue
                 self._coordinator.process_suggestion_batch(
                     suggestions,
                     turn.correlation_id,
                     is_cancelled=self._cancelled.is_set,
                 )
             except Exception:
+                self._safe_emit(
+                    turn.correlation_id,
+                    AuditOutcome.FAILED,
+                    AuditReasonCode.SAFE_INTERNAL_FAILURE,
+                )
                 continue
+
+    def _safe_emit(
+        self,
+        correlation_id: UUID,
+        outcome: AuditOutcome,
+        reason: AuditReasonCode,
+    ) -> None:
+        """Best-effort status only; an audit outage must not kill the worker."""
+
+        try:
+            self._emit(correlation_id, outcome, reason)
+        except Exception:
+            pass
 
     def _emit(
         self,

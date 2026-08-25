@@ -525,7 +525,14 @@ _RESTRICTED_CONTENT = re.compile(
 )
 _SENSITIVE_CONTENT = re.compile(
     r"\b(?:emotion\w*|anxi\w*|depress\w*|grief|relationship|conflict|"
-    r"health|money|financial|location|address|workplace)\b",
+    r"health|money|financial|location|address|workplace|date\s+of\s+birth|"
+    r"birth\s*date|phone(?:\s+number)?|email(?:\s+address)?)\b",
+    re.IGNORECASE,
+)
+_RESTRICTED_IDENTITY_CONTENT = re.compile(
+    r"\b(?:social\s+security(?:\s+number)?|ssn|tax(?:payer)?\s+(?:id|number)|"
+    r"passport(?:\s+number)?|driver(?:'s)?\s+licen[cs]e(?:\s+number)?|"
+    r"national\s+(?:id|identifier)|insurance\s+(?:id|number))\b",
     re.IGNORECASE,
 )
 
@@ -550,7 +557,7 @@ def _automatic_sensitivity(
 
 def _deterministic_sensitivity(payload: MemoryPayload) -> Sensitivity:
     text = canonical_json(payload_to_data(payload))
-    if _RESTRICTED_CONTENT.search(text):
+    if _RESTRICTED_CONTENT.search(text) or _RESTRICTED_IDENTITY_CONTENT.search(text):
         return Sensitivity.RESTRICTED
     if _SENSITIVE_CONTENT.search(text):
         return Sensitivity.SENSITIVE

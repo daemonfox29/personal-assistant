@@ -232,6 +232,14 @@ class EncryptedBackupManager:
                 f".memory-{identifier}.metadata.partial"
             )
             self._write_metadata(snapshot, metadata_partial, now)
+            self._emit(
+                correlation_id,
+                AuditOperation.BACKUP_CREATE,
+                AuditOutcome.SUCCEEDED,
+                AuditReasonCode.NORMAL,
+                size,
+                started,
+            )
             self._durable_replace(metadata_partial, metadata_final)
             metadata_partial = None
             try:
@@ -243,14 +251,6 @@ class EncryptedBackupManager:
             if os.name == "posix":
                 final.chmod(0o600)
             self._enforce_retention(final)
-            self._emit(
-                correlation_id,
-                AuditOperation.BACKUP_CREATE,
-                AuditOutcome.SUCCEEDED,
-                AuditReasonCode.NORMAL,
-                size,
-                started,
-            )
             return snapshot
         except BackupIntegrityError:
             self._emit(
@@ -378,6 +378,14 @@ class EncryptedBackupManager:
             )
             self._verify_database(candidate_database, correlation_id, migrate=False)
 
+            self._emit(
+                correlation_id,
+                AuditOperation.BACKUP_RESTORE,
+                AuditOutcome.SUCCEEDED,
+                AuditReasonCode.NORMAL,
+                plan.snapshot.byte_count,
+                started,
+            )
             os.replace(self._settings.live_path, rollback)
             self._durable_replace(candidate, self._settings.live_path)
             try:
@@ -392,14 +400,6 @@ class EncryptedBackupManager:
                 os.replace(rollback, self._settings.live_path)
                 raise
             rollback.unlink()
-            self._emit(
-                correlation_id,
-                AuditOperation.BACKUP_RESTORE,
-                AuditOutcome.SUCCEEDED,
-                AuditReasonCode.NORMAL,
-                plan.snapshot.byte_count,
-                started,
-            )
         except RestoreAuthorizationError:
             raise
         except Exception as error:

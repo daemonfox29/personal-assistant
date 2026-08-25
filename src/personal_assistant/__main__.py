@@ -37,39 +37,46 @@ def startup_message() -> str:
 def main() -> None:
     """Start the assistant and preload its configured local model."""
     try:
-        print("Loading the local model...")
         settings = load_settings()
-        model = OllamaModel(settings.ollama)
-        model.warm_up()
         memory_runtime = _open_memory_runtime(settings.memory)
-        memory_worker = None
-        if memory_runtime is not None and settings.memory.automatic_suggestions:
-            analyzer = ModelMemorySuggestionAnalyzer(
-                model,
-                settings.ollama.model_name,
-                audit_sink=memory_runtime.audit_sink,
-            )
-            memory_worker = PostResponseMemoryWorker(
-                analyzer,
-                memory_runtime.capture,
-                audit_sink=memory_runtime.audit_sink,
-            )
         try:
-            print(startup_message())
-            ChatSession(
-                model,
-                settings.chat,
-                context_window_tokens=settings.ollama.context_tokens,
-                default_response_tokens=settings.ollama.max_response_tokens,
-                memory_context_provider=(
-                    None if memory_runtime is None else memory_runtime.context_provider
-                ),
-                explicit_memory_handler=memory_runtime,
-                post_response_worker=memory_worker,
-            ).run()
+            print("Loading the local model...")
+            model = OllamaModel(settings.ollama)
+            model.warm_up()
+            memory_worker = None
+            try:
+                if (
+                    memory_runtime is not None
+                    and settings.memory.automatic_suggestions
+                ):
+                    analyzer = ModelMemorySuggestionAnalyzer(
+                        model,
+                        settings.ollama.model_name,
+                        audit_sink=memory_runtime.audit_sink,
+                    )
+                    memory_worker = PostResponseMemoryWorker(
+                        analyzer,
+                        memory_runtime.capture,
+                        audit_sink=memory_runtime.audit_sink,
+                    )
+                print(startup_message())
+                ChatSession(
+                    model,
+                    settings.chat,
+                    context_window_tokens=settings.ollama.context_tokens,
+                    default_response_tokens=settings.ollama.max_response_tokens,
+                    memory_context_provider=(
+                        None
+                        if memory_runtime is None
+                        else memory_runtime.context_provider
+                    ),
+                    explicit_memory_handler=memory_runtime,
+                    post_response_worker=memory_worker,
+                ).run()
+            finally:
+                if memory_worker is not None:
+                    memory_worker.close()
         finally:
-            if memory_worker is not None:
-                memory_worker.close()
             if memory_runtime is not None:
                 memory_runtime.close()
     except KeyboardInterrupt:
@@ -124,6 +131,9 @@ def _open_memory_runtime(memory_settings: MemorySettings) -> MemoryRuntime | Non
             runtime.create_daily_backup(uuid4())
         except BackupError:
             print("Daily encrypted backup was safely skipped; check its destination.")
+        except Exception:
+            runtime.close()
+            raise
     print("Persistent memory is unlocked for this session.")
     return runtime
 

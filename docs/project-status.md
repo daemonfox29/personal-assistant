@@ -25,8 +25,11 @@ This document is the handoff point between coding sessions. At the end of each s
   bounded JSON data envelope explicitly labeled as untrusted. Synthetic restart
   recall passes. Portable recovery derives the database key for each session,
   a separate rate-limited passcode issues exact one-use approvals, and trusted
-  administration covers setup, verification, candidate review, backup, and
-  restore. A new installation remains session-only until setup succeeds.
+  administration covers setup, verification, metadata-only candidate listing,
+  authenticated sensitive review, memory inspection and history, correction,
+  privacy controls, lifecycle changes, profile assembly, permanent purge,
+  backup, and restore. A new installation remains session-only until setup
+  succeeds.
 - The local permission policy is implemented and covered by automated tests.
 - GitHub Actions is configured to test pull requests targeting `main` before
   merge. The public repository has an active ruleset requiring the `test`
@@ -73,8 +76,10 @@ This document is the handoff point between coding sessions. At the end of each s
   events. Chat transcripts and ordinary response text are not logged.
 - The encrypted database boundary pins `sqlcipher3` 0.6.2, requires SQLCipher 4
   cipher status, codec support, and FTS5, accepts keys only through a replaceable
-  provider, refuses unsafe paths and plaintext fallback, and emits content-free
-  database-open audit events. It has been tested only with synthetic data.
+  provider, refuses unsafe paths and plaintext fallback, blocks unused RTree
+  helper functions and database attachment through a connection authorizer,
+  and emits content-free database-open audit events. It has been tested only
+  with synthetic data.
 - The encrypted schema is built from 17 fixed, packaged, single-statement SQL
   migrations. Exact SHA-256 history is stored in the database; missing,
   duplicate, reordered, changed, unknown, or untracked history fails closed.
@@ -120,6 +125,34 @@ complete; the batched Linux pull-request check is its final platform gate.
 - [ ] Add a web/search tool only behind the tool registry and approval layer.
 
 ## Session history
+
+### 2026-08-25 — Module 1 final security and privacy review
+
+Completed:
+
+- Made repository writes, migrations, backup publication, and restore swaps
+  fail closed when their success audit cannot be durably recorded.
+- Hardened prohibited-secret validation against Unicode, invisible, spaced,
+  one-time-code, and valid payment-card forms; expanded deterministic identity
+  sensitivity classification.
+- Added monotonic approval expiry, serialized thread/process passcode checks,
+  safer setup rollback, worker survival, and runtime key cleanup on startup
+  failures.
+- Connected ask-before and direct-only mention policies to natural chat flow;
+  restricted memories still never enter model context.
+- Added metadata-only candidate and memory inventories plus trusted inspection,
+  revision history, correction, privacy controls, lifecycle, entity profile,
+  and permanent-purge commands with passcode gates at sensitive boundaries.
+- Blocked unused RTree helper functions and database attachment through the
+  SQLCipher connection authorizer while retaining the pinned encrypted driver.
+
+Verification:
+
+- The complete local suite passes 229 tests with one opt-in performance test
+  skipped in the ordinary run.
+- The separate 100,000-record encrypted retrieval benchmark passes at 14.02 ms
+  median and 14.92 ms p95 over 30 queries, with 96 candidates examined, 12
+  records returned, and 1,295 conservatively estimated memory tokens.
 
 ### 2026-08-25 — Module 1 portable deployment gate
 
