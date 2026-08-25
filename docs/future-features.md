@@ -175,3 +175,26 @@ reassess existing records and propose more nuanced tentative insights, while
 preserving the original evidence and recording the model/version that made the
 proposal. Derived indexes and embeddings must remain replaceable and
 rebuildable.
+
+## Memory sensitivity-policy evaluation
+
+Once the review inbox has enough synthetic and user-reviewed examples, evaluate
+the deterministic capture classifier instead of expanding keyword rules by
+intuition alone. Track content-free aggregate counts for suggested sensitivity,
+policy-raised sensitivity, user tightening, user loosening, candidate
+confirmation, rejection, and unexpected sensitive mentions. Never place the
+underlying memory text in metrics or audit logs.
+
+The trusted interface should periodically ask:
+
+- Were useful suggestions rejected or made too difficult to confirm?
+- Did anything sensitive receive a classification or mention policy that felt
+  too casual?
+- Are too many ordinary memories being routed into higher-risk review?
+- Were duplicate and contradiction prompts understandable and helpful?
+- Does the candidate inbox feel useful, noisy, or intrusive?
+
+A future upgraded model may recommend a higher sensitivity or identify nuanced
+categories that fixed rules miss, but it cannot lower the deterministic floor.
+Changes to the floor require versioned policy review, synthetic regression
+cases, and an auditable rollout rather than a conversational instruction.

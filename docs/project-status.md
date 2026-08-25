@@ -13,7 +13,10 @@ This document is the handoff point between coding sessions. At the end of each s
   operations now cover records, revisions, entities, links, lifecycle, and the
   permanent deletion ledger using synthetic data only. Deterministic retrieval
   now filters and ranks confirmed records through an encrypted FTS5 index,
-  enforces record and token ceilings, and returns content-free receipts.
+  enforces record and token ceilings, and returns content-free receipts. A
+  trusted capture coordinator now supports explicit confirmed memories and
+  bounded, expiring, quarantined model suggestions without connecting either
+  workflow to normal chat.
 - The local permission policy is implemented and covered by automated tests.
 - GitHub Actions is configured to test pull requests targeting `main` before
   merge. The public repository has an active ruleset requiring the `test`
@@ -90,13 +93,64 @@ Work through these in order unless project needs change. Module 1 must wait unti
   snapshots, entities, aliases, record and entity links, lifecycle transitions,
   optimistic concurrency, candidate expiry, and the permanent deletion ledger.
 - [x] Module 1: implement bounded retrieval and retrieval receipts.
-- [ ] Module 1: implement explicit remember and quarantined automatic memory-
+- [x] Module 1: implement explicit remember and quarantined automatic memory-
   suggestion workflows.
 - [ ] Module 1: implement encrypted backup, verification, and guided restore.
 - [ ] Define the assistant's first tool registry and permission-enforcement path before adding any tool.
 - [ ] Add a web/search tool only behind the tool registry and approval layer.
 
 ## Session history
+
+### 2026-08-25 — Explicit remember and quarantined suggestion workflows
+
+Completed:
+
+- Added typed explicit-memory requests, automatic model suggestions,
+  content-free decisions, and a trusted capture coordinator. The API does not
+  expose a status switch through which model output could request confirmed
+  memory.
+- Explicit normal or personal instructions create confirmed records. An exact
+  confirmed duplicate is reused, an exact single candidate is confirmed, and a
+  different value for the same subject returns opaque related IDs for natural
+  clarification instead of overwriting history.
+- Explicit sensitive or restricted capture pauses for a separate higher-risk
+  review path. That path is not implemented by weakening the capture policy or
+  accepting a conversational approval flag.
+- Automatic suggestions always create 30-day candidate records. Conservative
+  sensitivity and mention-policy floors tighten model proposals: notes and
+  insights are at least personal, sensitive suggestions are direct-request
+  only, and restricted suggestions are `never_mention`.
+- Added deterministic sensitive and restricted content rules for known
+  wellbeing, trauma, medical, financial, legal, location, and relationship
+  categories. A model may raise the resulting classification but cannot lower
+  it. These conservative rules are a replaceable policy layer, not a claim that
+  keyword matching understands every possible sensitive nuance.
+- Enforced a default maximum of three and hard maximum of five candidates per
+  completed-turn source inside the encrypted write transaction. Changing the
+  claimed model version cannot bypass the persisted turn limit.
+- Added a small, cancellable post-response batch primitive. It is ready for a
+  future background worker, but no analyzer or normal-chat integration invokes
+  it yet, so this milestone does not automatically store live conversation
+  content.
+- Used the encrypted FTS5 index to bound exact duplicate and same-subject
+  conflict discovery. Unrelated global records do not consume the 64-neighbor
+  safety ceiling; an unexpectedly broad result fails closed for clarification.
+- Added typed coordinator audit events for success, duplicate, clarification,
+  higher-risk denial, candidate-limit, and failure outcomes. Events contain
+  opaque IDs and counts but no memory, prompt, source-turn, or model text.
+- Added synthetic tests for confirmation, duplicate suppression, conflicts,
+  risk review, conservative controls, quarantine, retrieval exclusion,
+  persisted candidate limits, cancellation, audit failure, audit redaction,
+  credentials, and unrelated-memory scale behavior. No personal data or
+  runtime database was created.
+
+Next:
+
+- Implement consistent encrypted backup, bounded retention, verification, and
+  guided restore with deletion-ledger reapplication and exact high-risk
+  authorization.
+- Only after backup and restore pass should persistent memory be connected to
+  normal chat and exercised with restart-persistent synthetic recall.
 
 ### 2026-08-24 — Deterministic bounded memory retrieval
 

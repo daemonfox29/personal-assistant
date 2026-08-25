@@ -34,12 +34,17 @@ from personal_assistant.memory_types import (
     EntityRelationship,
     EntityStatus,
     EntityType,
+    EventPayload,
+    FactPayload,
     FeedbackType,
     InsightPayload,
     LinkSourceType,
     MemoryPayload,
     MemoryValidationError,
     MentionPolicy,
+    NotePayload,
+    PolicyPreferencePayload,
+    PreferencePayload,
     Provenance,
     PurgeReason,
     RecordDraft,
@@ -69,6 +74,8 @@ MAX_RETRIEVAL_SCOPES = 8
 MAX_RETRIEVAL_ENTITIES = 8
 MAX_RETRIEVAL_CANDIDATES = 96
 RETRIEVAL_RECORD_OVERHEAD_TOKENS = 16
+MAX_CAPTURE_NEIGHBORS = 64
+MAX_CANDIDATES_PER_SOURCE = 5
 _RETRIEVAL_TERM = re.compile(r"[\w]+", re.UNICODE)
 _RETRIEVAL_STOP_WORDS = {
     "a",
@@ -136,6 +143,10 @@ class RepositoryIntegrityError(MemoryRepositoryError):
 
 class RepositoryOperationError(MemoryRepositoryError):
     """The repository operation failed without exposing database details."""
+
+
+class CandidateLimitError(MemoryRepositoryError):
+    """A model source reached its hard persisted candidate ceiling."""
 
 
 class RetrievalMode(StrEnum):
@@ -390,6 +401,69 @@ class MemoryRepository:
                     )
             return record
 
+    def create_bounded_candidate(
+        self,
+        draft: RecordDraft,
+        provenance: Provenance,
+        correlation_id: UUID,
+        *,
+        source_limit: int,
+    ) -> MemoryRecord:
+        """Atomically enforce one source's candidate cap and create its record."""
+
+        self._validate_create_pair(draft, provenance)
+        if (
+            provenance.source_type is not SourceType.MODEL_CANDIDATE
+            or draft.status is not RecordStatus.CANDIDATE
+        ):
+            raise MemoryValidationError("A bounded candidate must come from a model.")
+        if (
+            isinstance(source_limit, bool)
+            or not isinstance(source_limit, int)
+            or not 1 <= source_limit <= MAX_CANDIDATES_PER_SOURCE
+        ):
+            raise MemoryValidationError("Candidate source limit is invalid.")
+        record_id = self._new_id()
+        with self._audited(
+            correlation_id,
+            AuditOperation.REPOSITORY_WRITE,
+            "bounded_candidate_create",
+            record_id=record_id,
+            item_count=source_limit,
+        ):
+            with self._connection_provider.connect(correlation_id) as connection:
+                with self._transaction(connection):
+                    count = connection.execute(
+                        "SELECT count(*) FROM record_revisions "
+                        "WHERE revision = 1 AND source_type = ? AND source_ref = ? "
+                        "AND actor_type = ?",
+                        (
+                            provenance.source_type.value,
+                            provenance.source_ref,
+                            provenance.actor_type.value,
+                        ),
+                    ).fetchone()[0]
+                    if (
+                        isinstance(count, bool)
+                        or not isinstance(count, int)
+                        or count < 0
+                    ):
+                        raise RepositoryIntegrityError(
+                            "Stored candidate count is invalid."
+                        )
+                    if count >= source_limit:
+                        raise CandidateLimitError(
+                            "The model source reached its candidate limit."
+                        )
+                    record = self._insert_record(
+                        connection,
+                        record_id,
+                        draft,
+                        provenance,
+                        self._now(),
+                    )
+            return record
+
     def inspect_record(
         self,
         record_id: UUID,
@@ -404,6 +478,47 @@ class MemoryRepository:
         ):
             with self._connection_provider.connect(correlation_id) as connection:
                 return self._load_record(connection, record_id)
+
+    def find_capture_neighbors(
+        self,
+        draft: RecordDraft,
+        correlation_id: UUID,
+    ) -> tuple[MemoryRecord, ...]:
+        """Return a bounded same-kind and same-scope set for capture decisions."""
+
+        if not isinstance(draft, RecordDraft):
+            raise MemoryValidationError("Memory draft is invalid.")
+        terms = self._capture_terms(draft.payload)
+        expression = " AND ".join(f'"{term}"' for term in terms)
+        with self._audited(
+            correlation_id,
+            AuditOperation.REPOSITORY_READ,
+            "record_capture_neighbors",
+            item_count=MAX_CAPTURE_NEIGHBORS + 1,
+        ):
+            with self._connection_provider.connect(correlation_id) as connection:
+                rows = connection.execute(
+                    "SELECT record_id FROM record_search "
+                    "WHERE record_search MATCH ? AND kind = ? "
+                    "AND scope_type = ? AND scope_id IS ? "
+                    "AND primary_entity_id IS ? "
+                    "AND status IN ('candidate', 'confirmed') "
+                    "ORDER BY CASE status WHEN 'confirmed' THEN 0 ELSE 1 END, "
+                    "updated_at DESC, record_id LIMIT ?",
+                    (
+                        expression,
+                        draft.kind.value,
+                        draft.scope.type.value,
+                        None if draft.scope.id is None else str(draft.scope.id),
+                        None
+                        if draft.primary_entity_id is None
+                        else str(draft.primary_entity_id),
+                        MAX_CAPTURE_NEIGHBORS + 1,
+                    ),
+                ).fetchall()
+                return tuple(
+                    self._load_record(connection, UUID(row[0])) for row in rows
+                )
 
     def retrieve(
         self,
@@ -1556,6 +1671,29 @@ class MemoryRepository:
         return _normalized_retrieval_terms(query)
 
     @staticmethod
+    def _capture_terms(payload: MemoryPayload) -> tuple[str, ...]:
+        if isinstance(
+            payload,
+            (FactPayload, PreferencePayload, PolicyPreferencePayload),
+        ):
+            text = payload.subject
+        elif isinstance(payload, NotePayload):
+            text = payload.title
+        elif isinstance(payload, EventPayload):
+            text = payload.summary
+        elif isinstance(payload, InsightPayload):
+            text = payload.observation
+        else:
+            raise MemoryValidationError("Memory payload type is not registered.")
+        terms = _normalized_retrieval_terms(text)
+        if terms:
+            return terms
+        fallback = tuple(dict.fromkeys(_RETRIEVAL_TERM.findall(text.casefold())))
+        if not fallback:
+            raise MemoryValidationError("Memory payload has no searchable terms.")
+        return fallback[:16]
+
+    @staticmethod
     def _retrieval_exclusion(
         record: MemoryRecord,
         request: RetrievalRequest,
@@ -2106,6 +2244,8 @@ class MemoryRepository:
                 reason = AuditReasonCode.LIFECYCLE_BLOCKED
             elif isinstance(error, RepositoryIntegrityError):
                 reason = AuditReasonCode.INTEGRITY_FAILED
+            elif isinstance(error, CandidateLimitError):
+                reason = AuditReasonCode.RESOURCE_LIMIT
             else:
                 reason = AuditReasonCode.SAFE_INTERNAL_FAILURE
             self._emit(
