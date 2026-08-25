@@ -12,6 +12,7 @@ class ActionKind(StrEnum):
     WRITE_LOCAL_FILE = "write_local_file"
     BROWSER_NAVIGATION = "browser_navigation"
     NETWORK_REQUEST = "network_request"
+    MEMORY_BACKUP_RESTORE = "memory_backup_restore"
     ACCESS_CREDENTIALS = "access_credentials"
 
 
@@ -51,6 +52,10 @@ POLICY_BY_ACTION: dict[ActionKind, PermissionResult] = {
     ActionKind.NETWORK_REQUEST: PermissionResult(
         PermissionDecision.REQUIRE_APPROVAL,
         "This action requires explicit user approval.",
+    ),
+    ActionKind.MEMORY_BACKUP_RESTORE: PermissionResult(
+        PermissionDecision.REQUIRE_APPROVAL,
+        "Restoring memory requires exact passcode-backed approval.",
     ),
     ActionKind.ACCESS_CREDENTIALS: PermissionResult(
         PermissionDecision.DENY,

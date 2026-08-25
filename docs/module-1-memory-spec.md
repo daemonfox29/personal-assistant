@@ -587,7 +587,7 @@ history.
    lifecycle rules, and deletion ledger.
 5. [x] Implement deterministic bounded retrieval and retrieval receipts.
 6. [x] Implement explicit remember and automatic quarantined-candidate workflows.
-7. [ ] Implement encrypted daily backup, verification, and guided restore.
+7. [x] Implement encrypted daily backup, verification, and guided restore.
 8. [ ] Integrate persistent memory into chat only after all preceding boundaries
    and tests pass, then verify restart-persistent recall with synthetic data.
 

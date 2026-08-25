@@ -16,7 +16,11 @@ This document is the handoff point between coding sessions. At the end of each s
   enforces record and token ceilings, and returns content-free receipts. A
   trusted capture coordinator now supports explicit confirmed memories and
   bounded, expiring, quarantined model suggestions without connecting either
-  workflow to normal chat.
+  workflow to normal chat. A consistent encrypted daily-snapshot policy now
+  supports scheduler invocation and enforces
+  verification, count and byte retention, exact high-risk restore approval,
+  pre-restore preservation, migration checks, deletion-ledger reapplication,
+  atomic replacement, and rollback on failed final verification.
 - The local permission policy is implemented and covered by automated tests.
 - GitHub Actions is configured to test pull requests targeting `main` before
   merge. The public repository has an active ruleset requiring the `test`
@@ -95,11 +99,51 @@ Work through these in order unless project needs change. Module 1 must wait unti
 - [x] Module 1: implement bounded retrieval and retrieval receipts.
 - [x] Module 1: implement explicit remember and quarantined automatic memory-
   suggestion workflows.
-- [ ] Module 1: implement encrypted backup, verification, and guided restore.
+- [x] Module 1: implement encrypted backup, verification, and guided restore.
 - [ ] Define the assistant's first tool registry and permission-enforcement path before adding any tool.
 - [ ] Add a web/search tool only behind the tool registry and approval layer.
 
 ## Session history
+
+### 2026-08-25 — Encrypted backup and guided restore boundary
+
+Completed:
+
+- Added a configured external-destination backup manager using SQLite's online
+  backup mechanism through verified SQLCipher connections. Live database files
+  are never copied directly.
+- Added an idempotent daily entry point for a future scheduler. It skips only
+  after verifying the existing daily snapshot. No runtime schedule or external
+  drive is configured yet.
+- Added atomic publication from flushed encrypted partial files, owner-only
+  POSIX permissions, and strict refusal of missing, symbolic-link, or
+  unmanaged destinations.
+- Enforced the approved defaults and hard ceilings of seven snapshots, 2 GiB
+  per snapshot, and 10 GiB total. Retention runs only after a new snapshot has
+  passed encryption, migration-history, integrity, and foreign-key checks.
+- Added a content-free restore plan bound to the managed filename, ciphertext
+  SHA-256, and live target. Restore consumes an exact short-lived one-use
+  approval and rejects a snapshot changed after the plan was shown.
+- Kept restore unavailable from normal chat. The engine requires an approval
+  authority supplied by a future trusted passcode interface; tests use only a
+  synthetic authority and do not create a production bypass.
+- Restore copies into an encrypted temporary database, runs required forward
+  migrations, creates a fresh pre-restore snapshot, reapplies the current
+  deletion ledger, verifies the candidate, atomically replaces the live file,
+  verifies again, and restores the prior live file if final verification fails.
+- Added synthetic tests for encrypted consistency, daily behavior, retention,
+  missing destinations, corrupt snapshots, post-plan tampering, exact approval,
+  interrupted writes, rollback, and deletion-ledger preservation. The full
+  suite passes with 189 tests and one intentionally skipped opt-in performance
+  benchmark.
+
+Next:
+
+- Integrate persistent memory into normal chat with bounded retrieval and
+  restart-persistent synthetic recall, while leaving automatic suggestion
+  analysis asynchronous and quarantined.
+- Add the trusted passcode entry UI before exposing guided restore or any other
+  high-risk operation to a conversational or model-controlled path.
 
 ### 2026-08-25 — Explicit remember and quarantined suggestion workflows
 

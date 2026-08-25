@@ -163,6 +163,30 @@ class MigrationTests(unittest.TestCase):
                 ).fetchone()[0]
             self.assertEqual(count, first.current_version)
 
+    def test_history_validation_never_applies_pending_migrations(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            database = self._database(Path(temporary_directory) / "memory.db")
+            migrations = PackageMigrationSource().load()
+            prior_runner, _ = self._runner(
+                database,
+                migrations=migrations[:-1],
+            )
+            prior_runner.migrate(uuid4())
+
+            current_runner, _ = self._runner(database)
+            self.assertEqual(
+                current_runner.validate_history(uuid4(), require_current=False),
+                len(migrations) - 1,
+            )
+            with self.assertRaisesRegex(MigrationHistoryError, "not current"):
+                current_runner.validate_history(uuid4())
+
+            with database.connect(uuid4()) as connection:
+                stored_versions = connection.execute(
+                    "SELECT count(*) FROM schema_migrations"
+                ).fetchone()[0]
+            self.assertEqual(stored_versions, len(migrations) - 1)
+
     def test_new_entity_link_migrations_apply_forward_from_prior_schema(self) -> None:
         with TemporaryDirectory() as temporary_directory:
             database = self._database(Path(temporary_directory) / "memory.db")

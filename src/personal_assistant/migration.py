@@ -234,6 +234,62 @@ class MigrationRunner:
         )
         return result
 
+    def validate_history(
+        self,
+        correlation_id: UUID,
+        *,
+        require_current: bool = True,
+    ) -> int:
+        """Validate a compatible history without applying or changing anything."""
+
+        if not isinstance(correlation_id, UUID):
+            raise ValueError("Migration correlation ID must be a UUID.")
+        started_at = monotonic()
+        self._emit(
+            correlation_id,
+            AuditOutcome.STARTED,
+            AuditReasonCode.NORMAL,
+            0,
+            started_at,
+        )
+        try:
+            migrations = self._validated_source()
+            with self._connection_provider.connect(correlation_id) as connection:
+                applied = self._load_and_validate_history(connection, migrations)
+            if require_current and len(applied) != len(migrations):
+                raise MigrationHistoryError(
+                    "Database migration history is not current."
+                )
+        except MigrationError:
+            self._emit(
+                correlation_id,
+                AuditOutcome.FAILED,
+                AuditReasonCode.MIGRATION_FAILED,
+                0,
+                started_at,
+            )
+            raise
+        except Exception as error:
+            self._emit(
+                correlation_id,
+                AuditOutcome.FAILED,
+                AuditReasonCode.MIGRATION_FAILED,
+                0,
+                started_at,
+            )
+            raise MigrationHistoryError(
+                "Database migration history could not be validated."
+            ) from error
+
+        self._emit(
+            correlation_id,
+            AuditOutcome.SUCCEEDED,
+            AuditReasonCode.NORMAL,
+            len(applied),
+            started_at,
+        )
+        return len(applied)
+
     def _validated_source(self) -> tuple[Migration, ...]:
         try:
             migrations = self._migration_source.load()
