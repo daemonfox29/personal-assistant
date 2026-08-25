@@ -1,8 +1,91 @@
 # Learning Journal
 
+## 2026-08-25 — Recovery keys and high-risk passcodes solve different problems
+
+The recovery passphrase and high-risk passcode are deliberately separate. The
+recovery passphrase deterministically derives the SQLCipher database key, so the
+same encrypted database can be reopened without storing that key in a portable
+file. The manifest stores only random salts and keyed checks. A salt is not a
+secret; it makes precomputed password attacks less reusable. A deliberately slow
+KDF such as scrypt makes each guess more expensive, but it cannot rescue a weak
+passphrase.
+
+The high-risk passcode does not decrypt memory. It proves fresh user intent for
+one exact action that policy already permits with approval. The resulting
+receipt binds the action and arguments, expires quickly, and is consumed once.
+This matters because a generic `approved = true` could be replayed or redirected
+to something the user never saw. Persisting failed-attempt lockout state also
+prevents simply restarting the command to reset the counter.
+
+Neither mechanism is magic protection from a fully compromised local account.
+An attacker who can change the source code or inspect the live process is already
+inside the trust boundary. The passcode primarily lowers risk from malicious
+chat content, accidental commands, or someone casually opening the assistant;
+operating-system account security, disk encryption, updates, and physical control
+remain separate defenses.
+
+Automatic memory analysis now happens after the visible answer, so it does not
+delay the response path. Its output is treated as an untrusted proposal and can
+only enter a quarantined candidate inbox. Confirming or rejecting those proposals
+records a content-bounded feedback signal for later policy evaluation; Module 1
+does not silently retrain or auto-confirm from it. That preserves a future
+learning path without letting the model rewrite confirmed facts.
+
 This journal tracks concepts learned while building the assistant, questions
 that led to deeper discussion, and knowledge gaps worth revisiting. It is about
 personal understanding rather than project completion.
+
+## 2026-08-24 — Why use `uv` instead of plain `pip`
+
+**Confidence: Building**
+
+### What prompted this
+
+Module 1 introduced SQLCipher, a compiled dependency that must install
+consistently on the development Mac, in GitHub Actions, and eventually on
+Windows. The project changed its dependency workflow from plain `pip` commands
+to `uv` once reproducible cross-platform environments became more important.
+
+### What I understand now
+
+`pip` installs Python packages, but a complete application workflow usually
+needs additional commands or tools to create environments, lock every resolved
+dependency, and reproduce that environment in CI. `uv` brings those jobs into
+one workflow.
+
+`pyproject.toml` is the project's dependency shopping list. `uv.lock` is the
+exact receipt: it records the resolved versions and package hashes. Running
+`uv sync --locked` recreates that recorded environment or fails if the shopping
+list and receipt no longer agree. Running commands through `uv run` uses the
+project environment without requiring it to be manually activated first.
+
+The most important advantage is predictability rather than speed. Local
+development and CI are less likely to silently install different dependency
+versions. The lockfile also makes dependency changes visible during code
+review. `uv` is generally faster and reduces the number of separate environment
+commands, but those are secondary benefits.
+
+`uv` does not encrypt the database, replace the package build system, or prove
+that the program works on every operating system. SQLCipher provides database
+encryption, `setuptools` still builds the package, and Windows behavior still
+needs an actual Windows verification gate.
+
+### Knowledge gaps to revisit
+
+- How direct dependencies differ from transitive dependencies.
+- How dependency resolution chooses versions when packages impose conflicting
+  requirements.
+- How to review a lockfile update for security and compatibility risk.
+- When a dependency should be upgraded, pinned, replaced, or removed.
+- How `uv`'s cross-platform lock relates to actual testing on each platform.
+
+### Practical takeaway
+
+For a tiny dependency-free script, plain `pip` may be enough. For this
+security-conscious application—with CI, compiled SQLCipher packages, and
+cross-platform plans—`uv` gives us a faster and more reproducible environment
+without replacing the safeguards and platform tests the application still
+needs.
 
 ## How to use this journal
 

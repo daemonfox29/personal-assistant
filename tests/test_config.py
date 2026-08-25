@@ -2,7 +2,12 @@
 
 import unittest
 
-from personal_assistant.config import ChatSettings, OllamaSettings, load_settings
+from personal_assistant.config import (
+    ChatSettings,
+    MemorySettings,
+    OllamaSettings,
+    load_settings,
+)
 from personal_assistant.local_http import LocalConnectionError
 
 
@@ -15,6 +20,8 @@ class AppSettingsTests(unittest.TestCase):
         self.assertEqual(settings.ollama.model_name, "qwen3:14b")
         self.assertEqual(settings.ollama.context_tokens, 16384)
         self.assertEqual(settings.chat.session_history_tokens, 6000)
+        self.assertTrue(settings.memory.enabled)
+        self.assertEqual(settings.memory.context_tokens, 2000)
 
     def test_environment_can_override_machine_local_settings(self) -> None:
         settings = load_settings(
@@ -30,6 +37,30 @@ class AppSettingsTests(unittest.TestCase):
         self.assertEqual(settings.ollama.context_tokens, 2048)
         self.assertEqual(settings.chat.session_history_tokens, 1000)
         self.assertEqual(settings.chat.long_response_tokens, 900)
+
+    def test_memory_paths_and_enablement_are_machine_local(self) -> None:
+        settings = load_settings(
+            {
+                "PERSONAL_ASSISTANT_DATA_DIR": "/tmp/synthetic-assistant-data",
+                "PERSONAL_ASSISTANT_BACKUP_DIR": "/tmp/synthetic-backups",
+                "PERSONAL_ASSISTANT_MEMORY_ENABLED": "false",
+                "PERSONAL_ASSISTANT_AUTOMATIC_MEMORY": "no",
+                "PERSONAL_ASSISTANT_MEMORY_TOKENS": "1500",
+            }
+        )
+
+        self.assertFalse(settings.memory.enabled)
+        self.assertFalse(settings.memory.automatic_suggestions)
+        self.assertEqual(settings.memory.context_tokens, 1500)
+        self.assertEqual(str(settings.memory.backup_directory), "/tmp/synthetic-backups")
+
+    def test_memory_paths_must_be_absolute_and_limits_bounded(self) -> None:
+        with self.assertRaises(ValueError):
+            load_settings({"PERSONAL_ASSISTANT_DATA_DIR": "relative-data"})
+        with self.assertRaises(ValueError):
+            load_settings({"PERSONAL_ASSISTANT_MEMORY_ENABLED": "sometimes"})
+        with self.assertRaises(ValueError):
+            MemorySettings(context_tokens=2501)
 
     def test_non_positive_environment_value_is_rejected(self) -> None:
         with self.assertRaises(ValueError):

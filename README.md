@@ -15,19 +15,81 @@ A modular, local-first personal AI assistant built in Python.
 
 Module 0 and its Module 0.1 hardening gate are complete: a tested local chat
 foundation with replaceable components and deterministic safety boundaries.
-Module 1 persistence design is next; tools and persistent personal data are not
-enabled yet.
+The Module 1 encrypted persistent-memory implementation is complete. It includes
+redacted auditing, verified SQLCipher storage, checksummed migrations, typed
+revisioned records, bounded retrieval, quarantined automatic suggestions,
+portable recovery, encrypted backup and guided restore, and a bounded chat-
+context adapter. A new installation stays session-only until the owner completes
+the trusted local setup. Tools are not enabled.
+
+## Set up the project
+
+The project uses `uv` 0.12.5 for locked, cross-platform dependency management.
+After installing that pinned version of
+[`uv`](https://docs.astral.sh/uv/getting-started/installation/), run:
+
+```bash
+uv sync --locked
+```
+
+The committed `uv.lock` records package hashes and compatible SQLCipher wheels
+for the supported Python 3.11–3.14 range. Do not edit it manually. `setuptools`
+remains the package build backend; `uv` manages resolution, installation,
+environments, and project commands.
 
 ## Run the local chat
 
 From the project folder:
 
 ```bash
-./.venv/bin/python -m personal_assistant
+uv run --locked python -m personal_assistant
 ```
 
 The app starts Ollama if needed, sends its documented empty preload request
 without evaluating a chat prompt, then opens a terminal chat.
+
+### Set up persistent memory
+
+Persistent memory requires a recovery passphrase and a different high-risk
+passcode. Enter both only through the hidden trusted prompts, never in chat or
+as command-line arguments:
+
+```bash
+uv run --locked python -m personal_assistant.memory_admin setup
+uv run --locked python -m personal_assistant.memory_admin verify-recovery
+```
+
+The recovery passphrase derives the SQLCipher key each time the app starts. It
+is not stored, and losing it makes the database and its backups unrecoverable.
+The high-risk passcode authorizes one exact sensitive operation at a time; it
+cannot override a prohibited action. Failed attempts are audited and the
+lockout survives command restarts.
+
+After setup, start chat normally and enter the recovery passphrase at its hidden
+prompt. Use `/remember <information>` or `remember that <information>` for an
+explicit ordinary memory. Automatic analysis runs after the visible answer and
+can create only unconfirmed, expiring candidates. Review them through the
+trusted commands:
+
+```bash
+uv run --locked python -m personal_assistant.memory_admin candidates
+uv run --locked python -m personal_assistant.memory_admin confirm RECORD_ID
+uv run --locked python -m personal_assistant.memory_admin reject RECORD_ID
+```
+
+To use encrypted daily backups, create an external destination first and set
+its absolute path before setup and every relevant run:
+
+```bash
+PERSONAL_ASSISTANT_BACKUP_DIR=/absolute/external/path \
+  uv run --locked python -m personal_assistant.memory_admin backup
+uv run --locked python -m personal_assistant.memory_admin list-backups
+uv run --locked python -m personal_assistant.memory_admin restore SNAPSHOT_NAME
+```
+
+Restore displays and binds approval to the snapshot name, byte count, digest,
+and target, requires typed confirmation plus the high-risk passcode, creates a
+pre-restore snapshot, and reapplies the permanent-deletion ledger.
 
 Model output is treated as untrusted terminal text. Control and invisible
 formatting characters are displayed as escaped code points instead of being
@@ -64,7 +126,7 @@ Safe shared defaults are in `src/personal_assistant/config.py`.
 For a machine-local temporary override, set an environment variable before running the app:
 
 ```bash
-PERSONAL_ASSISTANT_MODEL_NAME=qwen3:8b ./.venv/bin/python -m personal_assistant
+PERSONAL_ASSISTANT_MODEL_NAME=qwen3:8b uv run --locked python -m personal_assistant
 ```
 
 The shared default context window is 16,384 tokens. It can be changed
@@ -72,7 +134,7 @@ independently of the 2,000-token response ceiling; for example, a machine with
 more model capacity can use 32K:
 
 ```bash
-PERSONAL_ASSISTANT_CONTEXT_TOKENS=32768 ./.venv/bin/python -m personal_assistant
+PERSONAL_ASSISTANT_CONTEXT_TOKENS=32768 uv run --locked python -m personal_assistant
 ```
 
 Available overrides include:
@@ -85,6 +147,11 @@ Available overrides include:
 - `PERSONAL_ASSISTANT_HISTORY_TOKENS`
 - `PERSONAL_ASSISTANT_LONG_RESPONSE_TOKENS`
 - `PERSONAL_ASSISTANT_MAX_RESPONSE_TOKENS`
+- `PERSONAL_ASSISTANT_MEMORY_ENABLED`
+- `PERSONAL_ASSISTANT_DATA_DIR`
+- `PERSONAL_ASSISTANT_BACKUP_DIR`
+- `PERSONAL_ASSISTANT_MEMORY_TOKENS`
+- `PERSONAL_ASSISTANT_AUTOMATIC_MEMORY`
 
 The Ollama URL must be an explicit numeric loopback HTTP address with a port,
 such as `http://127.0.0.1:11434` or `http://[::1]:11434`. Hostnames and remote
@@ -107,9 +174,19 @@ govern future model, memory, browser, tool, data, interface, and audit choices.
 - The model never receives unrestricted permission to act.
 - Sensitive actions require an opaque, one-use approval receipt bound to the
   exact action and arguments. Receipts expire after at most five minutes and
-  can be issued only by the future trusted interface, not by the model.
+  can be issued only by trusted local passcode handling, not by the model.
 - Credentials are entered manually and are never stored in memory or logs.
+- Recovery and high-risk secrets are hidden from command arguments, model
+  context, memory, and logs. Derived key bytes are cleared on normal shutdown
+  on a best-effort basis.
 - Runtime personal data stays local and is excluded from Git.
 - The Ollama adapter can connect only to an explicit loopback address.
 - Every model request is limited to at most 2,000 response tokens.
-- The app currently has no web, browser, file, database, or tool access.
+- The model has no web, browser, file, raw database, key, or tool access. The
+  application exposes only the bounded memory adapter described above.
+
+A local passcode meaningfully reduces accidental or conversational misuse, but
+it is not a defense against an attacker who already controls the same operating-
+system account and can modify the program or read its running process. Full-disk
+security, account security, updates, physical control, and offline encrypted
+backups remain separate layers. Windows runtime behavior is not yet verified.

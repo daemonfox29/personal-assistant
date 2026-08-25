@@ -32,9 +32,18 @@ review questions in [Security Principles](security-principles.md).
 
 ## Information flow
 
-Current Module 0 chat flow:
+Current chat flow after trusted Module 1 setup and recovery unlock:
 
-User request → command-line interface → token-bounded structured messages → model adapter → local Ollama model → streamed response
+User request → bounded encrypted retrieval → untrusted-data system envelope →
+token-bounded structured messages → model adapter → local Ollama model →
+streamed response
+
+The default command-line startup supplies the adapter only when a safe portable
+security manifest exists and the hidden recovery prompt unlocks it. A new or
+disabled installation follows the Module 0 session-only path. Explicit remember
+instructions are intercepted before model submission. After the visible answer,
+a bounded worker may ask the model for tentative suggestions, but those enter
+only the quarantined candidate inbox until trusted review confirms them.
 
 Future action flow:
 
@@ -47,9 +56,19 @@ conversation is held only in RAM for the current session. System, user, and
 assistant messages remain separate data structures; history retains only
 complete recent turns within a conservative token budget.
 
-Closing the process drops the application's history references and no
-conversation database exists yet. This is an application retention boundary,
-not guaranteed physical erasure from Python, Ollama, the operating system,
+Confirmed persistent records can be selected by the encrypted repository's
+deterministic policy and inserted into the system message as one bounded JSON
+data object. Stored strings are explicitly untrusted and cannot grant tool or
+permission authority. Candidate, restricted, expired, out-of-scope, and
+mention-blocked records remain excluded before model context assembly.
+The labeling can reduce accidental instruction-following but is not assumed to
+make the model reliable; deterministic permission and executor boundaries
+remain responsible for preventing actions.
+
+Closing the process drops the application's session-history references. Module 1
+stores selected confirmed memories and revision history, not a transcript of
+every conversation. This is an application retention boundary, not guaranteed
+physical erasure from Python, native libraries, Ollama, the operating system,
 swap, backups, or crash diagnostics.
 
 Future versions may add bounded worker agents. Worker agents will receive limited tasks and permissions from the coordinator rather than unrestricted access.

@@ -7,7 +7,26 @@ This document is the handoff point between coding sessions. At the end of each s
 - Module 0 and the Module 0.1 hardening gate are complete: Git safety rules,
   project documentation, source layout, virtual environment, project metadata,
   deterministic security boundaries, a local model adapter, and a runnable chat
-  are in place. Module 1 persistence design may begin.
+  are in place. The Module 1 persistent-memory specification, bounded redacted
+  audit writer, synthetic SQLCipher connection boundary, and checksummed
+  forward-only migration layer are implemented. Typed encrypted repository
+  operations now cover records, revisions, entities, links, lifecycle, and the
+  permanent deletion ledger using synthetic data only. Deterministic retrieval
+  now filters and ranks confirmed records through an encrypted FTS5 index,
+  enforces record and token ceilings, and returns content-free receipts. A
+  trusted capture coordinator now supports explicit confirmed memories and
+  bounded, expiring, quarantined model suggestions connected through a
+  post-response worker. A consistent encrypted daily-snapshot policy now
+  supports scheduler invocation and enforces
+  verification, count and byte retention, exact high-risk restore approval,
+  pre-restore preservation, migration checks, deletion-ledger reapplication,
+  atomic replacement, and rollback on failed final verification. A narrow chat
+  adapter now retrieves only eligible confirmed records and inserts them as a
+  bounded JSON data envelope explicitly labeled as untrusted. Synthetic restart
+  recall passes. Portable recovery derives the database key for each session,
+  a separate rate-limited passcode issues exact one-use approvals, and trusted
+  administration covers setup, verification, candidate review, backup, and
+  restore. A new installation remains session-only until setup succeeds.
 - The local permission policy is implemented and covered by automated tests.
 - GitHub Actions is configured to test pull requests targeting `main` before
   merge. The public repository has an active ruleset requiring the `test`
@@ -21,7 +40,14 @@ This document is the handoff point between coding sessions. At the end of each s
   window for real chats, caps normal responses at 400 tokens, and asks Ollama
   to unload the model after five idle minutes.
 - Shared defaults and machine-local environment overrides are centralized in `config.py`.
-- The local-only chat streams responses and has session-only conversation memory while it is open. It has no persistent memory, tools, browser access, personal-data access, credential access, or web capability.
+- Project dependency management uses pinned `uv` 0.12.5, a committed
+  cross-platform `uv.lock`, locked local synchronization, and locked CI
+  execution. `setuptools` remains the package build backend.
+- The local-only chat streams responses and has bounded session history while it
+  is open. After trusted setup and recovery unlock, it retrieves only eligible
+  confirmed persistent records, intercepts explicit remember instructions, and
+  analyzes completed turns asynchronously into quarantined candidates. It has
+  no tools, browser access, credential access, or web capability.
 - Conversation policy is documented separately from the action-permission policy.
 - `docs/security-principles.md` is the governing threat model and review
   checklist for every future capability; design decisions should explicitly
@@ -39,10 +65,25 @@ This document is the handoff point between coding sessions. At the end of each s
 - Terminal output escapes control and invisible formatting characters. Expected
   local-model, malformed-response, configuration, and interruption failures
   fail closed with fixed user-safe messages.
+- Typed audit events accept no free-form message content. The replaceable local
+  JSON Lines writer enforces restrictive permissions, event and file ceilings,
+  bounded rotation, symbolic-link refusal, and safe failure messages. Portable
+  security, approvals, memory analysis, encrypted database, migrations,
+  repository operations, retrieval, capture, backup, and restore now emit typed
+  events. Chat transcripts and ordinary response text are not logged.
+- The encrypted database boundary pins `sqlcipher3` 0.6.2, requires SQLCipher 4
+  cipher status, codec support, and FTS5, accepts keys only through a replaceable
+  provider, refuses unsafe paths and plaintext fallback, and emits content-free
+  database-open audit events. It has been tested only with synthetic data.
+- The encrypted schema is built from 17 fixed, packaged, single-statement SQL
+  migrations. Exact SHA-256 history is stored in the database; missing,
+  duplicate, reordered, changed, unknown, or untracked history fails closed.
+  The entire pending migration batch commits atomically or rolls back.
 
 ## Outstanding actions
 
-Work through these in order unless project needs change. Module 1 must wait until the Module 0.1 hardening work below is complete.
+Work through these in order unless project needs change. Module 1 is locally
+complete; the batched Linux pull-request check is its final platform gate.
 
 - [x] Module 0.1: enforce a truly local-only Ollama connection. Accept only an explicit loopback HTTP address, and prevent proxy use and HTTP redirects. Keep a future remote-model adapter separate and opt-in.
 - [x] Module 0.1: make session memory genuinely bounded in RAM, using a token-aware budget that includes the system instruction and current user message. Define predictable handling for one message that is too large.
@@ -52,13 +93,390 @@ Work through these in order unless project needs change. Module 1 must wait unti
 - [x] Module 0.1: sanitize control characters from model output before printing it to the terminal. Add friendly error handling for unavailable Ollama, missing models, malformed responses, and interrupted startup.
 - [x] Module 0.1: make warm-up lightweight, improve documentation wording about privacy and in-memory clearing, extend secret-file ignore rules, and harden the GitHub Actions workflow (full action SHA pins and least-privilege checkout settings).
 - [x] Module 0.1: add focused tests for every hardening rule, run the full suite, and test a real local two-turn chat before beginning Module 1.
-- [ ] Begin Module 1: design the SQLite data boundary and migrations before storing personal data.
+- [x] Begin Module 1: design the encrypted SQLite data boundary, memory
+  lifecycle, retrieval rules, migrations, backup, and acceptance tests before
+  storing personal data.
+- [x] Module 1 prerequisite: implement the bounded, redacted audit writer before
+  persistent personal-data operations are enabled.
+- [x] Module 1: select SQLCipher behind a replaceable encrypted SQLite and key-
+  provider boundary; verify it locally on macOS ARM64 using synthetic data.
+- [ ] Module 1 portability: confirm the pinned SQLCipher boundary in the batched
+  Linux GitHub Actions run. Windows verification remains a documented release
+  gate before distributing a packaged Windows build.
+- [x] Module 1: implement and test the checksummed migration runner and initial
+  encrypted schema using synthetic data only.
+- [x] Module 1: implement typed records and payloads, append-only revision
+  snapshots, entities, aliases, record and entity links, lifecycle transitions,
+  optimistic concurrency, candidate expiry, and the permanent deletion ledger.
+- [x] Module 1: implement bounded retrieval and retrieval receipts.
+- [x] Module 1: implement explicit remember and quarantined automatic memory-
+  suggestion workflows.
+- [x] Module 1: implement encrypted backup, verification, and guided restore.
+- [x] Module 1: integrate bounded persistent context into chat and verify
+  restart-persistent synthetic recall.
+- [x] Module 1 deployment gate: implement portable key onboarding, verified
+  recovery, trusted passcode approval, candidate review, and runtime wiring.
 - [ ] Define the assistant's first tool registry and permission-enforcement path before adding any tool.
 - [ ] Add a web/search tool only behind the tool registry and approval layer.
-- [ ] Add a bounded, redacted local audit writer before tools or persistent
-  personal-data operations are enabled.
 
 ## Session history
+
+### 2026-08-25 — Module 1 portable deployment gate
+
+Completed:
+
+- Added a versioned, cross-platform recovery manifest using scrypt-derived
+  SQLCipher keys and salted verification checks. Recovery and approval secrets
+  are never stored, logged, passed as command arguments, or sent to the model.
+- Added a separate high-risk passcode gate with persisted failed-attempt state,
+  bounded lockout, redacted audit events, and exact short-lived one-use approval
+  receipts. A correct passcode still cannot override a prohibited action.
+- Added trusted local setup, recovery verification, candidate review, encrypted
+  backup listing and creation, and guided restore commands. Restore binds the
+  displayed snapshot metadata to approval and cancellation performs no change.
+- Wired unlocked persistent memory into normal chat. Explicit remember requests
+  are handled before model submission; automatic post-response analysis is
+  asynchronous and can create only quarantined, expiring candidates.
+- Added persisted content-free backup integrity metadata, unsafe-parent checks,
+  and audit-directory symbolic-link refusal. Runtime shutdown cancels future
+  candidate persistence before clearing the application-owned derived key copy.
+- Kept operating-system automatic unlock, graphical configuration, key rotation,
+  portable import/export, and Windows runtime verification as future gates.
+
+Verification:
+
+- The complete local suite passes 220 tests, with the synthetic 100,000-record
+  performance benchmark separately passing at 13.18 ms median and 13.41 ms p95
+  over 30 queries, with 96 candidates examined, 12 records returned, and 1,295
+  conservatively estimated memory tokens.
+
+Next:
+
+- Run the opt-in retrieval benchmark, locked-environment verification, and
+  repository safety checks; then push one batched branch update and let the
+  pull-request workflow verify SQLCipher on Linux before auto-merge.
+
+### 2026-08-25 — Persistent chat context and restart recall
+
+Completed:
+
+- Added a narrow repository-to-chat adapter. It can request only ordinary
+  deterministic retrieval and receives neither keys nor an exposed SQL or
+  database handle.
+- Serialized eligible payloads into one bounded JSON object under a system
+  instruction that treats every stored string as untrusted data, never as
+  instructions, policy, or authority. User and assistant roles remain
+  structurally separate.
+- Preserved the 2,000-token persistent-memory ceiling and the full 16K request
+  budget. Recent session turns are trimmed first; if persistent context itself
+  prevents the current request from fitting, chat visibly continues without
+  persistent memory instead of dropping the user request.
+- Retrieval or database failure produces a fixed content-free notice and safely
+  continues without memory. Low-information queries simply retrieve nothing
+  rather than being reported as failures.
+- Improved natural lexical recall with bounded FTS5 prefix matching, allowing a
+  query such as `like` to match `likes` while retaining all existing status,
+  scope, sensitivity, mention, time, candidate-count, record-count, and token
+  limits.
+- Reconstructed the database, repository, and context adapter around the same
+  encrypted synthetic file to prove confirmed recall survives restart while a
+  model candidate remains quarantined.
+- Verified instruction-shaped stored text remains syntactically inside the JSON
+  data object. It cannot become a separate model role and still cannot grant
+  executor authority under the security doctrine. The model may still
+  misinterpret untrusted text, so labeling is not treated as the security
+  boundary.
+- The 100,000-record encrypted benchmark reports 12.99 ms median and 13.20 ms
+  p95 over 30 queries, with 96 candidates examined, 12 records returned, and
+  1,295 conservatively estimated memory tokens.
+- The complete local suite runs 195 tests successfully, with the opt-in
+  performance benchmark skipped during the normal run and separately passing
+  when enabled.
+
+Next:
+
+- Commit this final local Module 1 implementation gate. The next meaningful
+  Actions-consuming milestone is the batched branch push and pull request,
+  which will also verify the locked SQLCipher environment on Linux.
+- Before accepting real personal data, implement portable key onboarding,
+  recovery verification, and the trusted passcode interface. The default CLI
+  remains session-only until that deployment gate is complete.
+
+### 2026-08-25 — Encrypted backup and guided restore boundary
+
+Completed:
+
+- Added a configured external-destination backup manager using SQLite's online
+  backup mechanism through verified SQLCipher connections. Live database files
+  are never copied directly.
+- Added an idempotent daily entry point for a future scheduler. It skips only
+  after verifying the existing daily snapshot. No runtime schedule or external
+  drive is configured yet.
+- Added atomic publication from flushed encrypted partial files, owner-only
+  POSIX permissions, and strict refusal of missing, symbolic-link, or
+  unmanaged destinations.
+- Enforced the approved defaults and hard ceilings of seven snapshots, 2 GiB
+  per snapshot, and 10 GiB total. Retention runs only after a new snapshot has
+  passed encryption, migration-history, integrity, and foreign-key checks.
+- Added a content-free restore plan bound to the managed filename, ciphertext
+  SHA-256, and live target. Restore consumes an exact short-lived one-use
+  approval and rejects a snapshot changed after the plan was shown.
+- Kept restore unavailable from normal chat. The engine requires an approval
+  authority supplied by a future trusted passcode interface; tests use only a
+  synthetic authority and do not create a production bypass.
+- Restore copies into an encrypted temporary database, runs required forward
+  migrations, creates a fresh pre-restore snapshot, reapplies the current
+  deletion ledger, verifies the candidate, atomically replaces the live file,
+  verifies again, and restores the prior live file if final verification fails.
+- Added synthetic tests for encrypted consistency, daily behavior, retention,
+  missing destinations, corrupt snapshots, post-plan tampering, exact approval,
+  interrupted writes, rollback, and deletion-ledger preservation. The full
+  suite passes with 189 tests and one intentionally skipped opt-in performance
+  benchmark.
+
+Next:
+
+- Integrate persistent memory into normal chat with bounded retrieval and
+  restart-persistent synthetic recall, while leaving automatic suggestion
+  analysis asynchronous and quarantined.
+- Add the trusted passcode entry UI before exposing guided restore or any other
+  high-risk operation to a conversational or model-controlled path.
+
+### 2026-08-25 — Explicit remember and quarantined suggestion workflows
+
+Completed:
+
+- Added typed explicit-memory requests, automatic model suggestions,
+  content-free decisions, and a trusted capture coordinator. The API does not
+  expose a status switch through which model output could request confirmed
+  memory.
+- Explicit normal or personal instructions create confirmed records. An exact
+  confirmed duplicate is reused, an exact single candidate is confirmed, and a
+  different value for the same subject returns opaque related IDs for natural
+  clarification instead of overwriting history.
+- Explicit sensitive or restricted capture pauses for a separate higher-risk
+  review path. That path is not implemented by weakening the capture policy or
+  accepting a conversational approval flag.
+- Automatic suggestions always create 30-day candidate records. Conservative
+  sensitivity and mention-policy floors tighten model proposals: notes and
+  insights are at least personal, sensitive suggestions are direct-request
+  only, and restricted suggestions are `never_mention`.
+- Added deterministic sensitive and restricted content rules for known
+  wellbeing, trauma, medical, financial, legal, location, and relationship
+  categories. A model may raise the resulting classification but cannot lower
+  it. These conservative rules are a replaceable policy layer, not a claim that
+  keyword matching understands every possible sensitive nuance.
+- Enforced a default maximum of three and hard maximum of five candidates per
+  completed-turn source inside the encrypted write transaction. Changing the
+  claimed model version cannot bypass the persisted turn limit.
+- Added a small, cancellable post-response batch primitive. It is ready for a
+  future background worker, but no analyzer or normal-chat integration invokes
+  it yet, so this milestone does not automatically store live conversation
+  content.
+- Used the encrypted FTS5 index to bound exact duplicate and same-subject
+  conflict discovery. Unrelated global records do not consume the 64-neighbor
+  safety ceiling; an unexpectedly broad result fails closed for clarification.
+- Added typed coordinator audit events for success, duplicate, clarification,
+  higher-risk denial, candidate-limit, and failure outcomes. Events contain
+  opaque IDs and counts but no memory, prompt, source-turn, or model text.
+- Added synthetic tests for confirmation, duplicate suppression, conflicts,
+  risk review, conservative controls, quarantine, retrieval exclusion,
+  persisted candidate limits, cancellation, audit failure, audit redaction,
+  credentials, and unrelated-memory scale behavior. No personal data or
+  runtime database was created.
+
+Next:
+
+- Implement consistent encrypted backup, bounded retention, verification, and
+  guided restore with deletion-ledger reapplication and exact high-risk
+  authorization.
+- Only after backup and restore pass should persistent memory be connected to
+  normal chat and exercised with restart-persistent synthetic recall.
+
+### 2026-08-24 — Deterministic bounded memory retrieval
+
+Completed:
+
+- Added a typed retrieval request, selected-memory result, and content-free
+  receipt with selected opaque IDs, applied deterministic rules, exclusion
+  counts for post-ranking resource limits, records examined, records returned,
+  and conservatively estimated tokens returned.
+- Added an encrypted FTS5 search index with non-content control fields so
+  status, scope, sensitivity, mention policy, validity, and kind filters apply
+  before the bounded candidate set is ranked.
+- Ranked a maximum of 96 candidates by resolved entity, scope specificity,
+  full-text relevance, memory kind, provenance, recency, and stable opaque ID;
+  returned at most 12 records and 2,500 conservatively estimated tokens.
+- Kept candidates, archived or deleted records, expired records, inapplicable
+  scopes, `ask_before_mentioning`, and `never_mention` records out of ordinary
+  retrieval. Direct mode may include `only_when_directly_asked` records, but
+  restricted records remain unavailable until separate high-risk
+  authentication is implemented.
+- Updated the derived search index atomically on create, revision, lifecycle
+  change, and purge. Added forward migrations that create and backfill the
+  index from the current revision of an existing version-15 database.
+- Added synthetic tests for privacy filters, direct-request policy, scope and
+  entity ranking, count and token limits, revisions, purges, query injection,
+  content-free auditing, migration backfill, and fixed parameterized SQL.
+- Added an opt-in benchmark so normal PR CI does not spend its budget building
+  a 100,000-record fixture. On the primary development Mac, 30 measured queries
+  over 100,000 encrypted synthetic records reported 9.05 ms median and 9.31 ms
+  p95 retrieval, 96 examined candidates, 12 returned records, 1,297 estimated
+  tokens, and a 138,780,672-byte database.
+
+Next:
+
+- Implement explicit remember and quarantined automatic memory-suggestion
+  workflows without connecting persistent memory to normal chat yet.
+- Confirm SQLCipher, migrations, retrieval, and the locked `uv` environment in
+  the eventual batched Linux pull-request run.
+
+### 2026-08-24 — Typed encrypted memory repository and uv adoption
+
+Completed:
+
+- Added registered, bounded payload types for facts, preferences, events, notes,
+  insights, and policy preferences; typed provenance, sensitivity, mention,
+  scope, entity, alias, and link values; and conservative rejection of
+  credential-associated or unsafe-control content.
+- Added fixed parameterized repository methods for encrypted record creation,
+  inspection, correction, control changes, candidate confirmation/rejection,
+  archival, restoration, soft deletion, atomic supersession, bounded candidate
+  expiry, and permanent purge.
+- Stored a canonical full-envelope snapshot for every append-only revision,
+  linked revision hashes, and enforced optimistic row versions so stale writes
+  fail without overwriting newer state.
+- Added stable entities, exact normalized aliases that preserve ambiguous
+  matches, record and entity links, three-distinct-evidence enforcement for
+  insights, feedback records, and purge-ledger suppression.
+- Kept model output quarantined to expiring candidate records. It cannot create
+  confirmed memory or directly change an existing memory, alias, or entity
+  link.
+- Added content-free repository audit events and synthetic encrypted tests for
+  injection-shaped text, lifecycle rules, stale writes, ambiguity, tampering,
+  purge, model-boundary attempts, and audit failure before mutation. The full
+  suite passes with 154 tests.
+- Installed and pinned `uv` 0.12.5, committed its cross-platform lockfile,
+  required locked local and CI installs, and retained `setuptools` as the build
+  backend.
+- Kept all persistent-memory operations disconnected from chat; no real
+  personal data, key, audit log, or runtime database was created.
+
+Next:
+
+- Implement deterministic bounded retrieval and content-free retrieval receipts
+  over confirmed records only.
+- Confirm the SQLCipher and locked `uv` workflow in the eventual Linux PR run;
+  retain Windows as an explicit pre-distribution verification gate.
+
+### 2026-08-24 — Checksummed encrypted schema migrations
+
+Completed:
+
+- Added 13 fixed, packaged, forward-only SQL migrations for the migration
+  ledger, memory records and revisions, entities and aliases, record links,
+  feedback, deletion ledger, and bounded lookup indexes.
+- Added exact SHA-256 verification and strict contiguous ordering. The runner
+  accepts stored history only when it is an exact prefix of the packaged
+  history and refuses altered, missing, duplicate, reordered, newer, malformed,
+  or untracked schema state.
+- Applied the complete pending batch in one encrypted transaction so any failed
+  statement rolls back all pending schema changes.
+- Added content-free migration audit events and synthetic tests covering fresh
+  migration, idempotent reruns, history tampering, source defects, rollback,
+  untracked schema, audit failure, encryption, and error redaction. The complete
+  suite passes with 128 tests.
+- Kept the schema disconnected from chat and repository operations; no real
+  personal data or runtime database was created.
+
+Next:
+
+- Implement typed repository envelopes, append-only revision writes, entities,
+  links, lifecycle transitions, optimistic concurrency, and purge-ledger rules
+  using temporary synthetic encrypted databases.
+- Confirm Linux compatibility in the eventual batched PR run and Windows before
+  distributing a packaged Windows build.
+
+### 2026-08-24 — Encrypted SQLite provider spike
+
+Completed:
+
+- Compared standard SQLite, application-level field encryption, SQLite SEE,
+  and SQLCipher; selected SQLCipher Community behind replaceable project-owned
+  database and key-provider interfaces.
+- Pinned `sqlcipher3` 0.6.2 and verified its bundled SQLCipher 4.12.0 Community
+  engine on the current Apple-silicon Mac.
+- Added a fail-closed connection boundary requiring an explicit absolute path,
+  fresh 256-bit key, audit sink, supported cipher status and major version,
+  codec support, FTS5, foreign keys, trusted-schema restrictions, bounded
+  timeouts, extension-loading disablement, and restrictive POSIX permissions.
+- Proved with temporary synthetic data that the file lacks the plaintext SQLite
+  header, ordinary SQLite cannot read it, the correct key reopens it, a wrong
+  key fails safely, and substituting ordinary SQLite cannot satisfy the
+  encryption requirement.
+- Added content-free database-open audit events and verified that audit failure
+  prevents key acquisition and database creation.
+- Added dependency-pinning, key-lifetime, unsafe-path, error-redaction, and
+  connection-cleanup tests. The complete suite passes with 117 tests.
+- Added `docs/encrypted-database-spike.md` with the decision evidence,
+  limitations, and remaining platform checks. No real key, runtime database,
+  recovery passphrase, or personal record was created.
+
+Next:
+
+- Implement the checksummed forward-only migration runner and initial schema
+  using temporary encrypted databases and synthetic data.
+- Confirm Linux compatibility in the eventual batched PR run and Windows before
+  distributing a packaged Windows build.
+
+### 2026-08-24 — Bounded redacted audit writer
+
+Completed:
+
+- Added typed audit components, operations, outcomes, reason codes, UUID
+  correlation, bounded durations, and allowlisted metadata without a free-form
+  message field.
+- Added a replaceable audit-sink protocol and an in-memory test sink.
+- Added an explicitly configured JSON Lines writer with restrictive POSIX
+  permissions, one-line structured events, a 16 KiB event ceiling, a 1 MiB file
+  ceiling, five retained rotations, synchronous disk flush, and symbolic-link
+  refusal.
+- Added focused tests for validation, injection attempts, size bounds,
+  permissions, rotation, retention, unsafe targets, and non-sensitive error
+  messages. The complete suite passes with 106 tests.
+- Kept the writer disconnected from normal chat; no runtime audit file or
+  personal-data store is created by this change.
+
+Next:
+
+- Spike the cross-platform encrypted SQLite and key-provider boundary with
+  synthetic data.
+- Integrate typed audit events as each model, authorization, database, backup,
+  and future tool boundary is enabled or revised.
+
+### 2026-08-24 — Module 1 persistent-memory specification
+
+Completed:
+
+- Defined the encrypted, cross-platform SQLite boundary and forward-only
+  checksummed migration contract.
+- Specified typed records, append-only revisions, entities, profiles,
+  provenance, scopes, sensitivity, mention rules, contradictions, evidence-
+  linked insights, candidate memory suggestions, and deletion behavior.
+- Defined bounded indexed retrieval, measurable performance targets, retrieval
+  receipts, daily encrypted external-drive backup, verified restore, and
+  non-destructive future maintenance.
+- Defined passcode-backed high-risk authorization without a separate login for
+  ordinary conversation, while keeping foundational guardrails unavailable to
+  conversational override.
+- Added focused acceptance criteria and an ordered implementation plan. No
+  database or personal-data persistence code was added.
+
+Next:
+
+- Implement the bounded redacted audit writer required before personal-data
+  operations.
+- Spike the encrypted SQLite and key-provider boundary using synthetic data.
 
 ### 2026-08-21 01:09 MDT
 
