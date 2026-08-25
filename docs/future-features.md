@@ -110,10 +110,11 @@ Before a restore, create a pre-restore snapshot when space permits, verify the
 candidate backup, explain what will change, require explicit approval, and
 reapply the permanent-deletion ledger so purged records are not resurrected.
 
-Initial defaults:
+Current Module 1 defaults to preserve or expose through that future UI:
 
-- offer automatic unlock through the current operating system's credential
-  store, while retaining a separate portable recovery passphrase;
+- continue requiring the portable recovery passphrase at startup; optionally
+  add automatic unlock through the current operating system's credential store
+  only after a separate cross-platform design and threat review;
 - do not require a separate login for ordinary conversation; require a local
   passcode or passphrase entered through the trusted interface for each exact
   high-risk operation;

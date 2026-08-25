@@ -76,6 +76,7 @@ MAX_RETRIEVAL_CANDIDATES = 96
 RETRIEVAL_RECORD_OVERHEAD_TOKENS = 16
 MAX_CAPTURE_NEIGHBORS = 64
 MAX_CANDIDATES_PER_SOURCE = 5
+MAX_CANDIDATE_REVIEW_RECORDS = 100
 _RETRIEVAL_TERM = re.compile(r"[\w]+", re.UNICODE)
 _RETRIEVAL_STOP_WORDS = {
     "a",
@@ -478,6 +479,36 @@ class MemoryRepository:
         ):
             with self._connection_provider.connect(correlation_id) as connection:
                 return self._load_record(connection, record_id)
+
+    def list_candidates(
+        self,
+        correlation_id: UUID,
+        *,
+        limit: int = 50,
+    ) -> tuple[MemoryRecord, ...]:
+        """Return a bounded trusted-interface review inbox."""
+
+        if (
+            isinstance(limit, bool)
+            or not isinstance(limit, int)
+            or not 1 <= limit <= MAX_CANDIDATE_REVIEW_RECORDS
+        ):
+            raise MemoryValidationError("Candidate review limit is invalid.")
+        with self._audited(
+            correlation_id,
+            AuditOperation.REPOSITORY_READ,
+            "candidate_list",
+            item_count=limit,
+        ):
+            with self._connection_provider.connect(correlation_id) as connection:
+                rows = connection.execute(
+                    "SELECT record_id FROM records WHERE status = ? "
+                    "ORDER BY updated_at DESC, record_id LIMIT ?",
+                    (RecordStatus.CANDIDATE.value, limit),
+                ).fetchall()
+                return tuple(
+                    self._load_record(connection, UUID(row[0])) for row in rows
+                )
 
     def find_capture_neighbors(
         self,

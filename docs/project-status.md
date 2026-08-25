@@ -15,16 +15,18 @@ This document is the handoff point between coding sessions. At the end of each s
   now filters and ranks confirmed records through an encrypted FTS5 index,
   enforces record and token ceilings, and returns content-free receipts. A
   trusted capture coordinator now supports explicit confirmed memories and
-  bounded, expiring, quarantined model suggestions without connecting either
-  workflow to normal chat. A consistent encrypted daily-snapshot policy now
+  bounded, expiring, quarantined model suggestions connected through a
+  post-response worker. A consistent encrypted daily-snapshot policy now
   supports scheduler invocation and enforces
   verification, count and byte retention, exact high-risk restore approval,
   pre-restore preservation, migration checks, deletion-ledger reapplication,
   atomic replacement, and rollback on failed final verification. A narrow chat
   adapter now retrieves only eligible confirmed records and inserts them as a
   bounded JSON data envelope explicitly labeled as untrusted. Synthetic restart
-  recall passes; the default CLI remains session-only until portable key
-  onboarding is implemented.
+  recall passes. Portable recovery derives the database key for each session,
+  a separate rate-limited passcode issues exact one-use approvals, and trusted
+  administration covers setup, verification, candidate review, backup, and
+  restore. A new installation remains session-only until setup succeeds.
 - The local permission policy is implemented and covered by automated tests.
 - GitHub Actions is configured to test pull requests targeting `main` before
   merge. The public repository has an active ruleset requiring the `test`
@@ -41,11 +43,11 @@ This document is the handoff point between coding sessions. At the end of each s
 - Project dependency management uses pinned `uv` 0.12.5, a committed
   cross-platform `uv.lock`, locked local synchronization, and locked CI
   execution. `setuptools` remains the package build backend.
-- The local-only chat streams responses and has session-only conversation
-  memory while it is open. It can accept the tested persistent-memory context
-  adapter, but the default startup does not configure one and therefore still
-  has no personal-data access. It has no tools, browser access, credential
-  access, or web capability.
+- The local-only chat streams responses and has bounded session history while it
+  is open. After trusted setup and recovery unlock, it retrieves only eligible
+  confirmed persistent records, intercepts explicit remember instructions, and
+  analyzes completed turns asynchronously into quarantined candidates. It has
+  no tools, browser access, credential access, or web capability.
 - Conversation policy is documented separately from the action-permission policy.
 - `docs/security-principles.md` is the governing threat model and review
   checklist for every future capability; design decisions should explicitly
@@ -65,9 +67,10 @@ This document is the handoff point between coding sessions. At the end of each s
   fail closed with fixed user-safe messages.
 - Typed audit events accept no free-form message content. The replaceable local
   JSON Lines writer enforces restrictive permissions, event and file ceilings,
-  bounded rotation, symbolic-link refusal, and safe failure messages. It is not
-  connected to normal chat, model, or tool operations; the encrypted-database,
-  migration, and synthetic repository boundaries now emit typed events.
+  bounded rotation, symbolic-link refusal, and safe failure messages. Portable
+  security, approvals, memory analysis, encrypted database, migrations,
+  repository operations, retrieval, capture, backup, and restore now emit typed
+  events. Chat transcripts and ordinary response text are not logged.
 - The encrypted database boundary pins `sqlcipher3` 0.6.2, requires SQLCipher 4
   cipher status, codec support, and FTS5, accepts keys only through a replaceable
   provider, refuses unsafe paths and plaintext fallback, and emits content-free
@@ -79,7 +82,8 @@ This document is the handoff point between coding sessions. At the end of each s
 
 ## Outstanding actions
 
-Work through these in order unless project needs change. Module 1 must wait until the Module 0.1 hardening work below is complete.
+Work through these in order unless project needs change. Module 1 is locally
+complete; the batched Linux pull-request check is its final platform gate.
 
 - [x] Module 0.1: enforce a truly local-only Ollama connection. Accept only an explicit loopback HTTP address, and prevent proxy use and HTTP redirects. Keep a future remote-model adapter separate and opt-in.
 - [x] Module 0.1: make session memory genuinely bounded in RAM, using a token-aware budget that includes the system instruction and current user message. Define predictable handling for one message that is too large.
@@ -97,8 +101,8 @@ Work through these in order unless project needs change. Module 1 must wait unti
 - [x] Module 1: select SQLCipher behind a replaceable encrypted SQLite and key-
   provider boundary; verify it locally on macOS ARM64 using synthetic data.
 - [ ] Module 1 portability: confirm the pinned SQLCipher boundary in the batched
-  Linux GitHub Actions run and add Windows verification before distributing a
-  packaged Windows build.
+  Linux GitHub Actions run. Windows verification remains a documented release
+  gate before distributing a packaged Windows build.
 - [x] Module 1: implement and test the checksummed migration runner and initial
   encrypted schema using synthetic data only.
 - [x] Module 1: implement typed records and payloads, append-only revision
@@ -110,12 +114,47 @@ Work through these in order unless project needs change. Module 1 must wait unti
 - [x] Module 1: implement encrypted backup, verification, and guided restore.
 - [x] Module 1: integrate bounded persistent context into chat and verify
   restart-persistent synthetic recall.
-- [ ] Module 1 deployment gate: implement portable key onboarding and verified
-  recovery before enabling real personal data in the default runtime.
+- [x] Module 1 deployment gate: implement portable key onboarding, verified
+  recovery, trusted passcode approval, candidate review, and runtime wiring.
 - [ ] Define the assistant's first tool registry and permission-enforcement path before adding any tool.
 - [ ] Add a web/search tool only behind the tool registry and approval layer.
 
 ## Session history
+
+### 2026-08-25 — Module 1 portable deployment gate
+
+Completed:
+
+- Added a versioned, cross-platform recovery manifest using scrypt-derived
+  SQLCipher keys and salted verification checks. Recovery and approval secrets
+  are never stored, logged, passed as command arguments, or sent to the model.
+- Added a separate high-risk passcode gate with persisted failed-attempt state,
+  bounded lockout, redacted audit events, and exact short-lived one-use approval
+  receipts. A correct passcode still cannot override a prohibited action.
+- Added trusted local setup, recovery verification, candidate review, encrypted
+  backup listing and creation, and guided restore commands. Restore binds the
+  displayed snapshot metadata to approval and cancellation performs no change.
+- Wired unlocked persistent memory into normal chat. Explicit remember requests
+  are handled before model submission; automatic post-response analysis is
+  asynchronous and can create only quarantined, expiring candidates.
+- Added persisted content-free backup integrity metadata, unsafe-parent checks,
+  and audit-directory symbolic-link refusal. Runtime shutdown cancels future
+  candidate persistence before clearing the application-owned derived key copy.
+- Kept operating-system automatic unlock, graphical configuration, key rotation,
+  portable import/export, and Windows runtime verification as future gates.
+
+Verification:
+
+- The complete local suite passes 220 tests, with the synthetic 100,000-record
+  performance benchmark separately passing at 13.18 ms median and 13.41 ms p95
+  over 30 queries, with 96 candidates examined, 12 records returned, and 1,295
+  conservatively estimated memory tokens.
+
+Next:
+
+- Run the opt-in retrieval benchmark, locked-environment verification, and
+  repository safety checks; then push one batched branch update and let the
+  pull-request workflow verify SQLCipher on Linux before auto-merge.
 
 ### 2026-08-25 — Persistent chat context and restart recall
 

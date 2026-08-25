@@ -590,6 +590,33 @@ history.
 7. [x] Implement encrypted daily backup, verification, and guided restore.
 8. [x] Integrate persistent memory into chat only after all preceding boundaries
    and tests pass, then verify restart-persistent recall with synthetic data.
+9. [x] Complete the deployment gate with portable recovery-derived keys,
+   separate trusted high-risk passcode approval, candidate review, and guided
+   backup restore. Keep OS credential-store unlock, graphical settings, key
+   rotation, portable import/export, and Windows release verification separate.
 
 Each step is locally tested and committed. Pushes and pull requests remain
 explicit milestones so GitHub Actions usage is not spent on every small change.
+
+## Implemented portable-security boundary
+
+The portable manifest contains random salts, versioned scrypt parameters, a key
+identifier, and keyed verification checks. It contains neither the recovery
+passphrase, the high-risk passcode, nor the derived SQLCipher key. Unlock derives
+the key into application-owned memory for one process and clears that mutable
+copy on normal shutdown. Python, native libraries, the operating system, swap,
+or crash facilities may retain other copies; this is best-effort lifecycle
+management, not guaranteed physical erasure.
+
+Trusted administration collects secrets with hidden prompts. Normal chat cannot
+request or receive them. The passcode gate persists rate-limit state, mints only
+an exact one-use approval receipt, and cannot convert a deterministic denial into
+an allowed action. Backup restore additionally requires a typed confirmation and
+an unchanged managed snapshot whose persisted ciphertext metadata and encrypted
+database integrity both verify.
+
+This boundary reduces mistakes and compromised conversational-input risk. It
+does not claim to defeat an attacker who already controls the same OS account,
+can replace project code, or can inspect the live process. Host authentication,
+full-disk protection, patching, physical security, and protected offline backups
+remain required independent layers.

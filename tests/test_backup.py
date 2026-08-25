@@ -95,6 +95,10 @@ class EncryptedBackupManagerTests(unittest.TestCase):
         assert snapshot is not None
         self.assertNotEqual(snapshot.path.read_bytes()[:16], b"SQLite format 3\x00")
         self.assertEqual(len(snapshot.ciphertext_sha256), 64)
+        metadata_path = snapshot.path.with_name(f"{snapshot.path.name}.meta.json")
+        metadata = metadata_path.read_text(encoding="utf-8")
+        self.assertIn(snapshot.ciphertext_sha256, metadata)
+        self.assertNotIn("synthetic-only", metadata)
         self.assertIsNone(manager.create_daily(uuid4()))
         self.assertEqual(len(tuple(self.destination.glob("memory-*.db"))), 1)
 
@@ -164,6 +168,15 @@ class EncryptedBackupManagerTests(unittest.TestCase):
                 approval_receipt=receipt,
                 approval_authority=authority,
             )
+
+    def test_missing_or_changed_integrity_metadata_blocks_restore(self) -> None:
+        manager = self._manager()
+        snapshot = manager.create_snapshot(uuid4())
+        metadata = snapshot.path.with_name(f"{snapshot.path.name}.meta.json")
+        metadata.write_text("{}", encoding="utf-8")
+
+        with self.assertRaises(BackupIntegrityError):
+            manager.plan_restore(snapshot.path, uuid4())
 
     def test_restore_requires_approval_and_reapplies_deletion_ledger(self) -> None:
         manager = self._manager()

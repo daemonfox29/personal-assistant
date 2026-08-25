@@ -32,16 +32,18 @@ review questions in [Security Principles](security-principles.md).
 
 ## Information flow
 
-Current chat flow, with the optional Module 1 adapter supplied by a trusted
-startup path:
+Current chat flow after trusted Module 1 setup and recovery unlock:
 
 User request → bounded encrypted retrieval → untrusted-data system envelope →
 token-bounded structured messages → model adapter → local Ollama model →
 streamed response
 
-The default command-line startup does not yet supply that adapter because
-portable key onboarding and recovery must be implemented before real personal
-data is accepted. Without it, the flow remains the Module 0 session-only path.
+The default command-line startup supplies the adapter only when a safe portable
+security manifest exists and the hidden recovery prompt unlocks it. A new or
+disabled installation follows the Module 0 session-only path. Explicit remember
+instructions are intercepted before model submission. After the visible answer,
+a bounded worker may ask the model for tentative suggestions, but those enter
+only the quarantined candidate inbox until trusted review confirms them.
 
 Future action flow:
 
@@ -63,9 +65,10 @@ The labeling can reduce accidental instruction-following but is not assumed to
 make the model reliable; deterministic permission and executor boundaries
 remain responsible for preventing actions.
 
-Closing the process drops the application's history references and no
-conversation database exists yet. This is an application retention boundary,
-not guaranteed physical erasure from Python, Ollama, the operating system,
+Closing the process drops the application's session-history references. Module 1
+stores selected confirmed memories and revision history, not a transcript of
+every conversation. This is an application retention boundary, not guaranteed
+physical erasure from Python, native libraries, Ollama, the operating system,
 swap, backups, or crash diagnostics.
 
 Future versions may add bounded worker agents. Worker agents will receive limited tasks and permissions from the coordinator rather than unrestricted access.

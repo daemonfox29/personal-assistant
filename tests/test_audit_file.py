@@ -178,3 +178,23 @@ class JsonLinesAuditSinkTests(unittest.TestCase):
                 sink.write(audit_event())
 
             self.assertEqual(target.read_text(encoding="utf-8"), "unchanged")
+
+    @unittest.skipUnless(hasattr(os, "symlink"), "symbolic links unavailable")
+    def test_symbolic_link_parent_directory_is_rejected(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            target = root / "target"
+            target.mkdir()
+            linked_parent = root / "linked"
+            try:
+                linked_parent.symlink_to(target, target_is_directory=True)
+            except OSError:
+                self.skipTest("symbolic links cannot be created")
+            sink = JsonLinesAuditSink(
+                AuditFileSettings(linked_parent / "audit.jsonl")
+            )
+
+            with self.assertRaisesRegex(AuditWriteError, "could not be recorded"):
+                sink.write(audit_event())
+
+            self.assertEqual(tuple(target.iterdir()), ())

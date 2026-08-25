@@ -1,7 +1,8 @@
 """A minimal local command-line chat interface."""
 
 from collections.abc import Callable
-from uuid import uuid4
+from typing import Protocol
+from uuid import UUID, uuid4
 
 from personal_assistant.config import ChatSettings
 from personal_assistant.memory_context import (
@@ -34,6 +35,24 @@ EXIT_COMMANDS = frozenset({"exit", "quit"})
 LONG_RESPONSE_COMMAND = "/long"
 MAX_RESPONSE_COMMAND = "/max"
 CUSTOM_LIMIT_COMMAND = "/limit"
+REMEMBER_COMMAND = "/remember"
+
+
+class ExplicitMemoryHandler(Protocol):
+    """Trusted local handler invoked before text can reach the model."""
+
+    def remember(self, content: str, correlation_id: UUID) -> str:
+        """Store an explicit instruction and return a fixed outcome."""
+
+
+class PostResponseWorker(Protocol):
+    """Receive completed turns only after their visible response finishes."""
+
+    def submit(self, user_text: str, assistant_text: str) -> bool:
+        """Queue a turn without blocking the conversation."""
+
+    def close(self) -> None:
+        """Cancel future persistence before runtime secrets are released."""
 
 
 def _write_chunk(text: str) -> None:
@@ -56,12 +75,16 @@ class ChatSession:
         write_output: OutputWriter = print,
         write_chunk: ChunkWriter = _write_chunk,
         memory_context_provider: MemoryContextProvider | None = None,
+        explicit_memory_handler: ExplicitMemoryHandler | None = None,
+        post_response_worker: PostResponseWorker | None = None,
     ) -> None:
         self._model = model
         self._read_input = read_input
         self._write_output = write_output
         self._write_chunk = write_chunk
         self._memory_context_provider = memory_context_provider
+        self._explicit_memory_handler = explicit_memory_handler
+        self._post_response_worker = post_response_worker
         self._settings = settings
         self._context_window_tokens = context_window_tokens
         self._default_response_tokens = validate_response_token_limit(
@@ -91,15 +114,21 @@ class ChatSession:
             try:
                 prompt = self._read_input("You: ")
             except EOFError:
+                self._close_background_work()
                 self._say_goodbye()
                 return
             except KeyboardInterrupt:
+                self._close_background_work()
                 self._write_output("\nInterrupted. Goodbye.")
                 return
 
             if prompt.strip().lower() in EXIT_COMMANDS:
+                self._close_background_work()
                 self._say_goodbye()
                 return
+
+            if self._handle_explicit_memory(prompt):
+                continue
 
             prepared_request = self._request_from_prompt(prompt)
             if prepared_request is None:
@@ -114,6 +143,7 @@ class ChatSession:
                     response_text = sanitize_terminal_text(response.text)
                     self._write_output(f"Assistant: {response_text}")
             except KeyboardInterrupt:
+                self._close_background_work()
                 self._write_output("\nRequest cancelled. Goodbye.")
                 return
             except ModelError as error:
@@ -123,6 +153,30 @@ class ChatSession:
                 continue
 
             self._memory.add_turn(user_text, response_text)
+            if self._post_response_worker is not None:
+                self._post_response_worker.submit(user_text, response_text)
+
+    def _close_background_work(self) -> None:
+        if self._post_response_worker is not None:
+            self._post_response_worker.close()
+
+    def _handle_explicit_memory(self, prompt: str) -> bool:
+        if self._explicit_memory_handler is None:
+            return False
+        stripped = prompt.strip()
+        lowered = stripped.casefold()
+        content: str | None = None
+        if lowered == REMEMBER_COMMAND:
+            content = ""
+        elif lowered.startswith(f"{REMEMBER_COMMAND} "):
+            content = stripped[len(REMEMBER_COMMAND) :].strip()
+        elif lowered.startswith("remember that "):
+            content = stripped[len("remember that ") :].strip()
+        if content is None:
+            return False
+        result = self._explicit_memory_handler.remember(content, uuid4())
+        self._write_output(result)
+        return True
 
     def _stream_response(self, request: ModelRequest) -> str:
         self._write_chunk("Assistant: ")

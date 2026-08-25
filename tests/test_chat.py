@@ -209,6 +209,57 @@ class ChatSessionTests(unittest.TestCase):
             "continuing without it."
         )
 
+    def test_explicit_remember_is_intercepted_before_model_submission(self) -> None:
+        class MemoryHandler:
+            def remember(self, content, correlation_id):
+                self.content = content
+                self.correlation_id = correlation_id
+                return "I saved that as confirmed memory."
+
+        handler = MemoryHandler()
+        model = self._non_streaming_model()
+        write_output = Mock()
+        ChatSession(
+            model,
+            explicit_memory_handler=handler,
+            read_input=Mock(side_effect=["remember that Luna likes toys", "quit"]),
+            write_output=write_output,
+        ).run()
+
+        model.generate.assert_not_called()
+        self.assertEqual(handler.content, "Luna likes toys")
+        write_output.assert_any_call("I saved that as confirmed memory.")
+
+    def test_remember_command_without_content_shows_usage_locally(self) -> None:
+        handler = Mock()
+        handler.remember.return_value = "Usage: /remember <information to remember>"
+        model = self._non_streaming_model()
+        write_output = Mock()
+        ChatSession(
+            model,
+            explicit_memory_handler=handler,
+            read_input=Mock(side_effect=["/remember", "quit"]),
+            write_output=write_output,
+        ).run()
+
+        model.generate.assert_not_called()
+        handler.remember.assert_called_once()
+        write_output.assert_any_call("Usage: /remember <information to remember>")
+
+    def test_completed_turn_is_submitted_after_response_and_worker_closes(self) -> None:
+        worker = Mock()
+        model = self._non_streaming_model()
+        model.generate.return_value = ModelResponse(text="Visible reply")
+        ChatSession(
+            model,
+            post_response_worker=worker,
+            read_input=Mock(side_effect=["User turn", "quit"]),
+            write_output=Mock(),
+        ).run()
+
+        worker.submit.assert_called_once_with("User turn", "Visible reply")
+        worker.close.assert_called_once()
+
     def test_long_command_uses_the_long_response_cap(self) -> None:
         model = self._non_streaming_model()
         model.generate.return_value = ModelResponse(text="Long reply")

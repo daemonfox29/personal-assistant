@@ -1,5 +1,36 @@
 # Learning Journal
 
+## 2026-08-25 — Recovery keys and high-risk passcodes solve different problems
+
+The recovery passphrase and high-risk passcode are deliberately separate. The
+recovery passphrase deterministically derives the SQLCipher database key, so the
+same encrypted database can be reopened without storing that key in a portable
+file. The manifest stores only random salts and keyed checks. A salt is not a
+secret; it makes precomputed password attacks less reusable. A deliberately slow
+KDF such as scrypt makes each guess more expensive, but it cannot rescue a weak
+passphrase.
+
+The high-risk passcode does not decrypt memory. It proves fresh user intent for
+one exact action that policy already permits with approval. The resulting
+receipt binds the action and arguments, expires quickly, and is consumed once.
+This matters because a generic `approved = true` could be replayed or redirected
+to something the user never saw. Persisting failed-attempt lockout state also
+prevents simply restarting the command to reset the counter.
+
+Neither mechanism is magic protection from a fully compromised local account.
+An attacker who can change the source code or inspect the live process is already
+inside the trust boundary. The passcode primarily lowers risk from malicious
+chat content, accidental commands, or someone casually opening the assistant;
+operating-system account security, disk encryption, updates, and physical control
+remain separate defenses.
+
+Automatic memory analysis now happens after the visible answer, so it does not
+delay the response path. Its output is treated as an untrusted proposal and can
+only enter a quarantined candidate inbox. Confirming or rejecting those proposals
+records a content-bounded feedback signal for later policy evaluation; Module 1
+does not silently retrain or auto-confirm from it. That preserves a future
+learning path without letting the model rewrite confirmed facts.
+
 This journal tracks concepts learned while building the assistant, questions
 that led to deeper discussion, and knowledge gaps worth revisiting. It is about
 personal understanding rather than project completion.

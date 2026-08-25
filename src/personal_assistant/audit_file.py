@@ -124,11 +124,14 @@ class JsonLinesAuditSink:
 
     def _prepare_parent(self) -> None:
         parent = self._settings.path.parent
-        existed = parent.exists()
-        parent.mkdir(parents=True, mode=0o700, exist_ok=True)
-        if not parent.is_dir():
+        try:
+            status = parent.lstat()
+        except FileNotFoundError:
+            parent.mkdir(parents=True, mode=0o700)
+            status = parent.lstat()
+        if stat.S_ISLNK(status.st_mode) or not stat.S_ISDIR(status.st_mode):
             raise AuditWriteError("Audit event could not be recorded.")
-        if not existed and os.name == "posix":
+        if os.name == "posix":
             parent.chmod(0o700)
 
     def _rotation_required(self, incoming_bytes: int) -> bool:

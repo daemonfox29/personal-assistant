@@ -4,6 +4,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from hashlib import sha256
+import json
 import os
 from pathlib import Path
 import re
@@ -38,6 +39,8 @@ DEFAULT_MAX_TOTAL_BYTES = 10 * GIB
 _SNAPSHOT_NAME = re.compile(
     r"^memory-(?P<stamp>[0-9]{8}T[0-9]{6}Z)-(?P<id>[0-9a-f]{32})\.db$"
 )
+_CIPHERTEXT_DIGEST = re.compile(r"^[0-9a-f]{64}$")
+BACKUP_METADATA_VERSION = 1
 
 
 class BackupError(RuntimeError):
@@ -114,6 +117,7 @@ class RestorePlan:
 
         return {
             "snapshot_name": self.snapshot.path.name,
+            "byte_count": self.snapshot.byte_count,
             "ciphertext_sha256": self.snapshot.ciphertext_sha256,
             "live_target": "encrypted_memory_database",
         }
@@ -157,6 +161,7 @@ class EncryptedBackupManager:
         for path in reversed(self._safe_snapshots()):
             if path.name.startswith(prefix):
                 try:
+                    self._snapshot_descriptor(path)
                     self._verify_database(
                         self._database_factory(path), correlation_id, migrate=False
                     )
@@ -171,6 +176,18 @@ class EncryptedBackupManager:
                 return None
         return self.create_snapshot(correlation_id)
 
+    def list_snapshots(self) -> tuple[Path, ...]:
+        """Return managed snapshot paths without opening or exposing content."""
+
+        verified: list[Path] = []
+        for path in self._safe_snapshots():
+            try:
+                self._snapshot_descriptor(path)
+            except BackupError:
+                continue
+            verified.append(path)
+        return tuple(verified)
+
     def create_snapshot(self, correlation_id: UUID) -> BackupSnapshot:
         """Create, verify, atomically publish, then enforce retention."""
 
@@ -179,6 +196,8 @@ class EncryptedBackupManager:
         self._emit(correlation_id, AuditOperation.BACKUP_CREATE, AuditOutcome.STARTED,
                    AuditReasonCode.NORMAL)
         partial: Path | None = None
+        metadata_partial: Path | None = None
+        metadata_final: Path | None = None
         try:
             self._validate_destination()
             if not self._settings.live_path.is_file():
@@ -207,11 +226,22 @@ class EncryptedBackupManager:
                     "The encrypted snapshot exceeds its size limit."
                 )
             digest = self._file_digest(partial)
-            self._durable_replace(partial, final)
+            snapshot = BackupSnapshot(final, size, digest)
+            metadata_final = self._metadata_path(final)
+            metadata_partial = self._settings.destination / (
+                f".memory-{identifier}.metadata.partial"
+            )
+            self._write_metadata(snapshot, metadata_partial, now)
+            self._durable_replace(metadata_partial, metadata_final)
+            metadata_partial = None
+            try:
+                self._durable_replace(partial, final)
+            except Exception:
+                self._unlink_managed(metadata_final)
+                raise
             partial = None
             if os.name == "posix":
                 final.chmod(0o600)
-            snapshot = BackupSnapshot(final, size, digest)
             self._enforce_retention(final)
             self._emit(
                 correlation_id,
@@ -251,6 +281,7 @@ class EncryptedBackupManager:
             raise BackupError("Encrypted backup failed safely.") from error
         finally:
             self._unlink_managed(partial)
+            self._unlink_managed(metadata_partial)
 
     def plan_restore(self, snapshot_path: Path, correlation_id: UUID) -> RestorePlan:
         """Verify a managed snapshot and return exact approval details."""
@@ -285,7 +316,19 @@ class EncryptedBackupManager:
                    AuditReasonCode.NORMAL)
         if not isinstance(plan, RestorePlan):
             raise RestoreAuthorizationError("A verified restore plan is required.")
-        current_snapshot = self._snapshot_descriptor(plan.snapshot.path)
+        try:
+            current_snapshot = self._snapshot_descriptor(plan.snapshot.path)
+        except BackupError as error:
+            self._emit(
+                correlation_id,
+                AuditOperation.BACKUP_RESTORE,
+                AuditOutcome.DENIED,
+                AuditReasonCode.INTEGRITY_FAILED,
+                duration_started=started,
+            )
+            raise RestoreAuthorizationError(
+                "The approved snapshot has changed."
+            ) from error
         if current_snapshot != plan.snapshot:
             self._emit(
                 correlation_id,
@@ -459,7 +502,11 @@ class EncryptedBackupManager:
             raise BackupUnavailableError("Restore snapshot is unsafe.")
         if status.st_size > self._settings.max_snapshot_bytes:
             raise BackupUnavailableError("Restore snapshot exceeds its size limit.")
-        return BackupSnapshot(path, status.st_size, self._file_digest(path))
+        metadata = self._read_metadata(path)
+        digest = self._file_digest(path)
+        if metadata[0] != status.st_size or metadata[1] != digest:
+            raise BackupIntegrityError("Backup integrity metadata does not match.")
+        return BackupSnapshot(path, status.st_size, digest)
 
     def _validate_destination(self) -> None:
         try:
@@ -497,7 +544,80 @@ class EncryptedBackupManager:
             snapshots.pop(0)
             size = oldest.stat().st_size
             oldest.unlink()
+            self._metadata_path(oldest).unlink(missing_ok=True)
             total -= size
+
+    def _write_metadata(
+        self,
+        snapshot: BackupSnapshot,
+        path: Path,
+        created_at: datetime,
+    ) -> None:
+        document = {
+            "byte_count": snapshot.byte_count,
+            "ciphertext_sha256": snapshot.ciphertext_sha256,
+            "created_at": created_at.isoformat(),
+            "snapshot_name": snapshot.path.name,
+            "version": BACKUP_METADATA_VERSION,
+        }
+        encoded = json.dumps(
+            document,
+            ensure_ascii=True,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+        flags |= getattr(os, "O_NOFOLLOW", 0)
+        descriptor = os.open(path, flags, 0o600)
+        try:
+            with os.fdopen(descriptor, "wb", closefd=False) as stream:
+                stream.write(encoded)
+                stream.flush()
+                os.fsync(stream.fileno())
+        finally:
+            os.close(descriptor)
+
+    def _read_metadata(self, snapshot_path: Path) -> tuple[int, str]:
+        path = self._metadata_path(snapshot_path)
+        try:
+            status = path.lstat()
+            if stat.S_ISLNK(status.st_mode) or not stat.S_ISREG(status.st_mode):
+                raise BackupIntegrityError("Backup integrity metadata is unsafe.")
+            if status.st_size > 4_096:
+                raise BackupIntegrityError("Backup integrity metadata is invalid.")
+            document = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(document, dict) or set(document) != {
+                "byte_count",
+                "ciphertext_sha256",
+                "created_at",
+                "snapshot_name",
+                "version",
+            }:
+                raise BackupIntegrityError("Backup integrity metadata is invalid.")
+            if (
+                document["version"] != BACKUP_METADATA_VERSION
+                or document["snapshot_name"] != snapshot_path.name
+                or isinstance(document["byte_count"], bool)
+                or not isinstance(document["byte_count"], int)
+                or not isinstance(document["ciphertext_sha256"], str)
+                or not _CIPHERTEXT_DIGEST.fullmatch(document["ciphertext_sha256"])
+                or not isinstance(document["created_at"], str)
+            ):
+                raise BackupIntegrityError("Backup integrity metadata is invalid.")
+            created_at = datetime.fromisoformat(document["created_at"])
+            if created_at.tzinfo is None or created_at.utcoffset() is None:
+                raise BackupIntegrityError("Backup integrity metadata is invalid.")
+            return document["byte_count"], document["ciphertext_sha256"]
+        except BackupIntegrityError:
+            raise
+        except Exception as error:
+            raise BackupIntegrityError(
+                "Backup integrity metadata is invalid."
+            ) from error
+
+    @staticmethod
+    def _metadata_path(snapshot_path: Path) -> Path:
+        return snapshot_path.with_name(f"{snapshot_path.name}.meta.json")
 
     @staticmethod
     def _file_digest(path: Path) -> str:
