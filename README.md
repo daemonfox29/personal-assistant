@@ -77,6 +77,31 @@ uv run --locked python -m personal_assistant.memory_admin confirm RECORD_ID
 uv run --locked python -m personal_assistant.memory_admin reject RECORD_ID
 ```
 
+Candidate lists show metadata only; sensitive candidate content stays hidden
+until the high-risk passcode is verified. The trusted interface also provides
+bounded owner controls without exposing these operations to the model:
+
+```bash
+uv run --locked python -m personal_assistant.memory_admin memories
+uv run --locked python -m personal_assistant.memory_admin inspect RECORD_ID
+uv run --locked python -m personal_assistant.memory_admin history RECORD_ID
+uv run --locked python -m personal_assistant.memory_admin correct RECORD_ID
+uv run --locked python -m personal_assistant.memory_admin controls RECORD_ID
+uv run --locked python -m personal_assistant.memory_admin archive RECORD_ID
+uv run --locked python -m personal_assistant.memory_admin restore-record RECORD_ID
+uv run --locked python -m personal_assistant.memory_admin delete RECORD_ID
+uv run --locked python -m personal_assistant.memory_admin purge RECORD_ID
+uv run --locked python -m personal_assistant.memory_admin profile EXACT_ALIAS
+```
+
+History, sensitive content, profile assembly, privacy-control changes, and
+permanent purge use the passcode gate. Purge also requires an exact typed
+confirmation and leaves only a suppression-ledger identifier so restores do
+not resurrect the deleted content. In chat, `ask before mentioning` memories
+are withheld until a natural yes/no clarification, `only when directly asked`
+memories require a direct memory question, and restricted memories never enter
+model context.
+
 To use encrypted daily backups, create an external destination first and set
 its absolute path before setup and every relevant run:
 

@@ -24,6 +24,7 @@ from personal_assistant.memory_repository import (
     RecordNotFoundError,
     RepositoryConflictError,
     RepositoryIntegrityError,
+    RepositoryOperationError,
 )
 from personal_assistant.memory_types import (
     ActorType,
@@ -70,6 +71,16 @@ class SyntheticKeyProvider:
 class FailingAuditSink:
     def write(self, event: object) -> None:
         raise AuditWriteError("Audit event could not be recorded.")
+
+
+class FailingSecondAuditSink:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def write(self, event: object) -> None:
+        self.calls += 1
+        if self.calls == 2:
+            raise AuditWriteError("Audit event could not be recorded.")
 
 
 class MemoryRepositoryTests(unittest.TestCase):
@@ -163,6 +174,21 @@ class MemoryRepositoryTests(unittest.TestCase):
             self.assertEqual(
                 connection.execute("SELECT count(*) FROM records").fetchone()[0],
                 1,
+            )
+
+    def test_success_audit_failure_rolls_back_repository_write(self) -> None:
+        repository = MemoryRepository(
+            connection_provider=self.database,
+            audit_sink=FailingSecondAuditSink(),
+            clock=lambda: NOW,
+        )
+        with self.assertRaises(RepositoryOperationError):
+            repository.create_record(self._fact(), self._explicit(), uuid4())
+
+        with self.database.connect(uuid4()) as connection:
+            self.assertEqual(
+                connection.execute("SELECT count(*) FROM records").fetchone()[0],
+                0,
             )
 
     def test_model_output_can_create_only_expiring_candidates(self) -> None:

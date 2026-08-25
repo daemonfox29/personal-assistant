@@ -6,7 +6,7 @@ from hashlib import sha256
 from importlib import resources
 import re
 from time import monotonic
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Callable, Protocol, runtime_checkable
 from uuid import UUID
 
 from personal_assistant.audit import (
@@ -200,7 +200,17 @@ class MigrationRunner:
             with self._connection_provider.connect(correlation_id) as connection:
                 applied = self._load_and_validate_history(connection, migrations)
                 pending = migrations[len(applied) :]
-                self._apply_pending(connection, pending)
+                self._apply_pending(
+                    connection,
+                    pending,
+                    before_commit=lambda: self._emit(
+                        correlation_id,
+                        AuditOutcome.SUCCEEDED,
+                        AuditReasonCode.NORMAL,
+                        len(pending),
+                        started_at,
+                    ),
+                )
         except MigrationError:
             self._emit(
                 correlation_id,
@@ -225,13 +235,14 @@ class MigrationRunner:
             tuple(migration.version for migration in pending),
             current_version,
         )
-        self._emit(
-            correlation_id,
-            AuditOutcome.SUCCEEDED,
-            AuditReasonCode.NORMAL,
-            len(result.applied_versions),
-            started_at,
-        )
+        if not pending:
+            self._emit(
+                correlation_id,
+                AuditOutcome.SUCCEEDED,
+                AuditReasonCode.NORMAL,
+                0,
+                started_at,
+            )
         return result
 
     def validate_history(
@@ -365,7 +376,12 @@ class MigrationRunner:
         return rows
 
     @staticmethod
-    def _apply_pending(connection: Any, pending: tuple[Migration, ...]) -> None:
+    def _apply_pending(
+        connection: Any,
+        pending: tuple[Migration, ...],
+        *,
+        before_commit: Callable[[], None],
+    ) -> None:
         if not pending:
             return
         try:
@@ -384,6 +400,7 @@ class MigrationRunner:
                         SCHEMA_COMPATIBILITY,
                     ),
                 )
+            before_commit()
             connection.commit()
         except Exception as error:
             try:

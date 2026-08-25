@@ -51,6 +51,15 @@ class FailingAuditSink:
         raise AuditWriteError("Audit event could not be recorded.")
 
 
+class FailingMigrationSuccessAuditSink:
+    def write(self, event: object) -> None:
+        if (
+            getattr(event, "operation", None) is AuditOperation.DATABASE_MIGRATE
+            and getattr(event, "outcome", None) is AuditOutcome.SUCCEEDED
+        ):
+            raise AuditWriteError("Audit event could not be recorded.")
+
+
 class TrackingConnectionProvider:
     def __init__(self, database: EncryptedDatabase) -> None:
         self._database = database
@@ -146,6 +155,25 @@ class MigrationTests(unittest.TestCase):
                 [event.outcome for event in migration_events],
                 [AuditOutcome.STARTED, AuditOutcome.SUCCEEDED],
             )
+
+    def test_success_audit_failure_rolls_back_pending_migrations(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            path = Path(temporary_directory) / "memory.db"
+            database = self._database(path)
+            runner, _ = self._runner(
+                database,
+                audit_sink=FailingMigrationSuccessAuditSink(),
+            )
+
+            with self.assertRaises(MigrationApplyError):
+                runner.migrate(uuid4())
+
+            with database.connect(uuid4()) as connection:
+                tables = connection.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'table' "
+                    "AND name = 'schema_migrations'"
+                ).fetchall()
+            self.assertEqual(tables, [])
 
     def test_rerun_is_idempotent(self) -> None:
         with TemporaryDirectory() as temporary_directory:

@@ -9,6 +9,8 @@ import unittest
 from unittest.mock import patch
 from uuid import UUID, uuid4
 
+from sqlcipher3 import dbapi2 as sqlcipher
+
 from personal_assistant.audit import (
     AuditOutcome,
     AuditReasonCode,
@@ -130,6 +132,18 @@ class EncryptedDatabaseTests(unittest.TestCase):
                     for row in connection.execute("PRAGMA compile_options").fetchall()
                 }
                 self.assertIn("ENABLE_FTS5", compile_options)
+
+    def test_unused_rtree_helpers_and_database_attach_are_denied(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            path = Path(temporary_directory) / "memory.db"
+            database, _, _ = self._database(path)
+            with database.connect(uuid4()) as connection:
+                with self.assertRaises(sqlcipher.DatabaseError):
+                    connection.execute(
+                        "SELECT rtreenode(1, zeroblob(4))"
+                    ).fetchone()
+                with self.assertRaises(sqlcipher.DatabaseError):
+                    connection.execute("ATTACH DATABASE ':memory:' AS extra")
 
     def test_wrong_key_is_rejected_with_content_free_audit(self) -> None:
         with TemporaryDirectory() as temporary_directory:

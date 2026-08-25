@@ -283,6 +283,29 @@ class EncryptedDatabase:
             raise EncryptedDatabaseOpenError(
                 "Encrypted database safety settings could not be applied."
             )
+        connection.set_authorizer(self._authorize_sql)
+
+    @staticmethod
+    def _authorize_sql(
+        action: int,
+        argument_one: str | None,
+        argument_two: str | None,
+        database_name: str | None,
+        trigger_name: str | None,
+    ) -> int:
+        """Block unused high-risk SQLite capabilities at the connection edge."""
+
+        del database_name, trigger_name
+        if action in {sqlcipher.SQLITE_ATTACH, sqlcipher.SQLITE_DETACH}:
+            return sqlcipher.SQLITE_DENY
+        function_name = (argument_two or argument_one or "").casefold()
+        if action == sqlcipher.SQLITE_FUNCTION and function_name in {
+            "rtreenode",
+            "rtreedepth",
+            "rtreecheck",
+        }:
+            return sqlcipher.SQLITE_DENY
+        return sqlcipher.SQLITE_OK
 
     def _validate_target(self) -> None:
         parent = self._settings.path.parent

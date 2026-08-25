@@ -1,6 +1,7 @@
 """Portable passphrase-derived database keys and trusted approval entry."""
 
 from collections.abc import Callable, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass
 from hashlib import sha256
 import base64
@@ -13,7 +14,7 @@ import re
 import stat
 from threading import Lock
 import time
-from typing import Any
+from typing import Any, Iterator
 from uuid import UUID, uuid4
 
 from personal_assistant.audit import (
@@ -623,6 +624,7 @@ class PasscodeApprovalGate:
         audit_sink: AuditSink,
         authority: ApprovalAuthority | None = None,
         clock: Callable[[], float] = time.time,
+        receipt_clock: Callable[[], float] = time.monotonic,
         max_failed_attempts: int = DEFAULT_MAX_FAILED_ATTEMPTS,
         lockout_seconds: float = DEFAULT_LOCKOUT_SECONDS,
         state_path: Path | None = None,
@@ -635,7 +637,7 @@ class PasscodeApprovalGate:
             raise ValueError("Passcode rate limit is outside its safe range.")
         self._security = security
         self._audit_sink = audit_sink
-        self._authority = authority or ApprovalAuthority(clock=clock)
+        self._authority = authority or ApprovalAuthority(clock=receipt_clock)
         self._clock = clock
         self._max_failed_attempts = max_failed_attempts
         self._lockout_seconds = float(lockout_seconds)
@@ -662,8 +664,18 @@ class PasscodeApprovalGate:
             raise PasscodeVerificationError(
                 "Passcodes apply only to approval-required actions."
             )
-        now = self._clock()
-        with self._lock:
+        with self._approval_lock():
+            try:
+                self._load_state()
+            except PasscodeVerificationError:
+                self._emit(
+                    correlation_id,
+                    action,
+                    AuditOutcome.FAILED,
+                    AuditReasonCode.SAFE_INTERNAL_FAILURE,
+                )
+                raise
+            now = self._clock()
             if now < self._locked_until:
                 self._emit(
                     correlation_id,
@@ -675,8 +687,7 @@ class PasscodeApprovalGate:
                     "High-risk authentication is temporarily locked."
                 )
 
-        verified = self._security.verify_passcode(passcode)
-        with self._lock:
+            verified = self._security.verify_passcode(passcode)
             if not verified:
                 self._failed_attempts += 1
                 if self._failed_attempts >= self._max_failed_attempts:
@@ -712,7 +723,7 @@ class PasscodeApprovalGate:
                 )
                 raise
 
-        receipt = self._authority.issue(action, arguments)
+            receipt = self._authority.issue(action, arguments)
         self._emit(
             correlation_id,
             action,
@@ -720,6 +731,53 @@ class PasscodeApprovalGate:
             AuditReasonCode.NORMAL,
         )
         return ApprovalGrant(receipt, self._authority)
+
+    @contextmanager
+    def _approval_lock(self) -> Iterator[None]:
+        """Serialize expensive checks across threads and local processes."""
+
+        process_lock: Path | None = None
+        descriptor: int | None = None
+        with self._lock:
+            if self._state_path is not None:
+                process_lock = self._state_path.with_name(
+                    f".{self._state_path.name}.lock"
+                )
+                flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+                flags |= getattr(os, "O_NOFOLLOW", 0)
+                try:
+                    descriptor = os.open(process_lock, flags, 0o600)
+                    os.write(descriptor, b"locked\n")
+                    os.fsync(descriptor)
+                except FileExistsError as error:
+                    raise PasscodeVerificationError(
+                        "High-risk authentication is already in progress."
+                    ) from error
+                except OSError as error:
+                    if descriptor is not None:
+                        os.close(descriptor)
+                    if process_lock is not None:
+                        try:
+                            status = process_lock.lstat()
+                            if stat.S_ISREG(status.st_mode):
+                                process_lock.unlink()
+                        except OSError:
+                            pass
+                    raise PasscodeVerificationError(
+                        "High-risk authentication state is unavailable."
+                    ) from error
+            try:
+                yield
+            finally:
+                if descriptor is not None:
+                    os.close(descriptor)
+                if process_lock is not None:
+                    try:
+                        status = process_lock.lstat()
+                        if stat.S_ISREG(status.st_mode):
+                            process_lock.unlink()
+                    except OSError:
+                        pass
 
     def _load_state(self) -> None:
         if self._state_path is None:
@@ -754,9 +812,12 @@ class PasscodeApprovalGate:
                 raise ValueError
             self._failed_attempts = failures
             self._locked_until = float(locked_until)
-        except Exception:
+        except Exception as error:
             self._failed_attempts = 0
             self._locked_until = self._clock() + self._lockout_seconds
+            raise PasscodeVerificationError(
+                "High-risk authentication state is unavailable."
+            ) from error
 
     def _save_state(self) -> None:
         if self._state_path is None:

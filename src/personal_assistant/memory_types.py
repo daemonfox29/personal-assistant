@@ -22,9 +22,17 @@ _PROHIBITED_CREDENTIAL_TERMS = re.compile(
     r"access\s+token|refresh\s+token|private\s+key|secret\s+key|"
     r"seed\s+phrase|recovery\s+phrase|wallet\s+seed|pin|"
     r"credit\s+card\s+number|"
-    r"card\s+verification\s+(?:code|value)|cvv|cvc)\b",
+    r"card\s+verification\s+(?:code|value)|cvv|cvc|"
+    r"(?:login|authentication|verification|one[- ]?time|2fa)\s+code)\b",
     re.IGNORECASE,
 )
+_OBFUSCATED_CREDENTIAL_TERMS = re.compile(
+    r"(?:password|passcode|passphrase|securityanswer|apikey|accesstoken|"
+    r"refreshtoken|privatekey|secretkey|seedphrase|recoveryphrase|"
+    r"walletseed|creditcardnumber|cardverification(?:code|value))",
+    re.IGNORECASE,
+)
+_PAYMENT_CARD_CANDIDATE = re.compile(r"(?<!\d)(?:\d[ -]?){13,19}(?!\d)")
 _PROHIBITED_SECRET_MARKERS = (
     "-----BEGIN PRIVATE KEY-----",
     "-----BEGIN OPENSSH PRIVATE KEY-----",
@@ -190,13 +198,16 @@ class PurgeReason(StrEnum):
 def _validate_text(value: str, label: str, maximum: int) -> str:
     if not isinstance(value, str):
         raise MemoryValidationError(f"{label} must be text.")
-    normalized = unicodedata.normalize("NFC", value)
+    normalized = unicodedata.normalize("NFKC", value)
     if not normalized.strip() or len(normalized) > maximum:
         raise MemoryValidationError(f"{label} is empty or too large.")
     for character in normalized:
         if character in _BIDI_CONTROLS:
             raise MemoryValidationError(f"{label} contains unsafe formatting.")
-        if unicodedata.category(character) == "Cc" and character not in {"\n", "\t"}:
+        category = unicodedata.category(character)
+        if category == "Cf":
+            raise MemoryValidationError(f"{label} contains unsafe formatting.")
+        if category == "Cc" and character not in {"\n", "\t"}:
             raise MemoryValidationError(f"{label} contains unsafe controls.")
     return normalized
 
@@ -221,9 +232,31 @@ def _reject_credentials(values: tuple[str, ...]) -> None:
     combined = "\n".join(values)
     if _PROHIBITED_CREDENTIAL_TERMS.search(combined):
         raise MemoryValidationError("Credential-related content cannot be stored.")
+    compact = "".join(character for character in combined if character.isalnum())
+    if _OBFUSCATED_CREDENTIAL_TERMS.search(compact):
+        raise MemoryValidationError("Credential-related content cannot be stored.")
+    for match in _PAYMENT_CARD_CANDIDATE.finditer(combined):
+        digits = "".join(character for character in match.group() if character.isdigit())
+        if _passes_luhn_check(digits):
+            raise MemoryValidationError("Credential-related content cannot be stored.")
     upper = combined.upper()
     if any(marker in upper for marker in _PROHIBITED_SECRET_MARKERS):
         raise MemoryValidationError("Credential-related content cannot be stored.")
+
+
+def _passes_luhn_check(digits: str) -> bool:
+    if not 13 <= len(digits) <= 19 or len(set(digits)) == 1:
+        return False
+    total = 0
+    parity = len(digits) % 2
+    for index, character in enumerate(digits):
+        value = int(character)
+        if index % 2 == parity:
+            value *= 2
+            if value > 9:
+                value -= 9
+        total += value
+    return total % 10 == 0
 
 
 @dataclass(frozen=True)

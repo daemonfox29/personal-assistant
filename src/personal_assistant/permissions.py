@@ -13,7 +13,10 @@ class ActionKind(StrEnum):
     BROWSER_NAVIGATION = "browser_navigation"
     NETWORK_REQUEST = "network_request"
     MEMORY_BACKUP_RESTORE = "memory_backup_restore"
+    MEMORY_REVIEW_SENSITIVE = "memory_review_sensitive"
     MEMORY_CONFIRM_SENSITIVE = "memory_confirm_sensitive"
+    MEMORY_PURGE = "memory_purge"
+    MEMORY_CHANGE_PRIVACY = "memory_change_privacy"
     ACCESS_CREDENTIALS = "access_credentials"
 
 
@@ -58,9 +61,21 @@ POLICY_BY_ACTION: dict[ActionKind, PermissionResult] = {
         PermissionDecision.REQUIRE_APPROVAL,
         "Restoring memory requires exact passcode-backed approval.",
     ),
+    ActionKind.MEMORY_REVIEW_SENSITIVE: PermissionResult(
+        PermissionDecision.REQUIRE_APPROVAL,
+        "Viewing sensitive memory requires exact passcode-backed approval.",
+    ),
     ActionKind.MEMORY_CONFIRM_SENSITIVE: PermissionResult(
         PermissionDecision.REQUIRE_APPROVAL,
         "Confirming sensitive memory requires exact passcode-backed approval.",
+    ),
+    ActionKind.MEMORY_PURGE: PermissionResult(
+        PermissionDecision.REQUIRE_APPROVAL,
+        "Permanent memory deletion requires exact passcode-backed approval.",
+    ),
+    ActionKind.MEMORY_CHANGE_PRIVACY: PermissionResult(
+        PermissionDecision.REQUIRE_APPROVAL,
+        "Changing memory privacy controls requires exact passcode-backed approval.",
     ),
     ActionKind.ACCESS_CREDENTIALS: PermissionResult(
         PermissionDecision.DENY,

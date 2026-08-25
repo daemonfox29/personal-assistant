@@ -7,7 +7,12 @@ import unittest
 from unittest.mock import patch
 from uuid import uuid4
 
-from personal_assistant.audit import AuditOutcome, InMemoryAuditSink
+from personal_assistant.audit import (
+    AuditOperation,
+    AuditOutcome,
+    AuditWriteError,
+    InMemoryAuditSink,
+)
 from personal_assistant.authorization import ApprovalAuthority
 from personal_assistant.backup import (
     BackupError,
@@ -41,6 +46,15 @@ class MutableClock:
 
     def __call__(self) -> datetime:
         return self.value
+
+
+class FailingSnapshotSuccessAuditSink:
+    def write(self, event: object) -> None:
+        if (
+            getattr(event, "operation", None) is AuditOperation.BACKUP_CREATE
+            and getattr(event, "outcome", None) is AuditOutcome.SUCCEEDED
+        ):
+            raise AuditWriteError("Audit event could not be recorded.")
 
 
 class EncryptedBackupManagerTests(unittest.TestCase):
@@ -101,6 +115,21 @@ class EncryptedBackupManagerTests(unittest.TestCase):
         self.assertNotIn("synthetic-only", metadata)
         self.assertIsNone(manager.create_daily(uuid4()))
         self.assertEqual(len(tuple(self.destination.glob("memory-*.db"))), 1)
+
+    def test_success_audit_failure_does_not_publish_snapshot(self) -> None:
+        manager = EncryptedBackupManager(
+            BackupSettings(self.live_path, self.destination),
+            live_database=self.live,
+            database_factory=self._database,
+            migration_source=self.source,
+            audit_sink=FailingSnapshotSuccessAuditSink(),
+            clock=self.clock,
+        )
+
+        with self.assertRaises(BackupError):
+            manager.create_snapshot(uuid4())
+
+        self.assertEqual(list(self.destination.iterdir()), [])
 
     def test_retention_removes_oldest_only_after_new_snapshot_verifies(self) -> None:
         manager = self._manager(retain_count=1)

@@ -61,6 +61,10 @@ class MemoryTypeTests(unittest.TestCase):
             "wallet seed phrase synthetic words",
             "credit card number 0000",
             "PIN 1234",
+            "p a s s w o r d is synthetic",
+            "ｐａｓｓｗｏｒｄ is synthetic",
+            "login code 123456",
+            "4111 1111 1111 1111",
         )
 
         for value in prohibited:
@@ -71,9 +75,15 @@ class MemoryTypeTests(unittest.TestCase):
                 FactPayload("synthetic", value)
 
     def test_hidden_direction_and_control_characters_are_rejected(self) -> None:
-        for value in ("safe\u202eevil", "safe\x00evil"):
+        for value in ("safe\u202eevil", "safe\x00evil", "safe\u200bevil"):
             with self.assertRaisesRegex(MemoryValidationError, "unsafe"):
                 NotePayload("synthetic", value)
+
+    def test_secret_filter_does_not_reject_ordinary_similar_words(self) -> None:
+        self.assertEqual(
+            FactPayload("synthetic", "Rapid improvement needs access to practice").statement,
+            "Rapid improvement needs access to practice",
+        )
 
     def test_oversized_payload_field_is_rejected(self) -> None:
         with self.assertRaisesRegex(MemoryValidationError, "too large"):

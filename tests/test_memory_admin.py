@@ -4,9 +4,11 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
+from uuid import uuid4
 
 import personal_assistant.memory_admin as memory_admin
 from personal_assistant.config import AppSettings, MemorySettings
+from personal_assistant.memory_runtime import MemoryRuntime
 
 
 RECOVERY = "synthetic admin recovery phrase"
@@ -91,6 +93,40 @@ class MemoryAdminTests(unittest.TestCase):
         self.assertEqual(get_secret.call_count, 1)
         self.assertIn("Restore cancelled", "\n".join(output))
         self.assertEqual((self.data_directory / "memory.db").read_bytes(), before)
+
+    def test_inventory_hides_content_and_passcode_purge_is_permanent(self) -> None:
+        self._run_setup()
+        runtime = MemoryRuntime.open(self.settings.memory, RECOVERY)
+        runtime.remember("synthetic private inventory marker", uuid4())
+        record = runtime.repository.list_records(uuid4())[0]
+        runtime.close()
+
+        output: list[str] = []
+        with (
+            patch.object(memory_admin, "load_settings", return_value=self.settings),
+            patch.object(memory_admin, "getpass", return_value=RECOVERY),
+            patch("builtins.print", side_effect=lambda *parts: output.append(
+                " ".join(str(part) for part in parts)
+            )),
+        ):
+            memory_admin.main(["memories"])
+        inventory = "\n".join(output)
+        self.assertIn(str(record.record_id), inventory)
+        self.assertNotIn("synthetic private inventory marker", inventory)
+
+        with (
+            patch.object(memory_admin, "load_settings", return_value=self.settings),
+            patch.object(memory_admin, "getpass", side_effect=[RECOVERY, PASSCODE]),
+            patch("builtins.input", return_value="PURGE"),
+            patch("builtins.print"),
+        ):
+            memory_admin.main(["purge", str(record.record_id)])
+
+        reopened = MemoryRuntime.open(self.settings.memory, RECOVERY)
+        try:
+            self.assertTrue(reopened.repository.is_purged(record.record_id, uuid4()))
+        finally:
+            reopened.close()
 
 
 if __name__ == "__main__":

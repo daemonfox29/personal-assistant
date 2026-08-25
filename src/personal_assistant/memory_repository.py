@@ -2,6 +2,7 @@
 
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from enum import StrEnum
@@ -150,10 +151,20 @@ class CandidateLimitError(MemoryRepositoryError):
     """A model source reached its hard persisted candidate ceiling."""
 
 
+@dataclass
+class _ActiveAudit:
+    correlation_id: UUID
+    operation: AuditOperation
+    metadata: tuple[AuditMetadataItem, ...]
+    started: float
+    success_emitted: bool = False
+
+
 class RetrievalMode(StrEnum):
     """Deterministic mention boundary for one retrieval request."""
 
     ORDINARY = "ordinary"
+    APPROVED = "approved"
     DIRECT = "direct"
 
 
@@ -376,6 +387,10 @@ class MemoryRepository:
         self._audit_sink = audit_sink
         self._clock = clock
         self._id_factory = id_factory
+        self._active_audit: ContextVar[_ActiveAudit | None] = ContextVar(
+            f"memory_repository_audit_{id(self)}",
+            default=None,
+        )
 
     def create_record(
         self,
@@ -505,6 +520,32 @@ class MemoryRepository:
                     "SELECT record_id FROM records WHERE status = ? "
                     "ORDER BY updated_at DESC, record_id LIMIT ?",
                     (RecordStatus.CANDIDATE.value, limit),
+                ).fetchall()
+                return tuple(
+                    self._load_record(connection, UUID(row[0])) for row in rows
+                )
+
+    def list_records(
+        self,
+        correlation_id: UUID,
+        *,
+        limit: int = 100,
+    ) -> tuple[MemoryRecord, ...]:
+        """Return a bounded trusted-interface inventory in newest-first order."""
+
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
+            raise MemoryValidationError("Memory inventory limit is invalid.")
+        with self._audited(
+            correlation_id,
+            AuditOperation.REPOSITORY_READ,
+            "record_list",
+            item_count=limit,
+        ):
+            with self._connection_provider.connect(correlation_id) as connection:
+                rows = connection.execute(
+                    "SELECT record_id FROM records "
+                    "ORDER BY updated_at DESC, record_id LIMIT ?",
+                    (limit,),
                 ).fetchall()
                 return tuple(
                     self._load_record(connection, UUID(row[0])) for row in rows
@@ -1616,7 +1657,12 @@ class MemoryRepository:
         now: datetime,
     ) -> tuple[tuple[UUID, bool, bool], ...]:
         found: dict[UUID, list[bool]] = {}
-        mention_policies = [MentionPolicy.MAY_MENTION_WHEN_RELEVANT.value]
+        # ASK_BEFORE records must reach the deterministic exclusion pass so the
+        # caller can request consent without exposing their content.
+        mention_policies = [
+            MentionPolicy.MAY_MENTION_WHEN_RELEVANT.value,
+            MentionPolicy.ASK_BEFORE_MENTIONING.value,
+        ]
         if request.mode is RetrievalMode.DIRECT:
             mention_policies.append(MentionPolicy.ONLY_WHEN_DIRECTLY_ASKED.value)
         scope_keys = [f"{scope.type.value}:{scope.id}" for scope in request.scopes]
@@ -1742,10 +1788,12 @@ class MemoryRepository:
             return RetrievalExclusion.OUT_OF_SCOPE
         if record.sensitivity is Sensitivity.RESTRICTED:
             return RetrievalExclusion.SENSITIVITY_RESTRICTED
-        if record.mention_policy in {
-            MentionPolicy.NEVER_MENTION,
-            MentionPolicy.ASK_BEFORE_MENTIONING,
-        }:
+        if record.mention_policy is MentionPolicy.NEVER_MENTION:
+            return RetrievalExclusion.MENTION_RESTRICTED
+        if (
+            record.mention_policy is MentionPolicy.ASK_BEFORE_MENTIONING
+            and request.mode is not RetrievalMode.APPROVED
+        ):
             return RetrievalExclusion.MENTION_RESTRICTED
         if (
             record.mention_policy is MentionPolicy.ONLY_WHEN_DIRECTLY_ASKED
@@ -2210,12 +2258,26 @@ class MemoryRepository:
     def _parse_optional_datetime(value: object) -> datetime | None:
         return None if value is None else MemoryRepository._parse_datetime(value)
 
-    @staticmethod
     @contextmanager
-    def _transaction(connection: Any) -> Iterator[None]:
+    def _transaction(self, connection: Any) -> Iterator[None]:
         connection.execute("BEGIN IMMEDIATE")
         try:
             yield
+            audit = self._active_audit.get()
+            if (
+                audit is not None
+                and audit.operation is AuditOperation.REPOSITORY_WRITE
+                and not audit.success_emitted
+            ):
+                self._emit(
+                    audit.correlation_id,
+                    audit.operation,
+                    AuditOutcome.SUCCEEDED,
+                    AuditReasonCode.NORMAL,
+                    audit.metadata,
+                    audit.started,
+                )
+                audit.success_emitted = True
             connection.commit()
         except Exception:
             try:
@@ -2264,6 +2326,13 @@ class MemoryRepository:
             tuple(metadata),
             started,
         )
+        audit = _ActiveAudit(
+            correlation_id,
+            operation,
+            tuple(metadata),
+            started,
+        )
+        token = self._active_audit.set(audit)
         try:
             yield
         except MemoryRepositoryError as error:
@@ -2301,14 +2370,17 @@ class MemoryRepository:
                 "Memory repository operation failed safely."
             ) from error
         else:
-            self._emit(
-                correlation_id,
-                operation,
-                AuditOutcome.SUCCEEDED,
-                AuditReasonCode.NORMAL,
-                tuple(metadata),
-                started,
-            )
+            if not audit.success_emitted:
+                self._emit(
+                    correlation_id,
+                    operation,
+                    AuditOutcome.SUCCEEDED,
+                    AuditReasonCode.NORMAL,
+                    tuple(metadata),
+                    started,
+                )
+        finally:
+            self._active_audit.reset(token)
 
     def _emit(
         self,
