@@ -20,7 +20,9 @@ redacted auditing, verified SQLCipher storage, checksummed migrations, typed
 revisioned records, bounded retrieval, quarantined automatic suggestions,
 portable recovery, encrypted backup and guided restore, and a bounded chat-
 context adapter. A new installation stays session-only until the owner completes
-the trusted local setup. Tools are not enabled.
+the trusted local setup. A lean native Module 1.5 interface now provides local
+setup, recovery unlock, session-only use, and streaming chat without a browser
+or UI web server. Tools are not enabled.
 
 ## Set up the project
 
@@ -37,22 +39,30 @@ for the supported Python 3.11–3.14 range. Do not edit it manually. `setuptools
 remains the package build backend; `uv` manages resolution, installation,
 environments, and project commands.
 
-## Run the local chat
+## Run the native app
 
 From the project folder:
+
+```bash
+uv run --locked personal-assistant-ui
+```
+
+The native app guides first-run encrypted-memory setup or recovery unlock, then
+starts Ollama and opens streaming chat. Unlock is attempted before Ollama is
+loaded, and model output is displayed only as inert plain text.
+
+The command-line interface remains a developer and recovery fallback:
 
 ```bash
 uv run --locked python -m personal_assistant
 ```
 
-The app starts Ollama if needed, sends its documented empty preload request
-without evaluating a chat prompt, then opens a terminal chat.
-
 ### Set up persistent memory
 
 Persistent memory requires a recovery passphrase and a different high-risk
-passcode. Enter both only through the hidden trusted prompts, never in chat or
-as command-line arguments:
+passcode. The native app collects both through masked local fields. Never enter
+either secret in chat or as a command-line argument. The fallback administration
+commands use hidden trusted prompts:
 
 ```bash
 uv run --locked python -m personal_assistant.memory_admin setup

@@ -32,11 +32,13 @@ review questions in [Security Principles](security-principles.md).
 
 ## Information flow
 
-Current chat flow after trusted Module 1 setup and recovery unlock:
+Current native or recovery-CLI chat flow after trusted Module 1 setup and
+recovery unlock:
 
-User request → bounded encrypted retrieval → untrusted-data system envelope →
-token-bounded structured messages → model adapter → local Ollama model →
-streamed response
+Native widgets or recovery CLI → narrow application/conversation service →
+bounded encrypted retrieval → untrusted-data system envelope → token-bounded
+structured messages → model adapter → local Ollama model → sanitized streamed
+display events
 
 The default command-line startup supplies the adapter only when a safe portable
 security manifest exists and the hidden recovery prompt unlocks it. A new or
@@ -51,10 +53,19 @@ User request → coordinator → model and/or tools → permission layer → app
 
 ## Initial scope
 
-The first version uses one local model and a command-line interface. Recent
-conversation is held only in RAM for the current session. System, user, and
-assistant messages remain separate data structures; history retains only
-complete recent turns within a conservative token budget.
+The first native interface uses PySide6 widgets over a narrow application
+service. Widgets do not receive database connections, keys, approval authorities,
+audit sinks, or model adapters. The terminal interface remains a recovery and
+developer fallback over the same conversation service. Recent conversation is
+held only in RAM for the current session. System, user, and assistant messages
+remain separate data structures; history retains only complete recent turns
+within a conservative token budget.
+
+Because the native widgets and application service share one Python process,
+this narrow API is a modularity and review boundary rather than a sandbox against
+malicious UI implementation code. The shipped UI remains trusted code while all
+user/model-controlled content is untrusted. A future third-party or lower-trust
+interface requires a separate authenticated process and least-authority IPC.
 
 Confirmed persistent records can be selected by the encrypted repository's
 deterministic policy and inserted into the system message as one bounded JSON

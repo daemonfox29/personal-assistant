@@ -30,6 +30,12 @@ This document is the handoff point between coding sessions. At the end of each s
   privacy controls, lifecycle changes, profile assembly, permanent purge,
   backup, and restore. A new installation remains session-only until setup
   succeeds.
+- Module 1.5 now has a lean native PySide6 foundation: masked first-run setup,
+  recovery unlock before model loading, explicit session-only startup, streaming
+  plain-text chat, fixed safe failures, bounded response selection, and graceful
+  lifecycle shutdown. Both the native UI and terminal fallback use the same
+  UI-neutral conversation service. Widgets receive no database, key, audit,
+  approval, or model authority objects.
 - The local permission policy is implemented and covered by automated tests.
 - GitHub Actions is configured to test pull requests targeting `main` before
   merge. The public repository has an active ruleset requiring the `test`
@@ -121,10 +127,47 @@ complete; the batched Linux pull-request check is its final platform gate.
   restart-persistent synthetic recall.
 - [x] Module 1 deployment gate: implement portable key onboarding, verified
   recovery, trusted passcode approval, candidate review, and runtime wiring.
+- [x] Module 1.5 foundation: add a native setup, unlock, session-only, and
+  streaming-chat interface over a narrow application-service boundary.
+- [ ] Module 1.5 owner controls: add native candidate review, memory management,
+  backup/restore, bounded audit viewing, and settings without exposing authority
+  objects to widgets.
+- [ ] Module 1.5 release gates: package and sign the macOS app, complete
+  accessibility review, and verify packaged recovery and shutdown. Keep Windows
+  packaging and runtime verification as a required later gate.
 - [ ] Define the assistant's first tool registry and permission-enforcement path before adding any tool.
 - [ ] Add a web/search tool only behind the tool registry and approval layer.
 
 ## Session history
+
+### 2026-08-25 — Module 1.5 native UI foundation
+
+Completed:
+
+- Added a native PySide6-Essentials interface with masked setup and unlock,
+  session-only startup, streaming chat, bounded response selection, inert
+  plain-text rendering, and off-thread model work.
+- Added a narrow application service that owns memory/runtime lifecycle and
+  exposes only immutable session details and sanitized conversation events.
+  Failed recovery unlock occurs before model construction.
+- Consolidated the terminal recovery interface and native interface onto one
+  bounded conversation service for structured roles, session history, persistent
+  context, explicit memory, model failures, token limits, and post-response work.
+- Added headless UI and service tests for secret clearing, authority isolation,
+  failed-setup cleanup, failed-unlock ordering, concurrent-request refusal,
+  inert rendering, busy-state enforcement, invalid limits, and shutdown.
+- Pinned the minimal Qt Essentials dependency through the existing `uv` lock.
+  No browser runtime, UI server, telemetry, tool access, or new network service
+  was introduced.
+- Verified 245 tests locally; the opt-in 100,000-record retrieval benchmark is
+  the only normal-suite skip. Its separate run passed at 13.56 ms median and
+  13.93 ms p95 over 30 queries.
+
+Next:
+
+- Commit this visually reviewed local milestone without pushing until a batched
+  GitHub Actions run is desired. Then add native owner-control panels through
+  the same narrow service boundary.
 
 ### 2026-08-25 — Module 1 final security and privacy review
 

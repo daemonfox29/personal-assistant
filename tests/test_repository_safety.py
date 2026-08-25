@@ -38,6 +38,15 @@ class RepositorySafetyTests(unittest.TestCase):
 
         self.assertIn('"sqlcipher3==0.6.2"', project_metadata)
 
+    def test_native_ui_dependency_is_minimal_and_exactly_pinned(self) -> None:
+        project_metadata = (REPOSITORY_ROOT / "pyproject.toml").read_text()
+        lockfile = (REPOSITORY_ROOT / "uv.lock").read_text()
+
+        self.assertIn('"pyside6-essentials==6.11.2"', project_metadata)
+        self.assertNotIn('"pyside6==', project_metadata)
+        self.assertIn('name = "pyside6-essentials"', lockfile)
+        self.assertIn('version = "6.11.2"', lockfile)
+
     def test_uv_version_lockfile_and_ci_are_pinned(self) -> None:
         project_metadata = (REPOSITORY_ROOT / "pyproject.toml").read_text()
         lockfile = (REPOSITORY_ROOT / "uv.lock").read_text()
