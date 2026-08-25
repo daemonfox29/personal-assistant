@@ -15,10 +15,12 @@ A modular, local-first personal AI assistant built in Python.
 
 Module 0 and its Module 0.1 hardening gate are complete: a tested local chat
 foundation with replaceable components and deterministic safety boundaries.
-The Module 1 encrypted persistent-memory specification is approved;
-implementation now includes the audit foundation, verified SQLCipher boundary,
-checksummed migrations, and a typed revisioned repository using synthetic data.
-Tools and persistent personal data are not enabled yet.
+The Module 1 encrypted persistent-memory implementation is complete behind a
+disabled-by-default runtime boundary. It includes redacted auditing, verified
+SQLCipher storage, checksummed migrations, typed revisioned records, bounded
+retrieval, quarantined suggestions, encrypted recovery, and a bounded chat-
+context adapter. Synthetic restart tests pass; portable key onboarding and real
+personal data are not enabled yet. Tools are also not enabled.
 
 ## Set up the project
 

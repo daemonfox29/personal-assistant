@@ -1,7 +1,13 @@
 """A minimal local command-line chat interface."""
 
 from collections.abc import Callable
+from uuid import uuid4
 
+from personal_assistant.config import ChatSettings
+from personal_assistant.memory_context import (
+    MemoryContextError,
+    MemoryContextProvider,
+)
 from personal_assistant.model import (
     LanguageModel,
     MalformedModelResponseError,
@@ -13,12 +19,11 @@ from personal_assistant.model import (
     response_instruction,
     validate_response_token_limit,
 )
-from personal_assistant.terminal_output import sanitize_terminal_text
-from personal_assistant.config import ChatSettings
 from personal_assistant.session_memory import (
     MessageTooLargeError,
     SessionConversationMemory,
 )
+from personal_assistant.terminal_output import sanitize_terminal_text
 
 
 InputReader = Callable[[str], str]
@@ -50,11 +55,13 @@ class ChatSession:
         read_input: InputReader = input,
         write_output: OutputWriter = print,
         write_chunk: ChunkWriter = _write_chunk,
+        memory_context_provider: MemoryContextProvider | None = None,
     ) -> None:
         self._model = model
         self._read_input = read_input
         self._write_output = write_output
         self._write_chunk = write_chunk
+        self._memory_context_provider = memory_context_provider
         self._settings = settings
         self._context_window_tokens = context_window_tokens
         self._default_response_tokens = validate_response_token_limit(
@@ -243,13 +250,49 @@ class ChatSession:
         )
         input_token_limit = self._context_window_tokens - response_limit
 
+        base_system_text = response_instruction(response_limit)
+        persistent_context: str | None = None
+        if self._memory_context_provider is not None:
+            try:
+                persistent_context = self._memory_context_provider.context_for(
+                    user_text, uuid4()
+                )
+            except MemoryContextError:
+                self._write_output(
+                    "Persistent memory is unavailable for this request; "
+                    "continuing without it."
+                )
+
+        system_text = base_system_text + (persistent_context or "")
+
         try:
             messages = self._memory.messages_for_request(
-                system_text=response_instruction(response_limit),
+                system_text=system_text,
                 user_text=user_text,
                 input_token_limit=input_token_limit,
             )
         except MessageTooLargeError:
+            if persistent_context is not None:
+                try:
+                    messages = self._memory.messages_for_request(
+                        system_text=base_system_text,
+                        user_text=user_text,
+                        input_token_limit=input_token_limit,
+                    )
+                except MessageTooLargeError:
+                    pass
+                else:
+                    self._write_output(
+                        "Relevant persistent memory did not fit this request; "
+                        "continuing without it."
+                    )
+                    return (
+                        ModelRequest(
+                            messages=messages,
+                            max_response_tokens=response_limit,
+                        ),
+                        user_text,
+                    )
             self._write_output(
                 "That message is too large for the current context window. "
                 "Shorten it and try again."

@@ -1,8 +1,11 @@
 # Typed Memory Repository
 
 The Module 1 repository is a deterministic boundary over verified encrypted
-connections. It is not available to the model or chat interface. Current tests
-use temporary databases, fixed synthetic keys, and synthetic content only.
+connections. The model and chat interface never receive its database handle or
+raw query capability. A narrow adapter may request ordinary bounded retrieval
+and serialize only eligible payloads into an explicitly untrusted JSON data
+envelope. Current tests use temporary databases, fixed synthetic keys, and
+synthetic content only.
 
 ## Accepted data
 

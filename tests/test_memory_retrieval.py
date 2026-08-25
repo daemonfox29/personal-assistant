@@ -147,6 +147,15 @@ class MemoryRetrievalTests(unittest.TestCase):
             result.receipt.applied_rules,
         )
 
+    def test_natural_query_can_recall_partial_lexical_match(self) -> None:
+        record = self._create("Luna likes synthetic blue toys")
+
+        result = self.repository.retrieve(
+            RetrievalRequest("What toys does Luna like?"), uuid4()
+        )
+
+        self.assertEqual(result.receipt.selected_record_ids, (record.record_id,))
+
     def test_direct_mode_allows_only_direct_policy_but_not_restricted_data(self) -> None:
         direct = self._create(
             "Luna direct synthetic detail",

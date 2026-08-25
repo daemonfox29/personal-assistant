@@ -1631,7 +1631,7 @@ class MemoryRepository:
 
         terms = self._retrieval_terms(request.query)
         if terms and len(found) < MAX_RETRIEVAL_CANDIDATES:
-            expression = " AND ".join(f'"{term}"' for term in terms)
+            expression = " AND ".join(f'"{term}"*' for term in terms)
             rows = connection.execute(
                 "SELECT record_id FROM record_search "
                 "WHERE record_search MATCH ? "

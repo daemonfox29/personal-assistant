@@ -20,7 +20,11 @@ This document is the handoff point between coding sessions. At the end of each s
   supports scheduler invocation and enforces
   verification, count and byte retention, exact high-risk restore approval,
   pre-restore preservation, migration checks, deletion-ledger reapplication,
-  atomic replacement, and rollback on failed final verification.
+  atomic replacement, and rollback on failed final verification. A narrow chat
+  adapter now retrieves only eligible confirmed records and inserts them as a
+  bounded JSON data envelope explicitly labeled as untrusted. Synthetic restart
+  recall passes; the default CLI remains session-only until portable key
+  onboarding is implemented.
 - The local permission policy is implemented and covered by automated tests.
 - GitHub Actions is configured to test pull requests targeting `main` before
   merge. The public repository has an active ruleset requiring the `test`
@@ -37,7 +41,11 @@ This document is the handoff point between coding sessions. At the end of each s
 - Project dependency management uses pinned `uv` 0.12.5, a committed
   cross-platform `uv.lock`, locked local synchronization, and locked CI
   execution. `setuptools` remains the package build backend.
-- The local-only chat streams responses and has session-only conversation memory while it is open. It has no persistent memory, tools, browser access, personal-data access, credential access, or web capability.
+- The local-only chat streams responses and has session-only conversation
+  memory while it is open. It can accept the tested persistent-memory context
+  adapter, but the default startup does not configure one and therefore still
+  has no personal-data access. It has no tools, browser access, credential
+  access, or web capability.
 - Conversation policy is documented separately from the action-permission policy.
 - `docs/security-principles.md` is the governing threat model and review
   checklist for every future capability; design decisions should explicitly
@@ -100,10 +108,60 @@ Work through these in order unless project needs change. Module 1 must wait unti
 - [x] Module 1: implement explicit remember and quarantined automatic memory-
   suggestion workflows.
 - [x] Module 1: implement encrypted backup, verification, and guided restore.
+- [x] Module 1: integrate bounded persistent context into chat and verify
+  restart-persistent synthetic recall.
+- [ ] Module 1 deployment gate: implement portable key onboarding and verified
+  recovery before enabling real personal data in the default runtime.
 - [ ] Define the assistant's first tool registry and permission-enforcement path before adding any tool.
 - [ ] Add a web/search tool only behind the tool registry and approval layer.
 
 ## Session history
+
+### 2026-08-25 — Persistent chat context and restart recall
+
+Completed:
+
+- Added a narrow repository-to-chat adapter. It can request only ordinary
+  deterministic retrieval and receives neither keys nor an exposed SQL or
+  database handle.
+- Serialized eligible payloads into one bounded JSON object under a system
+  instruction that treats every stored string as untrusted data, never as
+  instructions, policy, or authority. User and assistant roles remain
+  structurally separate.
+- Preserved the 2,000-token persistent-memory ceiling and the full 16K request
+  budget. Recent session turns are trimmed first; if persistent context itself
+  prevents the current request from fitting, chat visibly continues without
+  persistent memory instead of dropping the user request.
+- Retrieval or database failure produces a fixed content-free notice and safely
+  continues without memory. Low-information queries simply retrieve nothing
+  rather than being reported as failures.
+- Improved natural lexical recall with bounded FTS5 prefix matching, allowing a
+  query such as `like` to match `likes` while retaining all existing status,
+  scope, sensitivity, mention, time, candidate-count, record-count, and token
+  limits.
+- Reconstructed the database, repository, and context adapter around the same
+  encrypted synthetic file to prove confirmed recall survives restart while a
+  model candidate remains quarantined.
+- Verified instruction-shaped stored text remains syntactically inside the JSON
+  data object. It cannot become a separate model role and still cannot grant
+  executor authority under the security doctrine. The model may still
+  misinterpret untrusted text, so labeling is not treated as the security
+  boundary.
+- The 100,000-record encrypted benchmark reports 12.99 ms median and 13.20 ms
+  p95 over 30 queries, with 96 candidates examined, 12 records returned, and
+  1,295 conservatively estimated memory tokens.
+- The complete local suite runs 195 tests successfully, with the opt-in
+  performance benchmark skipped during the normal run and separately passing
+  when enabled.
+
+Next:
+
+- Commit this final local Module 1 implementation gate. The next meaningful
+  Actions-consuming milestone is the batched branch push and pull request,
+  which will also verify the locked SQLCipher environment on Linux.
+- Before accepting real personal data, implement portable key onboarding,
+  recovery verification, and the trusted passcode interface. The default CLI
+  remains session-only until that deployment gate is complete.
 
 ### 2026-08-25 — Encrypted backup and guided restore boundary
 

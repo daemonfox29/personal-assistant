@@ -32,9 +32,16 @@ review questions in [Security Principles](security-principles.md).
 
 ## Information flow
 
-Current Module 0 chat flow:
+Current chat flow, with the optional Module 1 adapter supplied by a trusted
+startup path:
 
-User request → command-line interface → token-bounded structured messages → model adapter → local Ollama model → streamed response
+User request → bounded encrypted retrieval → untrusted-data system envelope →
+token-bounded structured messages → model adapter → local Ollama model →
+streamed response
+
+The default command-line startup does not yet supply that adapter because
+portable key onboarding and recovery must be implemented before real personal
+data is accepted. Without it, the flow remains the Module 0 session-only path.
 
 Future action flow:
 
@@ -46,6 +53,15 @@ The first version uses one local model and a command-line interface. Recent
 conversation is held only in RAM for the current session. System, user, and
 assistant messages remain separate data structures; history retains only
 complete recent turns within a conservative token budget.
+
+Confirmed persistent records can be selected by the encrypted repository's
+deterministic policy and inserted into the system message as one bounded JSON
+data object. Stored strings are explicitly untrusted and cannot grant tool or
+permission authority. Candidate, restricted, expired, out-of-scope, and
+mention-blocked records remain excluded before model context assembly.
+The labeling can reduce accidental instruction-following but is not assumed to
+make the model reliable; deterministic permission and executor boundaries
+remain responsible for preventing actions.
 
 Closing the process drops the application's history references and no
 conversation database exists yet. This is an application retention boundary,
