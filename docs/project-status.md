@@ -199,9 +199,10 @@ Completed:
   first-person statements now finish capture before the main response; trusted
   italic receipts report only generic topics, while contradictions and
   uncertainty ask for clarification without overwriting confirmed data.
-- Added a transient no-token thinking animation and a lightweight macOS
-  development `.app` launcher for Spotlight and Dock access to the live `uv`
-  checkout. The launcher is not a signed or self-contained release package.
+- Added a transient no-token thinking animation and a lightweight native arm64
+  macOS development launcher for Spotlight and Dock access to the live `uv`
+  checkout. The launcher is ad-hoc signed locally, not a signed or
+  self-contained release package.
 - Verified 311 tests locally with the normal performance test skipped. The
   separate 100,000-record encrypted retrieval benchmark passed at 14.00 ms
   median and 14.29 ms p95 over 30 queries.

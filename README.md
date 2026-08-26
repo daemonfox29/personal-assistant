@@ -48,11 +48,11 @@ From the project folder:
 uv run --locked personal-assistant-ui
 ```
 
-On macOS, the lightweight development launcher at
-`launchers/Personal Assistant.app` can be copied to `~/Applications`. It opens
-the same live `uv` checkout without Terminal, so Spotlight can launch
-**Personal Assistant** and the app can be pinned to the Dock. This is a
-development convenience, not the future signed and self-contained package.
+On Apple-silicon macOS, `launchers/install-macos-launcher.sh` builds a tiny
+native development launcher in `~/Applications`. It opens the same live `uv`
+checkout without Terminal, so Spotlight can launch **Personal Assistant** and
+the app can be pinned to the Dock. This is a development convenience, not the
+future signed and self-contained package.
 
 The native app guides first-run encrypted-memory setup or recovery unlock, then
 starts Ollama and opens streaming chat. After one verified recovery entry, later
