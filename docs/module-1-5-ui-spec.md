@@ -86,10 +86,11 @@ The first usable slice includes:
    confirmed permanent deletion from the live database.
 7. Existing explicit-memory phrases and post-response candidate analysis
    through the same trusted runtime used by the CLI.
-8. A compact memory inventory in Settings, grouped by a small stable category
-   filter rather than one permanent panel per entity. Each row shows the saved
-   value, kind, status, update date, source navigation, and audited soft-delete
-   control through immutable application-service values.
+8. A dedicated Memory section in Settings with persistent settings navigation,
+   a small stable category sidebar, search, and one compact table rather than
+   one permanent panel per entity. Each row shows the saved value, kind, status,
+   update date, source navigation, and audited soft-delete control through
+   immutable application-service values.
 
 Candidate confirmation/rejection, backup/restore, pagination beyond the initial
 bounded inventory, and the bounded audit viewer follow as additional panels over
@@ -128,11 +129,13 @@ New memory revisions created from saved chat input use the exact opaque
 identifier directly, opens the owning conversation, and highlights the exact
 message sequence without searching by personal text. Deleting a conversation
 cascades its messages, so the memory remains but source navigation returns a
-fixed deleted-or-unavailable error. Older memories and trusted imports without a
-message identifier report that they predate source links; the app never guesses
-a source from matching words. Memory deletion is a recoverable lifecycle
-transition that removes the row from normal retrieval while preserving revision
-history and a content-free audit event.
+fixed deleted-or-unavailable error. For memories created before exact message
+links existed, the compatibility path uses the literal stored memory text only
+when it appears verbatim in exactly one surviving user message. Zero or multiple
+matches, inferred wording, deleted chats, and trusted imports remain unavailable;
+the app never chooses a merely similar source. Memory deletion is a recoverable
+lifecycle transition that removes the row from normal retrieval while preserving
+revision history and a content-free audit event.
 
 Confirmed low-risk memories remain global rather than transcript-scoped. When a
 new or saved chat replaces active RAM history, its first persistent-memory

@@ -110,6 +110,10 @@ class ConversationNotFoundError(ConversationHistoryError):
     pass
 
 
+class ConversationSourceAmbiguousError(ConversationHistoryError):
+    pass
+
+
 class ConversationRole(StrEnum):
     USER = "user"
     ASSISTANT = "assistant"
@@ -593,6 +597,67 @@ class ConversationHistoryRepository:
                 "The memory source could not be read safely."
             ) from error
 
+    def find_unique_exact_user_source(
+        self,
+        exact_text: str,
+        correlation_id: UUID,
+    ) -> StoredConversationSource:
+        """Resolve legacy provenance only when one live user message contains it."""
+
+        content = self._validated_content(exact_text)
+        if len(content.strip()) < 8:
+            raise ConversationNotFoundError(
+                "The legacy memory text is too short for exact source matching."
+            )
+        started = self._start_audit(
+            correlation_id,
+            "conversation_exact_source_load",
+        )
+        try:
+            with self._connections.connect(correlation_id) as connection:
+                rows = connection.execute(
+                    "SELECT m.message_id FROM conversation_messages m "
+                    "JOIN conversations c ON c.conversation_id = m.conversation_id "
+                    "WHERE m.role = 'user' AND c.archived = 0 "
+                    "AND (m.content = ? OR instr(m.content, ?) > 0) "
+                    "ORDER BY m.created_at DESC, m.message_id LIMIT 2",
+                    (content, content),
+                ).fetchall()
+            if not rows:
+                raise ConversationNotFoundError(
+                    "No live conversation contains the exact legacy memory text."
+                )
+            if len(rows) > 1:
+                raise ConversationSourceAmbiguousError(
+                    "Multiple live messages contain the exact legacy memory text."
+                )
+            result = self.load_message_source(UUID(rows[0][0]), correlation_id)
+            self._finish_audit(
+                correlation_id,
+                "conversation_exact_source_load",
+                AuditOutcome.SUCCEEDED,
+                AuditReasonCode.NORMAL,
+                started,
+                1,
+            )
+            return result
+        except ConversationHistoryError:
+            self._failed_audit(
+                correlation_id,
+                "conversation_exact_source_load",
+                started,
+            )
+            raise
+        except Exception as error:
+            self._failed_audit(
+                correlation_id,
+                "conversation_exact_source_load",
+                started,
+            )
+            raise ConversationHistoryError(
+                "The legacy memory source could not be read safely."
+            ) from error
+
     def delete_conversation(
         self,
         conversation_id: UUID,
@@ -689,6 +754,8 @@ class ConversationHistoryRepository:
                         "conversation_list",
                         "conversation_load",
                         "conversation_search",
+                        "conversation_source_load",
+                        "conversation_exact_source_load",
                     }
                     else AuditOperation.REPOSITORY_WRITE
                 ),

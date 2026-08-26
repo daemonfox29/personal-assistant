@@ -28,6 +28,7 @@ from personal_assistant.conversation import (
 from personal_assistant.conversation_history import (
     ConversationHistoryError,
     ConversationNotFoundError,
+    ConversationSourceAmbiguousError,
     ConversationHistoryRepository,
     ConversationResponseMessage,
     ConversationRole,
@@ -505,32 +506,59 @@ class AssistantApplicationService:
             raise ApplicationOpenError(
                 "The selected memory could not be inspected safely."
             ) from error
-        source_ref = next(
+        source_revision = next(
             (
-                revision.provenance.source_ref
+                revision
                 for revision in reversed(revisions)
                 if revision.provenance.source_ref.startswith("message:")
             ),
             None,
         )
-        if source_ref is None:
+        legacy_revision = next(
+            (
+                revision
+                for revision in reversed(revisions)
+                if revision.provenance.source_ref.startswith("turn:")
+                and revision.provenance.source_type
+                in {SourceType.EXPLICIT_USER, SourceType.MODEL_CANDIDATE}
+            ),
+            None,
+        )
+        if source_revision is None and legacy_revision is None:
             raise MemorySourceUnavailableError(
-                "This memory predates source links or came from a trusted import "
-                "or administrative action."
+                "This memory came from a trusted import or administrative "
+                "action and does not have a recoverable chat source."
             )
         try:
-            message_id = UUID(source_ref.removeprefix("message:"))
-            source = history_repository.load_message_source(
-                message_id,
-                correlation_id,
-            )
+            if source_revision is None:
+                source = history_repository.find_unique_exact_user_source(
+                    self._legacy_source_text(legacy_revision.payload),
+                    correlation_id,
+                )
+            else:
+                message_id = UUID(
+                    source_revision.provenance.source_ref.removeprefix(
+                        "message:"
+                    )
+                )
+                source = history_repository.load_message_source(
+                    message_id,
+                    correlation_id,
+                )
             self._conversation.replace_history(
                 source.conversation.completed_turns(),
                 wait_for_memory=True,
             )
+        except ConversationSourceAmbiguousError as error:
+            raise MemorySourceUnavailableError(
+                "This older memory appears verbatim in multiple saved messages, "
+                "so its original source cannot be selected safely."
+            ) from error
         except (ValueError, ConversationNotFoundError) as error:
             raise MemorySourceUnavailableError(
-                "The source conversation or message was deleted or is unavailable."
+                "The source conversation was deleted, the exact message is no "
+                "longer available, or this older memory was inferred rather than "
+                "quoted verbatim."
             ) from error
         except (ConversationHistoryError, RuntimeError, TypeError) as error:
             raise ApplicationOpenError(
@@ -540,6 +568,24 @@ class AssistantApplicationService:
             self._active_conversation_id = source.conversation.summary.conversation_id
             self._private_chat = False
         return MemorySourceLocation(source.conversation, source.source_sequence)
+
+    @staticmethod
+    def _legacy_source_text(payload: object) -> str:
+        """Return only literal stored text eligible for strict legacy matching."""
+
+        if isinstance(payload, FactPayload):
+            return payload.statement
+        if isinstance(payload, PreferencePayload):
+            return payload.preference
+        if isinstance(payload, EventPayload):
+            return payload.summary
+        if isinstance(payload, InsightPayload):
+            return payload.observation
+        if isinstance(payload, NotePayload):
+            return payload.body
+        if isinstance(payload, PolicyPreferencePayload):
+            return payload.subject
+        raise TypeError("Memory payload kind is not supported for source matching.")
 
     @staticmethod
     def _memory_inventory_item(record: MemoryRecord) -> MemoryInventoryItem:

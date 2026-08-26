@@ -279,9 +279,51 @@ class SettingsPage(QWidget):
 
     def __init__(self) -> None:
         super().__init__()
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(48, 36, 48, 36)
-        title = QLabel("Settings")
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+
+        navigation = QFrame()
+        navigation.setObjectName("settingsSidebar")
+        navigation.setFixedWidth(190)
+        navigation_layout = QVBoxLayout(navigation)
+        navigation_layout.setContentsMargins(16, 24, 16, 18)
+        navigation_layout.setSpacing(12)
+        navigation_title = QLabel("Settings")
+        navigation_title.setObjectName("settingsNavigationTitle")
+        navigation_layout.addWidget(navigation_title)
+        self._section_list = QListWidget()
+        self._section_list.setObjectName("settingsSectionList")
+        self._section_list.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        memory_section = QListWidgetItem("Memory")
+        memory_section.setData(Qt.ItemDataRole.UserRole, 0)
+        model_section = QListWidgetItem("Model & appearance")
+        model_section.setData(Qt.ItemDataRole.UserRole, 1)
+        self._section_list.addItem(memory_section)
+        self._section_list.addItem(model_section)
+        navigation_layout.addWidget(self._section_list, 1)
+        back = QPushButton("Back to chat")
+        back.setObjectName("secondaryButton")
+        back.clicked.connect(self.back_requested)
+        navigation_layout.addWidget(back)
+        layout.addWidget(navigation)
+
+        self._section_pages = QStackedWidget()
+        self._section_pages.addWidget(self._build_memory_page())
+        self._section_pages.addWidget(self._build_model_page())
+        layout.addWidget(self._section_pages, 1)
+        self._section_list.currentItemChanged.connect(
+            self._select_settings_section
+        )
+        self._section_list.setCurrentRow(0)
+
+    def _build_model_page(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(28, 28, 28, 28)
+        layout.setSpacing(12)
+        title = QLabel("Model & appearance")
         title.setObjectName("settingsTitle")
         layout.addWidget(title)
         explanation = QLabel(
@@ -289,6 +331,7 @@ class SettingsPage(QWidget):
             "validated and audited; model limits apply after restart."
         )
         explanation.setWordWrap(True)
+        explanation.setObjectName("settingsSubtitle")
         layout.addWidget(explanation)
 
         card = QFrame()
@@ -330,26 +373,66 @@ class SettingsPage(QWidget):
         note.setWordWrap(True)
         form.addRow(note)
         layout.addWidget(card)
+        layout.addStretch()
+        self._result = QLabel()
+        self._result.setObjectName("settingsResult")
+        self._result.setWordWrap(True)
+        layout.addWidget(self._result)
+        save_row = QHBoxLayout()
+        save_row.addStretch()
+        save = QPushButton("Save settings")
+        save.clicked.connect(self._save)
+        save_row.addWidget(save)
+        layout.addLayout(save_row)
+        return page
 
-        memory_heading = QHBoxLayout()
-        memory_heading.addWidget(QLabel("Saved memories"))
-        memory_heading.addStretch()
-        self._memory_category = QComboBox()
-        self._memory_category.addItem("All categories")
-        self._memory_category.currentTextChanged.connect(
-            self._filter_memory_rows
+    def _build_memory_page(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(24, 28, 24, 28)
+        layout.setSpacing(12)
+        title = QLabel("Memory")
+        title.setObjectName("settingsTitle")
+        layout.addWidget(title)
+        explanation = QLabel(
+            "Review what the assistant currently remembers. Open the exact "
+            "source message when available, or remove a memory from normal use."
         )
+        explanation.setWordWrap(True)
+        explanation.setObjectName("settingsSubtitle")
+        layout.addWidget(explanation)
+
         self._memory_search = QLineEdit()
-        self._memory_search.setPlaceholderText("Search memories")
+        self._memory_search.setPlaceholderText("Search all memories")
         self._memory_search.setClearButtonEnabled(True)
         self._memory_search.textChanged.connect(self._filter_memory_rows)
-        memory_heading.addWidget(self._memory_category)
-        memory_heading.addWidget(self._memory_search)
-        layout.addLayout(memory_heading)
+        layout.addWidget(self._memory_search)
 
-        self._memory_table = QTableWidget(0, 6)
+        memory_splitter = QSplitter(Qt.Orientation.Horizontal)
+        category_panel = QFrame()
+        category_panel.setObjectName("memoryCategoryPanel")
+        category_panel.setMinimumWidth(150)
+        category_panel.setMaximumWidth(175)
+        category_layout = QVBoxLayout(category_panel)
+        category_layout.setContentsMargins(10, 12, 10, 12)
+        category_title = QLabel("Categories")
+        category_title.setObjectName("memoryCategoryTitle")
+        category_layout.addWidget(category_title)
+        self._memory_category = QListWidget()
+        self._memory_category.setObjectName("memoryCategoryList")
+        self._memory_category.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        self._memory_category.currentItemChanged.connect(
+            lambda _current, _previous: self._filter_memory_rows()
+        )
+        category_layout.addWidget(self._memory_category, 1)
+        memory_splitter.addWidget(category_panel)
+
+        self._memory_table = QTableWidget(0, 5)
+        self._memory_table.setObjectName("memoryTable")
         self._memory_table.setHorizontalHeaderLabels(
-            ("Category", "Memory", "Type", "Status", "Updated", "Actions")
+            ("Memory", "Type", "Status", "Updated", "Actions")
         )
         self._memory_table.setEditTriggers(
             QTableWidget.EditTrigger.NoEditTriggers
@@ -358,30 +441,37 @@ class SettingsPage(QWidget):
             QTableWidget.SelectionBehavior.SelectRows
         )
         self._memory_table.setAlternatingRowColors(True)
+        self._memory_table.setShowGrid(False)
+        self._memory_table.setWordWrap(False)
         self._memory_table.verticalHeader().setVisible(False)
+        self._memory_table.verticalHeader().setDefaultSectionSize(38)
         header = self._memory_table.horizontalHeader()
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        for column in (2, 3, 4, 5):
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        for column in (1, 2, 3, 4):
             header.setSectionResizeMode(
                 column,
                 QHeaderView.ResizeMode.ResizeToContents,
             )
-        layout.addWidget(self._memory_table, 1)
-        self._result = QLabel()
-        self._result.setObjectName("settingsResult")
-        self._result.setWordWrap(True)
-        layout.addWidget(self._result)
-        buttons = QHBoxLayout()
-        back = QPushButton("Back to chat")
-        back.setObjectName("secondaryButton")
-        back.clicked.connect(self.back_requested)
-        save = QPushButton("Save settings")
-        save.clicked.connect(self._save)
-        buttons.addWidget(back)
-        buttons.addStretch()
-        buttons.addWidget(save)
-        layout.addLayout(buttons)
+        memory_splitter.addWidget(self._memory_table)
+        memory_splitter.setStretchFactor(0, 0)
+        memory_splitter.setStretchFactor(1, 1)
+        memory_splitter.setSizes((170, 720))
+        layout.addWidget(memory_splitter, 1)
+        return page
+
+    @Slot(QListWidgetItem, QListWidgetItem)
+    def _select_settings_section(
+        self,
+        current: QListWidgetItem | None,
+        _previous: QListWidgetItem | None,
+    ) -> None:
+        if current is not None:
+            self._section_pages.setCurrentIndex(
+                int(current.data(Qt.ItemDataRole.UserRole))
+            )
+
+    def show_memory_page(self) -> None:
+        self._section_list.setCurrentRow(0)
 
     def set_preferences(self, preferences: RuntimePreferences) -> None:
         self._maximum_response_tokens.setValue(
@@ -404,20 +494,35 @@ class SettingsPage(QWidget):
 
     def set_memories(self, memories: tuple[MemoryInventoryItem, ...]) -> None:
         self._memory_table.setRowCount(0)
-        categories = sorted({memory.category for memory in memories})
-        selected_category = self._memory_category.currentText()
+        category_counts = {
+            category: sum(memory.category == category for memory in memories)
+            for category in sorted({memory.category for memory in memories})
+        }
+        selected_item = self._memory_category.currentItem()
+        selected_category = (
+            str(selected_item.data(Qt.ItemDataRole.UserRole))
+            if selected_item is not None
+            else ""
+        )
         self._memory_category.blockSignals(True)
         self._memory_category.clear()
-        self._memory_category.addItem("All categories")
-        self._memory_category.addItems(categories)
-        category_index = self._memory_category.findText(selected_category)
-        self._memory_category.setCurrentIndex(max(0, category_index))
+        all_categories = QListWidgetItem(f"All memories  {len(memories)}")
+        all_categories.setData(Qt.ItemDataRole.UserRole, "")
+        self._memory_category.addItem(all_categories)
+        selected_row = 0
+        for category, count in category_counts.items():
+            item = QListWidgetItem(f"{category}  {count}")
+            item.setData(Qt.ItemDataRole.UserRole, category)
+            item.setToolTip(category)
+            self._memory_category.addItem(item)
+            if category == selected_category:
+                selected_row = self._memory_category.count() - 1
+        self._memory_category.setCurrentRow(selected_row)
         self._memory_category.blockSignals(False)
         for memory in memories:
             row = self._memory_table.rowCount()
             self._memory_table.insertRow(row)
             values = (
-                memory.category,
                 sanitize_terminal_text(memory.value),
                 memory.kind.replace("_", " ").title(),
                 memory.status.title(),
@@ -426,12 +531,19 @@ class SettingsPage(QWidget):
             for column, value in enumerate(values):
                 item = QTableWidgetItem(value)
                 item.setData(Qt.ItemDataRole.UserRole, str(memory.record_id))
+                item.setData(
+                    int(Qt.ItemDataRole.UserRole) + 1,
+                    memory.category,
+                )
+                if column == 0:
+                    item.setToolTip(value)
                 self._memory_table.setItem(row, column, item)
             actions = QWidget()
+            actions.setObjectName("memoryRowActions")
             action_layout = QHBoxLayout(actions)
             action_layout.setContentsMargins(0, 0, 0, 0)
-            action_layout.setSpacing(6)
-            source = QPushButton("View source")
+            action_layout.setSpacing(3)
+            source = QPushButton("Source")
             source.setObjectName("tableAction")
             source.clicked.connect(
                 lambda _checked=False, identifier=str(memory.record_id):
@@ -445,23 +557,31 @@ class SettingsPage(QWidget):
             )
             action_layout.addWidget(source)
             action_layout.addWidget(delete)
-            self._memory_table.setCellWidget(row, 5, actions)
-        self._memory_table.resizeRowsToContents()
+            self._memory_table.setCellWidget(row, 4, actions)
         self._filter_memory_rows()
 
     @Slot()
     def _filter_memory_rows(self) -> None:
-        category = self._memory_category.currentText()
+        category_item = self._memory_category.currentItem()
+        category = (
+            str(category_item.data(Qt.ItemDataRole.UserRole))
+            if category_item is not None
+            else ""
+        )
         query = self._memory_search.text().strip().casefold()
         for row in range(self._memory_table.rowCount()):
-            row_category = self._memory_table.item(row, 0).text()
+            first_item = self._memory_table.item(row, 0)
+            row_category = str(
+                first_item.data(int(Qt.ItemDataRole.UserRole) + 1)
+            )
             searchable = " ".join(
                 self._memory_table.item(row, column).text()
-                for column in range(5)
+                for column in range(4)
             ).casefold()
-            visible = (
-                category == "All categories" or row_category == category
-            ) and (not query or query in searchable)
+            searchable = f"{row_category} {searchable}".casefold()
+            visible = (not category or row_category == category) and (
+                not query or query in searchable
+            )
             self._memory_table.setRowHidden(row, not visible)
 
     @Slot()
@@ -1301,6 +1421,7 @@ class AssistantWindow(QMainWindow):
     @Slot()
     def _show_settings(self) -> None:
         self._settings.set_preferences(self._factory.runtime_preferences)
+        self._settings.show_memory_page()
         if self._service is not None:
             try:
                 self._settings.set_memories(self._service.list_memories())
@@ -1565,13 +1686,42 @@ class AssistantWindow(QMainWindow):
             #welcomeTitle {{ font-size: {font_size + 10}pt; font-weight: 650;
                              margin: 8px; }}
             #settingsTitle {{ font-size: {font_size + 7}pt; font-weight: 650;
-                              margin: 8px; }}
+                              margin: 0; }}
+            #settingsNavigationTitle {{ font-size: {font_size + 5}pt;
+                                        font-weight: 650; margin: 4px 8px; }}
+            #settingsSubtitle {{ color: {colors['muted']}; }}
             #historyTitle {{ font-size: {font_size + 3}pt; font-weight: 650; }}
-            #historySidebar {{ background: {colors['sidebar']};
-                              border-right: 1px solid {colors['border']}; }}
+            #historySidebar, #settingsSidebar {{ background: {colors['sidebar']};
+                                                border-right: 1px solid {colors['border']}; }}
             #conversationList {{ background: transparent; border: 0; padding: 2px; }}
             #conversationList::item {{ border-radius: 7px; padding: 8px; }}
             #conversationList::item:selected {{ background: {colors['selection']}; }}
+            #settingsSectionList, #memoryCategoryList {{ background: transparent;
+                                                        border: 0; padding: 2px; }}
+            #settingsSectionList::item, #memoryCategoryList::item {{
+                border-radius: 7px; padding: 9px 8px;
+            }}
+            #settingsSectionList::item:selected, #memoryCategoryList::item:selected {{
+                background: {colors['selection']};
+            }}
+            #memoryCategoryPanel {{ background: {colors['sidebar']};
+                                    border: 1px solid {colors['border']};
+                                    border-radius: 10px; }}
+            #memoryCategoryTitle {{ font-weight: 650; padding: 3px 6px; }}
+            #memoryTable {{ background: {colors['card']};
+                            alternate-background-color: {colors['sidebar']};
+                            border: 1px solid {colors['border']};
+                            border-radius: 10px; }}
+            #memoryTable QHeaderView::section {{ background: {colors['sidebar']};
+                                                border: 0;
+                                                border-bottom: 1px solid {colors['border']};
+                                                padding: 8px; font-weight: 650; }}
+            #memoryTable::item {{ padding: 5px 7px; }}
+            #memoryRowActions {{ background: transparent; }}
+            #tableAction, #tableDeleteAction {{ padding: 5px 6px; }}
+            #tableDeleteAction {{ background: transparent;
+                                  border: 1px solid {colors['secondary_border']}; }}
+            #tableDeleteAction:hover {{ background: {colors['secondary_hover']}; }}
             #card {{ background: {colors['card']}; border: 1px solid {colors['border']};
                     border-radius: 14px; max-width: 620px; }}
             QLineEdit, QPlainTextEdit, QTextEdit, QComboBox, QSpinBox {{

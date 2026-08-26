@@ -175,20 +175,21 @@ complete; the batched Linux pull-request check is its final platform gate.
 
 Completed:
 
-- Added a compact Settings memory table with stable broad categories, local
-  search, value/kind/status/update columns, source navigation, and individual
-  audited soft deletion. Widgets receive immutable bounded rows rather than
-  repository or database objects.
+- Added a dedicated Settings navigation layout whose default Memory page uses a
+  stable broad-category sidebar, local search, and one dense
+  value/kind/status/update/actions table. Widgets receive immutable bounded rows
+  rather than repository or database objects.
 - Linked newly created chat-derived memories to the exact opaque encrypted user
   message ID. View source resolves the ID directly, opens the correct saved
   conversation, and highlights the exact sequence even when text is duplicated.
 - Preserved deletion honesty: removing a chat cascades its source messages, so
   the memory remains but source lookup returns a fixed deleted-or-unavailable
-  error. Older/imported memories report that they predate source links instead
-  of using text similarity.
+  error. Older memories use a strict compatibility lookup only when their
+  literal saved text occurs in exactly one surviving user message; ambiguous,
+  inferred, deleted, and imported sources are never guessed.
 - Kept memory deletion recoverable: the row leaves ordinary retrieval while its
   revision history and content-free audit event remain.
-- Verified all 330 local tests under the locked `uv` environment; one opt-in
+- Verified all 332 local tests under the locked `uv` environment; one opt-in
   performance test remained skipped.
 
 Next:

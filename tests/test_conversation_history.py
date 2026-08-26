@@ -10,6 +10,7 @@ from personal_assistant.audit import AuditWriteError, InMemoryAuditSink
 from personal_assistant.conversation_history import (
     ConversationHistoryError,
     ConversationNotFoundError,
+    ConversationSourceAmbiguousError,
     ConversationHistoryRepository,
     ConversationResponseMessage,
     ConversationRole,
@@ -164,6 +165,51 @@ class ConversationHistoryTests(unittest.TestCase):
         self.repository.delete_conversation(reference.conversation_id, uuid4())
         with self.assertRaises(ConversationNotFoundError):
             self.repository.load_message_source(reference.message_id, uuid4())
+
+    def test_legacy_exact_source_resolves_only_when_match_is_unique(self) -> None:
+        exact_text = "My synthetic legacy detail is cobalt."
+        first = self.repository.begin_turn_with_reference(
+            None,
+            f"Please remember this: {exact_text}",
+            uuid4(),
+        )
+        self.repository.finish_turn(
+            first.conversation_id,
+            (
+                ConversationResponseMessage(
+                    ConversationRole.ASSISTANT,
+                    "Synthetic response",
+                ),
+            ),
+            uuid4(),
+        )
+
+        source = self.repository.find_unique_exact_user_source(
+            exact_text,
+            uuid4(),
+        )
+
+        self.assertEqual(
+            source.conversation.summary.conversation_id,
+            first.conversation_id,
+        )
+        second = self.repository.begin_turn_with_reference(
+            None,
+            f"A duplicate includes {exact_text}",
+            uuid4(),
+        )
+        self.repository.finish_turn(
+            second.conversation_id,
+            (
+                ConversationResponseMessage(
+                    ConversationRole.ASSISTANT,
+                    "Synthetic duplicate response",
+                ),
+            ),
+            uuid4(),
+        )
+        with self.assertRaises(ConversationSourceAmbiguousError):
+            self.repository.find_unique_exact_user_source(exact_text, uuid4())
 
     def test_explicit_search_returns_bounded_prior_conversation_neighborhood(self) -> None:
         prior_id = self.repository.begin_turn(

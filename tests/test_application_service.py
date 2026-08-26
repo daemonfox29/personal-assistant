@@ -18,6 +18,22 @@ from personal_assistant.application_service import (
     MemorySourceUnavailableError,
 )
 from personal_assistant.config import AppSettings, MemorySettings
+from personal_assistant.conversation_history import (
+    ConversationResponseMessage,
+    ConversationRole,
+)
+from personal_assistant.memory_types import (
+    ActorType,
+    FactPayload,
+    MentionPolicy,
+    Provenance,
+    RecordDraft,
+    RecordStatus,
+    Scope,
+    ScopeType,
+    Sensitivity,
+    SourceType,
+)
 from personal_assistant.model import ModelRequest, ModelResponse
 from personal_assistant.runtime_preferences import (
     RuntimePreferences,
@@ -125,9 +141,107 @@ class ApplicationServiceTests(unittest.TestCase):
                 )
                 with self.assertRaisesRegex(
                     MemorySourceUnavailableError,
-                    "deleted or is unavailable",
+                    "deleted, the exact message is no longer available",
                 ):
                     service.open_memory_source(inventory[0].record_id)
+                service.close()
+
+    def test_legacy_memory_opens_only_one_verbatim_saved_message(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            settings = AppSettings(
+                memory=MemorySettings(
+                    data_directory=Path(temporary_directory) / "private"
+                )
+            )
+            factory = AssistantApplicationFactory(settings)
+            factory.setup(RECOVERY, RECOVERY, PASSCODE, PASSCODE)
+            with patch(
+                "personal_assistant.application_service.OllamaModel",
+                return_value=SyntheticModel(),
+            ):
+                service = factory.open(RECOVERY)
+                exact_text = "My synthetic legacy location is Denver."
+                history = service._conversation_history
+                runtime = service._runtime
+                self.assertIsNotNone(history)
+                self.assertIsNotNone(runtime)
+                reference = history.begin_turn_with_reference(  # type: ignore[union-attr]
+                    None,
+                    f"Please remember that {exact_text}",
+                    uuid4(),
+                )
+                history.finish_turn(  # type: ignore[union-attr]
+                    reference.conversation_id,
+                    (
+                        ConversationResponseMessage(
+                            ConversationRole.ASSISTANT,
+                            "Synthetic response",
+                        ),
+                    ),
+                    uuid4(),
+                )
+                record = runtime.repository.create_record(  # type: ignore[union-attr]
+                    RecordDraft(
+                        FactPayload("synthetic legacy location", exact_text),
+                        RecordStatus.CONFIRMED,
+                        Sensitivity.NORMAL,
+                        MentionPolicy.MAY_MENTION_WHEN_RELEVANT,
+                        Scope(ScopeType.GLOBAL),
+                    ),
+                    Provenance(
+                        SourceType.EXPLICIT_USER,
+                        f"turn:{uuid4()}",
+                        ActorType.USER,
+                    ),
+                    uuid4(),
+                )
+
+                source = service.open_memory_source(record.record_id)
+
+                self.assertEqual(
+                    source.conversation.summary.conversation_id,
+                    reference.conversation_id,
+                )
+                duplicate = history.begin_turn_with_reference(  # type: ignore[union-attr]
+                    None,
+                    f"A duplicate repeats {exact_text}",
+                    uuid4(),
+                )
+                history.finish_turn(  # type: ignore[union-attr]
+                    duplicate.conversation_id,
+                    (
+                        ConversationResponseMessage(
+                            ConversationRole.ASSISTANT,
+                            "Synthetic response",
+                        ),
+                    ),
+                    uuid4(),
+                )
+                with self.assertRaisesRegex(
+                    MemorySourceUnavailableError,
+                    "multiple saved messages",
+                ):
+                    service.open_memory_source(record.record_id)
+                imported = runtime.repository.create_record(  # type: ignore[union-attr]
+                    RecordDraft(
+                        FactPayload("synthetic imported location", exact_text),
+                        RecordStatus.CONFIRMED,
+                        Sensitivity.NORMAL,
+                        MentionPolicy.MAY_MENTION_WHEN_RELEVANT,
+                        Scope(ScopeType.GLOBAL),
+                    ),
+                    Provenance(
+                        SourceType.TRUSTED_INTERFACE,
+                        "settings-import",
+                        ActorType.USER,
+                    ),
+                    uuid4(),
+                )
+                with self.assertRaisesRegex(
+                    MemorySourceUnavailableError,
+                    "trusted import or administrative action",
+                ):
+                    service.open_memory_source(imported.record_id)
                 service.close()
 
     def test_settings_delete_soft_deletes_memory_from_inventory(self) -> None:

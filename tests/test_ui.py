@@ -215,12 +215,17 @@ class NativeUiTests(unittest.TestCase):
         page.memory_delete_requested.connect(delete_requests.append)
 
         self.assertEqual(page._memory_table.rowCount(), 2)
-        self.assertEqual(page._memory_table.item(0, 1).text(), "Luna likes synthetic rope toys")
+        self.assertEqual(
+            page._memory_table.item(0, 0).text(),
+            "Luna likes synthetic rope toys",
+        )
+        self.assertEqual(page._memory_category.count(), 3)
+        self.assertEqual(page._section_pages.currentIndex(), 0)
         page._memory_search.setText("schedule")
         self.assertTrue(page._memory_table.isRowHidden(0))
         self.assertFalse(page._memory_table.isRowHidden(1))
 
-        actions = page._memory_table.cellWidget(1, 5)
+        actions = page._memory_table.cellWidget(1, 4)
         buttons = actions.findChildren(QPushButton)
         buttons[0].click()
         buttons[1].click()
