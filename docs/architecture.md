@@ -50,8 +50,10 @@ unlock successfully. A new or disabled installation follows the Module 0
 session-only path. Explicit remember instructions are intercepted before model
 submission. After the visible answer,
 a bounded worker may ask the model for tentative suggestions. Deterministic code
-may promote only an exact low-risk quote found in the user's current message and
-stores that quote with trusted-interface provenance. Model-authored paraphrases,
+may promote only a complete low-risk declarative sentence found exactly in the
+user's current message and stores that sentence with trusted-interface
+provenance. A model-selected exact fragment may locate the sentence but cannot
+author its persisted content. Model-authored paraphrases,
 inferences, sensitive material, and conflicts enter only the quarantined
 candidate inbox until trusted review confirms them.
 

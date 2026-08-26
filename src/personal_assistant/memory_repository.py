@@ -89,14 +89,23 @@ _RETRIEVAL_STOP_WORDS = {
     "do",
     "does",
     "how",
+    "information",
     "i",
     "is",
+    "know",
     "me",
+    "memories",
+    "memory",
     "my",
     "not",
     "or",
+    "please",
+    "recall",
+    "remember",
+    "saved",
     "tell",
     "the",
+    "you",
     "was",
     "were",
     "what",
@@ -1708,25 +1717,32 @@ class MemoryRepository:
 
         terms = self._retrieval_terms(request.query)
         if terms and len(found) < MAX_RETRIEVAL_CANDIDATES:
-            expression = " AND ".join(f'"{term}"*' for term in terms)
-            rows = connection.execute(
-                "SELECT record_id FROM record_search "
-                "WHERE record_search MATCH ? "
-                "AND status = 'confirmed' AND sensitivity <> ? "
-                "AND mention_policy IN (SELECT value FROM json_each(?)) "
-                "AND (valid_from IS NULL OR valid_from <= ?) "
-                "AND (valid_until IS NULL OR valid_until >= ?) "
-                "AND (scope_type = 'global' OR (scope_type || ':' || scope_id) "
-                "IN (SELECT value FROM json_each(?))) "
-                "AND (json_array_length(?) = 0 OR kind IN "
-                "(SELECT value FROM json_each(?))) "
-                "ORDER BY bm25(record_search), updated_at DESC, record_id LIMIT ?",
-                (
-                    expression,
-                )
-                + common_parameters
-                + (MAX_RETRIEVAL_CANDIDATES,),
-            ).fetchall()
+            strict_expression = " AND ".join(f'"{term}"*' for term in terms)
+            expressions = [strict_expression]
+            if len(terms) > 1:
+                expressions.append(" OR ".join(f'"{term}"*' for term in terms))
+            rows = ()
+            for expression in expressions:
+                rows = connection.execute(
+                    "SELECT record_id FROM record_search "
+                    "WHERE record_search MATCH ? "
+                    "AND status = 'confirmed' AND sensitivity <> ? "
+                    "AND mention_policy IN (SELECT value FROM json_each(?)) "
+                    "AND (valid_from IS NULL OR valid_from <= ?) "
+                    "AND (valid_until IS NULL OR valid_until >= ?) "
+                    "AND (scope_type = 'global' OR "
+                    "(scope_type || ':' || scope_id) "
+                    "IN (SELECT value FROM json_each(?))) "
+                    "AND (json_array_length(?) = 0 OR kind IN "
+                    "(SELECT value FROM json_each(?))) "
+                    "ORDER BY bm25(record_search), updated_at DESC, "
+                    "record_id LIMIT ?",
+                    (expression,)
+                    + common_parameters
+                    + (MAX_RETRIEVAL_CANDIDATES,),
+                ).fetchall()
+                if rows:
+                    break
             for row in rows:
                 try:
                     record_id = UUID(row[0])
@@ -1792,7 +1808,8 @@ class MemoryRepository:
             return RetrievalExclusion.MENTION_RESTRICTED
         if (
             record.mention_policy is MentionPolicy.ASK_BEFORE_MENTIONING
-            and request.mode is not RetrievalMode.APPROVED
+            and request.mode
+            not in {RetrievalMode.DIRECT, RetrievalMode.APPROVED}
         ):
             return RetrievalExclusion.MENTION_RESTRICTED
         if (

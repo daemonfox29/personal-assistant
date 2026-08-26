@@ -187,6 +187,9 @@ Every relevant subject may inherit or override one of these policies:
 
 Tightening a restriction takes effect immediately. Loosening a restriction
 requires clearer confirmation and, when high risk, the trusted passcode flow.
+An explicit question about the saved subject counts as consent to use an
+applicable `ask_before_mentioning` record for that answer. Mere incidental
+relevance still requires a clarification before content is exposed.
 
 ### Scope
 
@@ -323,10 +326,11 @@ Migrations are packaged numeric, forward-only SQL files. The runner must:
 4. Ambiguity is clarified rather than guessed.
 5. Explicit user remember instructions may create confirmed low-risk records.
    A post-response proposal may also create confirmed memory only when its
-   evidence is an exact low-risk substring of the user's current message. The
-   stored payload is that quote under deterministic trusted-interface provenance,
-   never the model's subject or paraphrase. Inferred, mismatched, sensitive, or
-   conflicting information creates a quarantined candidate.
+   evidence locates a complete low-risk declarative sentence in the user's
+   current message. The stored payload is that exact sentence under deterministic
+   trusted-interface provenance, never the model's subject or paraphrase.
+   Questions, inferred, mismatched, sensitive, or conflicting information create
+   a quarantined candidate.
 6. The repository writes the record and first revision in one transaction using
    an expected version.
 7. A sanitized audit event records operation, outcome, IDs, reason codes, and
@@ -381,7 +385,9 @@ The coordinator:
 
 1. applies status, scope, sensitivity, mention, and time filters;
 2. matches stable entities, aliases, kinds, and relationships;
-3. uses indexed full-text search for remaining text relevance;
+3. removes conversational scaffolding and uses indexed full-text search for
+   remaining text relevance, trying all meaningful terms before a bounded
+   partial-match fallback when the strict search returns nothing;
 4. ranks by specificity, confirmation, relevance, recency, and provenance; and
 5. returns only the highest-value records that fit both limits below.
 

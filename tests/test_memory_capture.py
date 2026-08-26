@@ -185,6 +185,47 @@ class MemoryCaptureTests(unittest.TestCase):
         self.assertEqual(mismatched.record.status, RecordStatus.CANDIDATE)
         self.assertEqual(sensitive.record.status, RecordStatus.CANDIDATE)
 
+        street_text = "I live at 123 Synthetic Street."
+        street = self.coordinator.process_suggestion_batch(
+            (
+                self._suggestion(
+                    FactPayload("synthetic street residence", street_text),
+                    user_evidence=street_text,
+                    source_ref="synthetic-street-turn",
+                ),
+            ),
+            uuid4(),
+            direct_user_text=street_text,
+        ).results[0]
+        self.assertEqual(street.decision, CaptureDecision.CREATED_CANDIDATE)
+        assert street.record is not None
+        self.assertEqual(street.record.sensitivity, Sensitivity.SENSITIVE)
+
+    def test_broad_residence_and_pet_relation_are_personal_not_sensitive(self) -> None:
+        for index, user_text in enumerate(
+            ("I live in Synthetic City.", "Scooby is my dog."),
+            start=1,
+        ):
+            with self.subTest(user_text=user_text):
+                result = self.coordinator.process_suggestion_batch(
+                    (
+                        self._suggestion(
+                            user_evidence=user_text,
+                            source_ref=f"synthetic-personal-turn-{index}",
+                        ),
+                    ),
+                    uuid4(),
+                    direct_user_text=user_text,
+                ).results[0]
+
+                self.assertEqual(result.decision, CaptureDecision.CREATED_CONFIRMED)
+                assert result.record is not None
+                self.assertEqual(result.record.sensitivity, Sensitivity.PERSONAL)
+                self.assertEqual(
+                    result.record.mention_policy,
+                    MentionPolicy.ASK_BEFORE_MENTIONING,
+                )
+
     def test_explicit_instruction_creates_confirmed_revisioned_memory(self) -> None:
         result = self.coordinator.remember_explicitly(self._explicit(), uuid4())
 

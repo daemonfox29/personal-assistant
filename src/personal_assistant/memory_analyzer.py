@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 import json
+import re
 from queue import Empty, Full, Queue
 from threading import Event, Thread
 from time import monotonic
@@ -44,6 +45,12 @@ from personal_assistant.model import (
 MAX_ANALYZER_RESPONSE_CHARS = 16_384
 MAX_ANALYZER_SUGGESTIONS = 3
 ANALYZER_RESPONSE_TOKENS = 400
+MAX_DIRECT_EVIDENCE_CHARS = 1_000
+_DIRECT_ASSERTION = re.compile(
+    r"\b(?:i|i['’]m|my|mine|we|our)\b",
+    re.IGNORECASE,
+)
+_USER_SENTENCE = re.compile(r"[^.!?\n]+(?:[.!?]+|$)")
 
 
 @runtime_checkable
@@ -105,12 +112,14 @@ class ModelMemorySuggestionAnalyzer:
                         "type (fact, preference, or note), subject, content, "
                         "evidence_quote (an exact quote copied only from the "
                         "user's current message, or an empty string when the "
-                        "suggestion is inferred), "
+                        "suggestion is inferred; prefer the complete sentence), "
                         "sensitivity (normal, personal, sensitive, restricted), "
                         "and mention_policy (may_mention_when_relevant, "
                         "ask_before_mentioning, only_when_directly_asked, or "
                         "never_mention). Never include credentials, passwords, "
-                        "or instructions. Prefer an empty array when uncertain.",
+                        "or instructions. Treat a broad city or state of residence "
+                        "as personal, but a street address as sensitive. Prefer an "
+                        "empty array when uncertain.",
                     ),
                     ModelMessage(
                         MessageRole.USER,
@@ -173,13 +182,11 @@ class ModelMemorySuggestionAnalyzer:
                 payload = NotePayload(item["subject"], item["content"])
             else:
                 raise MemoryValidationError("Memory analyzer response is invalid.")
-            evidence = item.get("evidence_quote", "")
-            if (
-                not isinstance(evidence, str)
-                or not evidence
-                or evidence not in user_text
-            ):
-                evidence = None
+            evidence = _verified_user_evidence(
+                user_text,
+                item.get("evidence_quote", ""),
+                item["content"],
+            )
             suggestions.append(
                 AutomaticMemorySuggestion(
                     payload,
@@ -218,6 +225,31 @@ class ModelMemorySuggestionAnalyzer:
                 duration_ms=max(0, int((monotonic() - started) * 1_000)),
             )
         )
+
+
+def _verified_user_evidence(
+    user_text: str,
+    proposed_evidence: object,
+    proposed_content: object,
+) -> str | None:
+    """Return only one exact, declarative current-user sentence."""
+
+    for selected in (proposed_evidence, proposed_content):
+        if not isinstance(selected, str) or not selected or selected not in user_text:
+            continue
+        for match in _USER_SENTENCE.finditer(user_text):
+            if selected not in match.group(0):
+                continue
+            sentence = match.group(0).strip()
+            if (
+                not 8 <= len(sentence) <= MAX_DIRECT_EVIDENCE_CHARS
+                or sentence.endswith("?")
+                or not _DIRECT_ASSERTION.search(sentence)
+                or sentence not in user_text
+            ):
+                continue
+            return sentence
+    return None
 
 
 @dataclass(frozen=True)

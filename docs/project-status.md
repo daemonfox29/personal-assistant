@@ -152,6 +152,37 @@ complete; the batched Linux pull-request check is its final platform gate.
 
 ## Session history
 
+### 2026-08-26 — Natural recall and exact-statement capture
+
+Completed:
+
+- Diagnosed live recall using only content-free audit events and aggregate
+  encrypted-record metadata. The stable database contained 26 records: 9
+  confirmed and 17 candidates. Confirmed residence and Scooby records existed,
+  proving the immediate failure was retrieval rather than database loss.
+- Removed conversational scaffolding from lexical queries and added a bounded
+  partial-match fallback only when strict all-term FTS finds nothing. The live
+  natural Scooby question now selects its existing confirmed record; the live
+  residence question selects existing confirmed records.
+- Treated an explicit question about a saved subject as consent to use an
+  applicable ask-before record for that answer, while incidental use still
+  requires a natural clarification and restricted/never-mention records remain
+  excluded.
+- Improved automatic capture by allowing an exact model-selected phrase to
+  locate a complete declarative sentence in the current user message. Only that
+  verified sentence can become confirmed; questions, paraphrases, credentials,
+  sensitive content, conflicts, and inferences remain quarantined or rejected.
+- Verified 267 tests locally with the normal performance test skipped. The
+  separate 100,000-record encrypted retrieval benchmark passed at 13.80 ms
+  median and 14.04 ms p95 over 30 queries.
+
+Next:
+
+- Restart the native app and verify natural questions about the already
+  confirmed residence and Scooby records.
+- Add native candidate review so the 17 existing quarantined suggestions can be
+  inspected and confirmed or rejected without command-line work.
+
 ### 2026-08-26 — Protected automatic unlock
 
 Completed:

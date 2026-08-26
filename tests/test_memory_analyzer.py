@@ -150,6 +150,117 @@ class MemoryAnalyzerTests(unittest.TestCase):
         self.assertEqual(payload.statement, user_text)
         self.assertNotIn("model-authored", payload.statement)
 
+    def test_exact_model_content_selects_complete_user_assertion_not_paraphrase(self) -> None:
+        user_text = "Scooby is my dog. He likes synthetic naps."
+        model = Mock(spec=LanguageModel)
+        model.generate.return_value = ModelResponse(
+            json.dumps(
+                [
+                    {
+                        "type": "fact",
+                        "subject": "model-authored pet subject",
+                        "content": "Scooby is my dog",
+                        "evidence_quote": "",
+                        "sensitivity": "normal",
+                        "mention_policy": "may_mention_when_relevant",
+                    }
+                ]
+            )
+        )
+        analyzer = ModelMemorySuggestionAnalyzer(
+            model,
+            "synthetic-model-v1",
+            audit_sink=self.audit,
+        )
+
+        suggestions = analyzer.analyze(
+            user_text,
+            "Thanks for telling me.",
+            "turn:44444444-4444-4444-4444-444444444444",
+            uuid4(),
+        )
+        result = self.coordinator.process_suggestion_batch(
+            suggestions,
+            uuid4(),
+            direct_user_text=user_text,
+        )
+
+        assert result.results[0].record is not None
+        self.assertEqual(result.results[0].record.status, RecordStatus.CONFIRMED)
+        payload = result.results[0].record.revision.payload
+        assert isinstance(payload, FactPayload)
+        self.assertEqual(payload.statement, "Scooby is my dog.")
+
+    def test_exact_content_skips_question_and_finds_later_assertion(self) -> None:
+        user_text = "Is Scooby my dog? Scooby is my dog."
+        model = Mock(spec=LanguageModel)
+        model.generate.return_value = ModelResponse(
+            json.dumps(
+                [
+                    {
+                        "type": "fact",
+                        "subject": "model-authored pet subject",
+                        "content": "Scooby",
+                        "evidence_quote": "Scooby",
+                        "sensitivity": "normal",
+                        "mention_policy": "may_mention_when_relevant",
+                    }
+                ]
+            )
+        )
+        analyzer = ModelMemorySuggestionAnalyzer(
+            model,
+            "synthetic-model-v1",
+            audit_sink=self.audit,
+        )
+
+        suggestions = analyzer.analyze(
+            user_text,
+            "assistant reply",
+            "turn:55555555-5555-5555-5555-555555555555",
+            uuid4(),
+        )
+
+        self.assertEqual(suggestions[0].user_evidence, "Scooby is my dog.")
+
+    def test_question_fragment_cannot_be_promoted_as_direct_evidence(self) -> None:
+        user_text = "What do you remember about my dog?"
+        model = Mock(spec=LanguageModel)
+        model.generate.return_value = ModelResponse(
+            json.dumps(
+                [
+                    {
+                        "type": "fact",
+                        "subject": "model-authored dog subject",
+                        "content": "my dog",
+                        "evidence_quote": "my dog",
+                        "sensitivity": "normal",
+                        "mention_policy": "may_mention_when_relevant",
+                    }
+                ]
+            )
+        )
+        analyzer = ModelMemorySuggestionAnalyzer(
+            model,
+            "synthetic-model-v1",
+            audit_sink=self.audit,
+        )
+
+        suggestions = analyzer.analyze(
+            user_text,
+            "I can check.",
+            "turn:55555555-5555-5555-5555-555555555555",
+            uuid4(),
+        )
+        result = self.coordinator.process_suggestion_batch(
+            suggestions,
+            uuid4(),
+            direct_user_text=user_text,
+        )
+
+        assert result.results[0].record is not None
+        self.assertEqual(result.results[0].record.status, RecordStatus.CANDIDATE)
+
     def test_malformed_or_credential_proposal_is_discarded_and_audited(self) -> None:
         model = Mock(spec=LanguageModel)
         model.generate.return_value = ModelResponse(

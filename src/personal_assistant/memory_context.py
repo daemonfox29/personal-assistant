@@ -137,9 +137,15 @@ class RepositoryMemoryContextProvider:
                 return pending, RetrievalMode.APPROVED
         direct_phrases = (
             "what do you remember",
+            "what do you know about",
             "what did i tell you",
+            "what is my",
+            "where do i live",
+            "where am i based",
+            "who is my",
             "did i tell you",
             "do you recall",
+            "tell me about",
             "we talked about",
             "from our previous",
             "based on what you know about me",

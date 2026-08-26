@@ -156,6 +156,16 @@ class MemoryRetrievalTests(unittest.TestCase):
 
         self.assertEqual(result.receipt.selected_record_ids, (record.record_id,))
 
+    def test_conversational_words_and_extra_descriptor_do_not_hide_subject(self) -> None:
+        record = self._create("Scooby enjoys synthetic naps")
+
+        result = self.repository.retrieve(
+            RetrievalRequest("What do you know about Scooby my dog?"),
+            uuid4(),
+        )
+
+        self.assertEqual(result.receipt.selected_record_ids, (record.record_id,))
+
     def test_direct_mode_allows_only_direct_policy_but_not_restricted_data(self) -> None:
         direct = self._create(
             "Luna direct synthetic detail",
@@ -180,6 +190,23 @@ class MemoryRetrievalTests(unittest.TestCase):
             [item.record.record_id for item in requested.memories],
             [direct.record_id],
         )
+
+    def test_direct_question_can_use_ask_before_memory_without_second_prompt(self) -> None:
+        record = self._create(
+            "Scooby has a synthetic favorite toy",
+            sensitivity=Sensitivity.PERSONAL,
+            mention_policy=MentionPolicy.ASK_BEFORE_MENTIONING,
+        )
+
+        result = self.repository.retrieve(
+            RetrievalRequest(
+                "What do you know about Scooby?",
+                mode=RetrievalMode.DIRECT,
+            ),
+            uuid4(),
+        )
+
+        self.assertEqual(result.receipt.selected_record_ids, (record.record_id,))
 
     def test_specific_scope_and_resolved_entity_outrank_global_text(self) -> None:
         topic = Scope(ScopeType.TOPIC, uuid4())

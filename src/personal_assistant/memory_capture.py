@@ -669,6 +669,18 @@ _SENSITIVE_CONTENT = re.compile(
     r"birth\s*date|phone(?:\s+number)?|email(?:\s+address)?)\b",
     re.IGNORECASE,
 )
+_STREET_ADDRESS_CONTENT = re.compile(
+    r"\b(?:my\s+address\s+is|i\s+live\s+at)\b|"
+    r"\b\d{1,6}\s+[\w.'-]+(?:\s+[\w.'-]+){0,5}\s+"
+    r"(?:street|st|avenue|ave|road|rd|boulevard|blvd|lane|ln|drive|dr|"
+    r"court|ct|way|parkway|pkwy)\b",
+    re.IGNORECASE,
+)
+_PERSONAL_CONTENT = re.compile(
+    r"\b(?:i\s+live\s+in|i\s+am\s+based\s+in|i['’]m\s+based\s+in|"
+    r"my\s+(?:dog|cat|pet))\b",
+    re.IGNORECASE,
+)
 _RESTRICTED_IDENTITY_CONTENT = re.compile(
     r"\b(?:social\s+security(?:\s+number)?|ssn|tax(?:payer)?\s+(?:id|number)|"
     r"passport(?:\s+number)?|driver(?:'s)?\s+licen[cs]e(?:\s+number)?|"
@@ -699,8 +711,10 @@ def _deterministic_sensitivity(payload: MemoryPayload) -> Sensitivity:
     text = canonical_json(payload_to_data(payload))
     if _RESTRICTED_CONTENT.search(text) or _RESTRICTED_IDENTITY_CONTENT.search(text):
         return Sensitivity.RESTRICTED
-    if _SENSITIVE_CONTENT.search(text):
+    if _SENSITIVE_CONTENT.search(text) or _STREET_ADDRESS_CONTENT.search(text):
         return Sensitivity.SENSITIVE
+    if _PERSONAL_CONTENT.search(text):
+        return Sensitivity.PERSONAL
     return Sensitivity.NORMAL
 
 

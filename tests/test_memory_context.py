@@ -148,6 +148,15 @@ class MemoryContextTests(unittest.TestCase):
             assert approved is not None
             self.assertIn("synthetic condition", approved)
 
+            direct = RepositoryMemoryContextProvider(repository).context_for(
+                "What do you know about Luna health?",
+                uuid4(),
+            )
+            self.assertIsNotNone(direct)
+            assert direct is not None
+            self.assertIn("synthetic condition", direct)
+            self.assertNotIn("ask-before-mentioning", direct)
+
     @staticmethod
     def _database(path: Path, audit: InMemoryAuditSink) -> EncryptedDatabase:
         return EncryptedDatabase(

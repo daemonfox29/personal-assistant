@@ -1,5 +1,27 @@
 # Learning Journal
 
+## 2026-08-26 — Saving, eligibility, and retrieval are three different gates
+
+A memory can exist in the encrypted database and still be unavailable in chat.
+First, capture decides whether a statement becomes confirmed or stays an
+unconfirmed candidate. Second, policy decides whether its sensitivity, mention
+rule, scope, and status permit use in this request. Third, retrieval must match
+the user's natural question to the eligible record. A failure at any gate can
+look like “the assistant forgot,” even though the underlying causes differ.
+
+This bug demonstrated the retrieval gate. A confirmed Scooby record matched a
+search for `Scooby`, but “what do you know about Scooby my dog?” was interpreted
+as a strict requirement that every remaining word appear in the record. The fix
+removes conversational filler, tries a precise all-term search first, and only
+then uses a bounded partial-match fallback. Policy filtering still happens before
+anything reaches the model.
+
+Automatic capture was also made more reliable without trusting model prose. The
+model may point to text that occurs in the current user message, but code expands
+that selection to the complete declarative sentence and verifies it is exact.
+Questions and model-authored paraphrases remain candidates rather than silently
+becoming facts.
+
 ## 2026-08-25 — Recovery keys and high-risk passcodes solve different problems
 
 The recovery passphrase and high-risk passcode are deliberately separate. The

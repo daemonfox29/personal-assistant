@@ -105,11 +105,13 @@ For an existing installation, the first native launch after this update asks
 for the recovery passphrase once, verifies the encrypted database, and enrolls
 automatic unlock. Later native launches proceed without that prompt. Use
 `/remember <information>` or `remember that <information>` for an explicit
-ordinary memory. Automatic analysis runs after the visible answer. An
-exact low-risk quote copied from your current message may become confirmed
-memory, but deterministic code stores only that quote—not the model's subject or
-paraphrase. Mismatched, inferred, sensitive, conflicting, or credential-like
-material remains rejected or enters the expiring candidate inbox. Review
+ordinary memory. Automatic analysis runs after the visible answer. An exact
+low-risk declarative sentence copied from your current message may become
+confirmed memory. The model may identify an exact phrase, but deterministic code
+expands it to the complete current-user sentence and stores only that sentence—
+not the model's subject or paraphrase. Questions, mismatched or inferred text,
+sensitive content, conflicts, and credential-like material remain rejected or
+enter the expiring candidate inbox. Review
 candidates through the trusted commands:
 
 ```bash
@@ -142,6 +144,13 @@ not resurrect the deleted content. In chat, `ask before mentioning` memories
 are withheld until a natural yes/no clarification, `only when directly asked`
 memories require a direct memory question, and restricted memories never enter
 model context.
+
+Natural recall removes conversational scaffolding such as “what do you know”
+before indexed matching. It first requires all meaningful terms, then uses a
+bounded partial-match fallback only when that strict search finds nothing.
+Explicit questions about a saved subject count as consent to use an applicable
+`ask before mentioning` record; incidental relevance still requires a natural
+clarification.
 
 To use encrypted daily backups, create an external destination first and set
 its absolute path before setup and every relevant run:
