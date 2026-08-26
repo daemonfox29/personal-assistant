@@ -1,5 +1,6 @@
 """Composition tests for the UI-facing application boundary."""
 
+import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
@@ -53,6 +54,31 @@ class CrossChatMemoryModel(SyntheticModel):
         return ModelResponse("synthetic response")
 
 
+class ExactEvidenceMemoryModel(SyntheticModel):
+    def generate(self, request: ModelRequest) -> ModelResponse:
+        self.requests.append(request)
+        if request.messages[0].content.startswith(
+            "Identify zero to three durable user-memory suggestions."
+        ):
+            turn = json.loads(request.messages[-1].content.split("\n", 1)[1])
+            user_text = turn["user"]
+            return ModelResponse(
+                json.dumps(
+                    [
+                        {
+                            "type": "fact",
+                            "subject": "model-authored synthetic preference",
+                            "content": "model-authored synthetic paraphrase",
+                            "evidence_quote": user_text,
+                            "sensitivity": "normal",
+                            "mention_policy": "may_mention_when_relevant",
+                        }
+                    ]
+                )
+            )
+        return ModelResponse("synthetic response")
+
+
 class SyntheticRecoveryStore:
     def __init__(self, recovery: str | None = None) -> None:
         self.recovery = recovery
@@ -72,6 +98,65 @@ class SyntheticRecoveryStore:
 
 
 class ApplicationServiceTests(unittest.TestCase):
+    def test_reopened_old_chat_receives_newer_global_memory_as_canonical(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            settings = AppSettings(
+                memory=MemorySettings(
+                    data_directory=Path(temporary_directory) / "private"
+                )
+            )
+            factory = AssistantApplicationFactory(settings)
+            factory.setup(RECOVERY, RECOVERY, PASSCODE, PASSCODE)
+            model = ExactEvidenceMemoryModel()
+            with patch(
+                "personal_assistant.application_service.OllamaModel",
+                return_value=model,
+            ):
+                service = factory.open(RECOVERY)
+                tuple(
+                    service.iter_events(
+                        "My favorite synthetic color is blue."
+                    )
+                )
+                old_chat_id = service.active_conversation_id
+                assert old_chat_id is not None
+                service.new_conversation()
+                tuple(
+                    service.iter_events(
+                        "My favorite synthetic color is green."
+                    )
+                )
+                service.open_conversation(old_chat_id)
+                tuple(
+                    service.iter_events(
+                        "What is my favorite synthetic color?"
+                    )
+                )
+                service.close()
+
+            ordinary_requests = [
+                request
+                for request in model.requests
+                if not request.messages[0].content.startswith(
+                    "Identify zero to three durable user-memory suggestions."
+                )
+            ]
+            reopened_request = ordinary_requests[-1]
+            system_context = reopened_request.messages[0].content
+            self.assertLess(
+                system_context.index("green"),
+                system_context.index("blue"),
+            )
+            self.assertIn(
+                "Confirmed memory also overrides conflicting details in earlier "
+                "chat turns",
+                system_context,
+            )
+            self.assertEqual(
+                reopened_request.messages[1].content,
+                "My favorite synthetic color is blue.",
+            )
+
     def test_explicit_recall_search_supplies_prior_chat_to_new_chat(self) -> None:
         with TemporaryDirectory() as temporary_directory:
             settings = AppSettings(

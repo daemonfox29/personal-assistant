@@ -138,6 +138,10 @@ normalization plus reviewed topic connections prevent simple wording changes
 from silently hiding an eligible record. Wider topic expansion applies only to
 direct memory questions and explicit transcript recall, not ordinary prompts.
 The hint never becomes a transcript role or bypasses mention policy.
+Retrieved confirmed memories include trusted update timestamps. A reopened
+transcript is historical context only; the later confirmed memory wins when it
+conflicts with an older turn. Timestamp-envelope overhead is included in the
+existing retrieval token bound.
 
 Private Chat stores no transcript, retrieves no persistent memory, intercepts no
 explicit-memory command, and produces no automatic memory suggestions. It still

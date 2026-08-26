@@ -203,9 +203,13 @@ Completed:
   macOS development launcher for Spotlight and Dock access to the live `uv`
   checkout. The launcher is ad-hoc signed locally, not a signed or
   self-contained release package.
-- Verified 311 tests locally with the normal performance test skipped. The
-  separate 100,000-record encrypted retrieval benchmark passed at 14.00 ms
-  median and 14.29 ms p95 over 30 queries.
+- Fixed reopened-chat precedence: confirmed memories now carry trusted update
+  timestamps in the bounded context envelope, newer conflicting memory is
+  ordered first, and the system contract makes canonical memory override stale
+  details in an older restored transcript.
+- Verified 313 tests locally with the normal performance test skipped. The
+  separate 100,000-record encrypted retrieval benchmark passed at 13.99 ms
+  median and 14.26 ms p95 over 30 queries.
 
 Next:
 

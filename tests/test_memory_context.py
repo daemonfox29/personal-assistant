@@ -1,5 +1,6 @@
 """Synthetic restart checks for policy-filtered chat memory context."""
 
+from datetime import datetime, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
@@ -155,6 +156,63 @@ class MemoryContextTests(unittest.TestCase):
             self.assertIn("synthetic gluten sensitivity", context)
             self.assertNotIn("ask-before-mentioning", context)
 
+    def test_newer_confirmed_memory_overrides_conflicting_historical_values(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            path = Path(temporary_directory) / "memory.db"
+            audit = InMemoryAuditSink()
+            database = self._database(path, audit)
+            MigrationRunner(
+                connection_provider=database,
+                migration_source=PackageMigrationSource(),
+                audit_sink=audit,
+            ).migrate(uuid4())
+            now = [datetime(2026, 1, 1, tzinfo=timezone.utc)]
+            repository = MemoryRepository(
+                connection_provider=database,
+                audit_sink=audit,
+                clock=lambda: now[0],
+            )
+            repository.create_record(
+                RecordDraft(
+                    FactPayload(
+                        "direct-statement:synthetic-old",
+                        "My favorite synthetic color is blue.",
+                    ),
+                    RecordStatus.CONFIRMED,
+                    Sensitivity.NORMAL,
+                    MentionPolicy.MAY_MENTION_WHEN_RELEVANT,
+                    Scope(ScopeType.GLOBAL),
+                ),
+                self._provenance(SourceType.TRUSTED_INTERFACE),
+                uuid4(),
+            )
+            now[0] = datetime(2026, 2, 1, tzinfo=timezone.utc)
+            repository.create_record(
+                RecordDraft(
+                    FactPayload(
+                        "direct-statement:synthetic-new",
+                        "My favorite synthetic color is green.",
+                    ),
+                    RecordStatus.CONFIRMED,
+                    Sensitivity.NORMAL,
+                    MentionPolicy.MAY_MENTION_WHEN_RELEVANT,
+                    Scope(ScopeType.GLOBAL),
+                ),
+                self._provenance(SourceType.TRUSTED_INTERFACE),
+                uuid4(),
+            )
+
+            context = RepositoryMemoryContextProvider(repository).context_for(
+                "What is my favorite synthetic color?",
+                uuid4(),
+            )
+
+            assert context is not None
+            self.assertLess(context.index("green"), context.index("blue"))
+            self.assertIn('"updated_at":"2026-02-01T00:00:00+00:00"', context)
+            self.assertIn("later updated_at", context)
+            self.assertIn("overrides conflicting details in earlier chat", context)
+
     def test_ask_before_memory_requires_natural_consent_before_content(self) -> None:
         with TemporaryDirectory() as temporary_directory:
             path = Path(temporary_directory) / "memory.db"
@@ -225,6 +283,12 @@ class MemoryContextTests(unittest.TestCase):
                 "synthetic-model-turn",
                 ActorType.MODEL_CANDIDATE,
                 "synthetic-model-v1",
+            )
+        if source_type is SourceType.TRUSTED_INTERFACE:
+            return Provenance(
+                source_type,
+                "synthetic-system-turn",
+                ActorType.SYSTEM,
             )
         return Provenance(
             source_type,

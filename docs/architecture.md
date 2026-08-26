@@ -80,7 +80,10 @@ statement as a search hint; it is not inserted as a new model role. Retrieval
 shares small deterministic singular/plural normalization across memory,
 transcript recall, and evidence binding. Direct owner recall may also expand a
 small reviewed topic table; ordinary prompts do not receive that wider fallback.
-The model never invents search terms or UI save receipts.
+Every returned confirmed entry includes a trusted repository `updated_at`
+timestamp. When retrieved values conflict, the later update is canonical and
+overrides stale details restored from an older conversation transcript. The
+model never invents search terms, timestamps, or UI save receipts.
 
 Future action flow:
 

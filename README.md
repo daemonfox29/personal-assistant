@@ -78,6 +78,9 @@ main response and commit an eligible exact low-risk sentence immediately. A
 trusted italic stage direction then reports a generic topic such as `pet` or
 `digestive health`; conflicts and uncertainty request clarification without
 overwriting confirmed data. Other turns retain the asynchronous candidate path.
+When a saved older chat is reopened, its transcript remains historical context:
+newer confirmed global memory is supplied with trusted update timestamps and
+takes precedence over conflicting details in that older dialogue.
 Direct questions use conservative singular/plural normalization plus a small
 reviewed set of deterministic topic connections, and
 referential questions such as “What was the fact I just told you?” reuse only
