@@ -32,6 +32,8 @@ class ModelRequestError(ModelError):
 def validate_response_token_limit(value: int) -> int:
     """Return a valid response limit or reject values outside the hard ceiling."""
 
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError("The response token limit must be a whole number.")
     if value <= 0:
         raise ValueError("The response token limit must be greater than zero.")
     if value > MAX_RESPONSE_TOKENS:

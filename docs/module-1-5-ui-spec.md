@@ -73,13 +73,15 @@ The first usable slice includes:
    screen fallback when the machine-local credential is absent or stale. Neither
    path loads the model until encrypted memory unlocks successfully.
 3. An explicitly labeled session-only option when memory is not configured.
-4. A streaming chat screen with bounded response-limit selection, one active
-   request at a time, plain-text rendering, fixed safe errors, and graceful
-   shutdown.
-5. Existing explicit-memory phrases and post-response candidate analysis
+4. A streaming chat screen with Enter-to-send, Shift+Enter multiline input,
+   bounded response-limit selection, one active request at a time, plain-text
+   rendering, fixed safe errors, and graceful shutdown.
+5. A settings screen that atomically persists bounded context-window, default-
+   response, and response-ceiling values for the next application launch.
+6. Existing explicit-memory phrases and post-response candidate analysis
    through the same trusted runtime used by the CLI.
 
-Memory management, candidate review, backup/restore, settings, and the bounded
+Memory management, candidate review, backup/restore, and the bounded
 audit viewer follow as additional panels over service methods. They must not be
 implemented by exposing repository objects to widgets.
 
@@ -103,6 +105,14 @@ PySide6 Addons bundle. The credential adapter rejects unknown, null, and
 plaintext backends instead of weakening to unprotected storage. New Qt modules
 or credential backends require an explicit dependency and security review.
 
+On macOS, the source-run application additionally uses the pinned PyObjC Local
+Authentication bridge to require device-owner authentication before the app
+reads Keychain. macOS may also accept a paired Apple Watch when that owner-
+authentication method is enabled. Apple rejects item-bound access controls for the unsigned
+development process, so direct Keychain-item user-presence enforcement must be
+verified after `.app` packaging and code signing. Application-level
+authentication must not be described as a malware boundary.
+
 Qt is dynamically linked through the official wheels. Distribution must retain
 the required LGPL notices and allow replacement of the Qt libraries as required
 by the applicable license. Packaged-build licensing verification is a release
@@ -122,6 +132,8 @@ gate.
 - Model output is inserted only as sanitized text with code-owned native
   formatting; model-supplied link syntax remains inert.
 - A second simultaneous request is deterministically refused.
+- Enter submits a prompt, Shift+Enter remains multiline, and settings survive a
+  restart without exceeding the fixed context and response bounds.
 - Window shutdown closes background work and memory before returning.
 - UI tests run headlessly and cover secret clearing, busy-state enforcement,
   safe errors, plain-text rendering, and shutdown.
@@ -131,7 +143,8 @@ gate.
 ## Deferred release gates
 
 - Native memory-management and backup panels.
-- Packaged `.app` creation, code signing, and click-to-launch installation.
+- Packaged `.app` creation, code signing, click-to-launch installation, and
+  direct `SecAccessControl` user-presence protection on the Keychain item.
 - Windows packaging and runtime verification, including its native credential
   backend and recovery fallback.
 - Accessibility, keyboard navigation, high-DPI, and screen-reader review.

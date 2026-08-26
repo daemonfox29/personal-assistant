@@ -86,12 +86,17 @@ The high-risk passcode authorizes one exact sensitive operation at a time; it
 cannot override a prohibited action. Failed attempts are audited and the
 lockout survives command restarts.
 
-Automatic unlock deliberately trades some local-launch protection for
-convenience. Someone already operating your unlocked OS account may be able to
-open ordinary chat and recalled memory. It does not bypass the separate
+On macOS, the native app requires Touch ID or the Mac login password through
+Apple Local Authentication before it reads the stored Keychain passphrase.
+macOS may also accept a paired Apple Watch when that owner-authentication method
+is enabled in System Settings.
+The unsigned development process cannot attach that rule directly to the
+Keychain item, so malicious code already running as the same OS user remains
+inside the current trust boundary. Binding user presence directly to the item
+is a signed-package release gate. Automatic unlock never bypasses the separate
 high-risk passcode, and copying only the data directory to another machine does
-not copy the protected credential. The command-line recovery interface continues
-to request the recovery passphrase explicitly.
+not copy the protected credential. The command-line recovery interface
+continues to request the recovery passphrase explicitly.
 
 By default, persistent files use one stable local directory:
 `~/.personal-assistant/`. The encrypted database is always
@@ -101,9 +106,10 @@ to create a replacement if it is missing. Database creation is enabled only
 inside the explicit first-run setup transaction. Set an absolute
 `PERSONAL_ASSISTANT_DATA_DIR` before first setup to choose another location.
 
-For an existing installation, the first native launch after this update asks
-for the recovery passphrase once, verifies the encrypted database, and enrolls
-automatic unlock. Later native launches proceed without that prompt. Use
+For an existing installation with an enrolled Keychain credential, native
+launches now request Touch ID or the Mac login password before automatic unlock.
+If the credential is absent or stale, the app asks for the recovery passphrase
+once, verifies the encrypted database, and re-enrolls automatic unlock. Use
 `/remember <information>` or `remember that <information>` for an explicit
 ordinary memory. Automatic analysis runs after the visible answer. An exact
 low-risk declarative sentence copied from your current message may become
@@ -111,14 +117,22 @@ confirmed memory. The model may identify an exact phrase, but deterministic code
 expands it to the complete current-user sentence and stores only that sentence—
 not the model's subject or paraphrase. Questions, mismatched or inferred text,
 sensitive content, conflicts, and credential-like material remain rejected or
-enter the expiring candidate inbox. Review
-candidates through the trusted commands:
+enter the expiring candidate inbox. Review candidates through the trusted
+commands:
 
 ```bash
 uv run --locked python -m personal_assistant.memory_admin candidates
 uv run --locked python -m personal_assistant.memory_admin confirm RECORD_ID
 uv run --locked python -m personal_assistant.memory_admin reject RECORD_ID
 ```
+
+In native chat, Enter sends the current prompt and Shift+Enter inserts a new
+line. The Settings page persists a model context window, default response limit,
+and response ceiling for the next launch. The context window is bounded to
+2,048–131,072 tokens and must retain at least 1,024 tokens for input; the
+response ceiling cannot exceed the code-enforced 2,000-token maximum. Settings
+changes are stored as non-secret versioned JSON and audited without chat or
+personal-memory content.
 
 Candidate lists show metadata only; sensitive candidate content stays hidden
 until the high-risk passcode is verified. The trusted interface also provides

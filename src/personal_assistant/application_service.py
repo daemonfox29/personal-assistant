@@ -43,6 +43,12 @@ from personal_assistant.portable_security import (
     RecoveryUnlockError,
     SecuritySetupError,
 )
+from personal_assistant.runtime_preferences import (
+    PREFERENCES_FILENAME,
+    RuntimePreferences,
+    RuntimePreferencesError,
+    RuntimePreferencesStore,
+)
 
 
 class ApplicationServiceError(RuntimeError):
@@ -54,6 +60,10 @@ class ApplicationSetupError(ApplicationServiceError):
 
 
 class ApplicationOpenError(ApplicationServiceError):
+    pass
+
+
+class ApplicationSettingsError(ApplicationServiceError):
     pass
 
 
@@ -72,6 +82,9 @@ class ApplicationLaunchState(StrEnum):
 class ApplicationSessionInfo:
     model_name: str
     persistent_memory: bool
+    default_response_tokens: int
+    long_response_tokens: int
+    maximum_response_tokens: int
     startup_notices: tuple[str, ...] = ()
 
 
@@ -156,6 +169,63 @@ class AssistantApplicationFactory:
             raise TypeError("Application factory requires a recovery credential store.")
         self._settings = settings
         self._recovery_store = recovery_store
+        self._runtime_preferences = RuntimePreferences(
+            context_tokens=settings.ollama.context_tokens,
+            default_response_tokens=settings.ollama.max_response_tokens,
+            maximum_response_tokens=settings.chat.maximum_response_tokens,
+        )
+
+    @property
+    def runtime_preferences(self) -> RuntimePreferences:
+        return self._runtime_preferences
+
+    def save_runtime_preferences(self, preferences: RuntimePreferences) -> None:
+        """Persist bounded non-secret limits for the next native launch."""
+
+        if not isinstance(preferences, RuntimePreferences):
+            raise ApplicationSettingsError("The settings values are invalid.")
+        store = RuntimePreferencesStore(
+            self._settings.memory.data_directory / PREFERENCES_FILENAME
+        )
+        correlation_id = uuid4()
+        previous: RuntimePreferences | None = None
+        try:
+            previous = store.load()
+            self._audit_runtime_preferences(
+                correlation_id,
+                preferences,
+                AuditOutcome.STARTED,
+                AuditReasonCode.NORMAL,
+            )
+            store.save(preferences)
+            self._audit_runtime_preferences(
+                correlation_id,
+                preferences,
+                AuditOutcome.SUCCEEDED,
+                AuditReasonCode.NORMAL,
+            )
+            self._runtime_preferences = preferences
+        except (AuditError, RuntimePreferencesError, ValueError) as error:
+            if not isinstance(error, AuditError):
+                try:
+                    self._audit_runtime_preferences(
+                        correlation_id,
+                        preferences,
+                        AuditOutcome.FAILED,
+                        AuditReasonCode.INVALID_CONFIGURATION,
+                    )
+                except AuditError:
+                    pass
+            try:
+                if previous is None:
+                    store.delete()
+                else:
+                    store.save(previous)
+            except RuntimePreferencesError:
+                pass
+            raise ApplicationSettingsError(
+                "The settings could not be saved safely."
+            ) from error
 
     def launch_state(self) -> ApplicationLaunchState:
         if not self._settings.memory.enabled:
@@ -320,6 +390,9 @@ class AssistantApplicationFactory:
                 ApplicationSessionInfo(
                     self._settings.ollama.model_name,
                     runtime is not None,
+                    self._settings.ollama.max_response_tokens,
+                    self._settings.chat.long_response_tokens,
+                    self._settings.chat.maximum_response_tokens,
                     tuple(notices),
                 ),
             )
@@ -447,6 +520,37 @@ class AssistantApplicationFactory:
                     AuditMetadataItem(
                         AuditMetadataKey.ACTION_KIND,
                         action_kind,
+                    ),
+                ),
+            )
+        )
+
+    def _audit_runtime_preferences(
+        self,
+        correlation_id: UUID,
+        preferences: RuntimePreferences,
+        outcome: AuditOutcome,
+        reason_code: AuditReasonCode,
+    ) -> None:
+        self._audit_sink().write(
+            AuditEvent(
+                correlation_id=correlation_id,
+                component=AuditComponent.APPLICATION,
+                operation=AuditOperation.CONFIGURATION_UPDATE,
+                outcome=outcome,
+                reason_code=reason_code,
+                metadata=(
+                    AuditMetadataItem(
+                        AuditMetadataKey.CONTEXT_TOKENS,
+                        preferences.context_tokens,
+                    ),
+                    AuditMetadataItem(
+                        AuditMetadataKey.RESPONSE_TOKENS,
+                        preferences.default_response_tokens,
+                    ),
+                    AuditMetadataItem(
+                        AuditMetadataKey.RESPONSE_CEILING,
+                        preferences.maximum_response_tokens,
                     ),
                 ),
             )

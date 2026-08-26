@@ -55,6 +55,16 @@ memory without re-entering the recovery phrase. The separate high-risk passcode
 still gates consequential operations, while an owner-held recovery copy remains
 necessary for a new computer or a lost credential-store entry.
 
+The current macOS source-run app now places Apple Local Authentication before
+the Keychain read. Touch ID or the Mac login password proves device-owner
+presence, and only then does this application request the saved recovery phrase.
+That is meaningful protection against someone casually launching the assistant,
+but it is not identical to protecting the Keychain item itself: Apple requires
+the appropriate signed-app entitlement for item-bound `SecAccessControl` in this
+environment. The packaged-app gate must add and verify that stronger binding.
+The lesson is to distinguish a guarded application path from a credential whose
+storage system independently enforces the guard.
+
 Automatic memory analysis now happens after the visible answer, so it does not
 delay the response path. Its output is treated as an untrusted proposal and can
 only enter a quarantined candidate inbox. Confirming or rejecting those proposals

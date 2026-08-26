@@ -183,6 +183,38 @@ Next:
 - Add native candidate review so the 17 existing quarantined suggestions can be
   inspected and confirmed or rejected without command-line work.
 
+### 2026-08-26 — Biometric launch gate and native runtime settings
+
+Completed:
+
+- Added native macOS device-owner authentication before the application reads
+  its stored Keychain recovery passphrase. The system accepts Touch ID or the
+  Mac login password, and may also accept a paired Apple Watch when enabled;
+  cancellation and unavailable authentication fall back to trusted recovery
+  entry before model loading.
+- Verified a real synthetic Local Authentication then Keychain read on macOS;
+  the temporary credential was deleted afterward. Apple rejected direct
+  Keychain-item access control for the unsigned development process with the
+  expected missing-entitlement status, so signed-package item binding remains
+  an explicit release gate rather than an overstated current guarantee.
+- Added Enter-to-send with Shift+Enter for multiline prompts and removed the
+  missing-font alias warning by selecting installed platform fonts explicitly.
+- Added a native settings page for a bounded context window, default response
+  limit, and response ceiling. Changes are atomically persisted for the next
+  launch, content-minimally audited, and rolled back if required auditing fails.
+- Kept the code-enforced 2,000-token response maximum and required at least
+  1,024 context tokens to remain available for input.
+- Verified 281 tests locally with the normal benchmark skip. The separate
+  100,000-record encrypted retrieval benchmark passed at 13.83 ms median and
+  14.02 ms p95 over 30 queries.
+
+Next:
+
+- Restart the app, approve the native macOS authentication prompt, and verify
+  chat opens using the existing Keychain credential.
+- Package and sign the macOS `.app`, then bind user presence directly to the
+  Keychain item before distribution.
+
 ### 2026-08-26 — Protected automatic unlock
 
 Completed:

@@ -22,8 +22,11 @@ Security and workflow boundaries should emit structured events for:
 - tool execution start and outcome;
 - automatic-unlock credential reads, verified enrollment, deletion, and safe
   fallback without the credential value or account/path identifiers;
+- bounded runtime-preference update attempts and outcomes, including only the
+  non-secret numeric context and response limits;
 - database migration and repository-operation outcomes; and
-- startup, shutdown, configuration validation, and audit-writer failures.
+- startup, shutdown, configuration validation or update, and audit-writer
+  failures.
 
 Each event should contain a UTC timestamp, event identifier, correlation
 identifier, component, operation, outcome, stable reason code, duration when

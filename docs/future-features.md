@@ -116,6 +116,10 @@ Current Module 1 defaults to preserve or expose through that future UI:
 - use protected automatic unlock for the native app after one verified recovery
   entry, with manual recovery fallback; keep Windows and Linux credential-store
   behavior unverified until their explicit platform gates pass;
+- when the macOS `.app` is signed, migrate from the current Local
+  Authentication-before-Keychain sequence to a Keychain item whose own
+  `SecAccessControl` requires user presence, then verify Touch ID and Mac-login-
+  password fallback in the packaged application;
 - do not require a separate login for ordinary conversation; require a local
   passcode or passphrase entered through the trusted interface for each exact
   high-risk operation;

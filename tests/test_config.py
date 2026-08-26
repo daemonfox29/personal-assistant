@@ -92,6 +92,10 @@ class AppSettingsTests(unittest.TestCase):
 
         self.assertEqual(settings.ollama.context_tokens, 32768)
 
+    def test_context_window_rejects_unbounded_resource_values(self) -> None:
+        with self.assertRaises(ValueError):
+            load_settings({"PERSONAL_ASSISTANT_CONTEXT_TOKENS": "131073"})
+
     def test_default_response_limit_cannot_exceed_hard_ceiling(self) -> None:
         with self.assertRaises(ValueError):
             OllamaSettings(max_response_tokens=2001)

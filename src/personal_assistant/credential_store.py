@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from hashlib import sha256
 import hmac
 from pathlib import Path
+import sys
+from threading import Event
 from typing import Protocol, runtime_checkable
 
 import keyring
@@ -22,6 +24,8 @@ _ALLOWED_BACKEND_MODULES = frozenset(
     }
 )
 _MAX_RECOVERY_SECRET_CHARS = 1_024
+_MACOS_UNLOCK_PROMPT = "Unlock encrypted Personal Assistant memory"
+_MACOS_AUTHENTICATION_TIMEOUT_SECONDS = 120.0
 
 
 class CredentialStoreError(RuntimeError):
@@ -39,6 +43,14 @@ class RecoveryCredentialStore(Protocol):
         ...
 
     def delete_recovery(self) -> None:
+        ...
+
+
+@runtime_checkable
+class MacOSUserAuthenticator(Protocol):
+    """Confirm local device-owner presence through a native macOS prompt."""
+
+    def authenticate(self, prompt: str) -> None:
         ...
 
 
@@ -61,9 +73,7 @@ class SystemRecoveryCredentialStore:
 
     @property
     def service_name(self) -> str:
-        location = str(self.data_directory.resolve(strict=False)).encode("utf-8")
-        location_id = sha256(location).hexdigest()[:24]
-        return f"personal-assistant.memory-autounlock.{location_id}"
+        return _service_name(self.data_directory)
 
     def read_recovery(self) -> str | None:
         backend = self._approved_backend()
@@ -130,3 +140,105 @@ class SystemRecoveryCredentialStore:
                 "A protected operating-system credential backend is unavailable."
             )
         return backend
+
+
+@dataclass(frozen=True)
+class MacOSUserPresenceRecoveryCredentialStore:
+    """Authenticate locally before this app reads its Keychain credential."""
+
+    data_directory: Path
+    account: str = "primary-memory-key"
+    backend: KeyringBackend | None = None
+    authenticator: MacOSUserAuthenticator | None = None
+
+    def __post_init__(self) -> None:
+        _validate_store_identity(self.data_directory, self.account)
+        if self.authenticator is not None and not isinstance(
+            self.authenticator,
+            MacOSUserAuthenticator,
+        ):
+            raise TypeError("macOS credential storage requires an authenticator.")
+
+    @property
+    def service_name(self) -> str:
+        return _service_name(self.data_directory)
+
+    def read_recovery(self) -> str | None:
+        self._authenticator().authenticate(_MACOS_UNLOCK_PROMPT)
+        return self._store().read_recovery()
+
+    def write_recovery(self, recovery_passphrase: str) -> None:
+        self._store().write_recovery(recovery_passphrase)
+
+    def delete_recovery(self) -> None:
+        self._store().delete_recovery()
+
+    def _store(self) -> SystemRecoveryCredentialStore:
+        return SystemRecoveryCredentialStore(
+            self.data_directory,
+            account=self.account,
+            backend=self.backend,
+        )
+
+    def _authenticator(self) -> MacOSUserAuthenticator:
+        return (
+            self.authenticator
+            if self.authenticator is not None
+            else _PyObjCMacOSUserAuthenticator()
+        )
+
+
+class _PyObjCMacOSUserAuthenticator:
+    """Use Touch ID or the Mac login password through Local Authentication."""
+
+    def authenticate(self, prompt: str) -> None:
+        try:
+            import LocalAuthentication  # type: ignore[import-not-found]
+        except ImportError as error:
+            raise CredentialStoreError(
+                "macOS local authentication is unavailable."
+            ) from error
+        context = LocalAuthentication.LAContext.alloc().init()
+        policy = LocalAuthentication.LAPolicyDeviceOwnerAuthentication
+        available, _ = context.canEvaluatePolicy_error_(policy, None)
+        if not available:
+            raise CredentialStoreError(
+                "Touch ID or Mac login authentication is unavailable."
+            )
+        completed = Event()
+        approved = False
+
+        def reply(success: bool, error: object) -> None:
+            nonlocal approved
+            approved = bool(success)
+            completed.set()
+
+        context.evaluatePolicy_localizedReason_reply_(policy, prompt, reply)
+        if not completed.wait(_MACOS_AUTHENTICATION_TIMEOUT_SECONDS):
+            context.invalidate()
+            raise CredentialStoreError("macOS authentication timed out.")
+        if not approved:
+            raise CredentialStoreError("macOS authentication was not approved.")
+
+
+def default_recovery_credential_store(
+    data_directory: Path,
+) -> RecoveryCredentialStore:
+    """Choose the approved protected credential backend for this platform."""
+
+    if sys.platform == "darwin":
+        return MacOSUserPresenceRecoveryCredentialStore(data_directory)
+    return SystemRecoveryCredentialStore(data_directory)
+
+
+def _validate_store_identity(data_directory: Path, account: str) -> None:
+    if not isinstance(data_directory, Path) or not data_directory.is_absolute():
+        raise ValueError("Credential storage requires an explicit data directory.")
+    if not isinstance(account, str) or not account:
+        raise ValueError("Credential storage requires a stable account label.")
+
+
+def _service_name(data_directory: Path) -> str:
+    location = str(data_directory.resolve(strict=False)).encode("utf-8")
+    location_id = sha256(location).hexdigest()[:24]
+    return f"personal-assistant.memory-autounlock.{location_id}"

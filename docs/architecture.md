@@ -43,8 +43,14 @@ display events
 The native app can retrieve the previously verified recovery secret through a
 narrow operating-system credential-store adapter. The adapter is bound to the
 configured data location, accepts only reviewed protected backends, and falls
-back to trusted recovery entry when unavailable or stale. The default
-command-line startup remains the explicit recovery path. Both supply the memory
+back to trusted recovery entry when unavailable or stale. On macOS, the native
+adapter first requires device-owner authentication through Apple Local
+Authentication, allowing Touch ID or the Mac login password, and only then asks
+Keychain for the stored recovery passphrase. The same macOS policy may accept a
+paired Apple Watch when enabled. In the unsigned development build
+this is an application-enforced sequence; a signed packaged build must move the
+user-presence rule onto the Keychain item itself. The default command-line
+startup remains the explicit recovery path. Both supply the memory
 adapter only when a safe portable manifest and existing encrypted database
 unlock successfully. A new or disabled installation follows the Module 0
 session-only path. Explicit remember instructions are intercepted before model
@@ -70,6 +76,12 @@ developer fallback over the same conversation service. Recent conversation is
 held only in RAM for the current session. System, user, and assistant messages
 remain separate data structures; history retains only complete recent turns
 within a conservative token budget.
+
+The settings widget similarly receives only bounded non-secret preference
+values. It asks the application factory to atomically persist a versioned JSON
+document and emit typed configuration events; it never receives the audit sink,
+model adapter, database, or credential store. Context and response-limit changes
+take effect when the next session is composed.
 
 Because the native widgets and application service share one Python process,
 this narrow API is a modularity and review boundary rather than a sandbox against

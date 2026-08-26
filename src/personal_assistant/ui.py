@@ -6,7 +6,14 @@ import sys
 from threading import Event
 
 from PySide6.QtCore import QObject, QThread, Qt, Signal, Slot
-from PySide6.QtGui import QColor, QCloseEvent, QFont, QTextCharFormat, QTextCursor
+from PySide6.QtGui import (
+    QColor,
+    QCloseEvent,
+    QFont,
+    QKeyEvent,
+    QTextCharFormat,
+    QTextCursor,
+)
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -19,6 +26,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
+    QSpinBox,
     QStackedWidget,
     QTextEdit,
     QVBoxLayout,
@@ -30,16 +38,38 @@ from personal_assistant.application_service import (
     ApplicationOpenError,
     ApplicationRecoveryRequired,
     ApplicationServiceError,
+    ApplicationSettingsError,
     AssistantApplicationFactory,
     AssistantApplicationService,
 )
-from personal_assistant.config import load_settings
+from personal_assistant.config import load_desktop_settings
 from personal_assistant.conversation import ConversationEvent, ConversationEventKind
-from personal_assistant.credential_store import SystemRecoveryCredentialStore
+from personal_assistant.credential_store import default_recovery_credential_store
+from personal_assistant.runtime_preferences import (
+    MAX_CONTEXT_TOKENS,
+    MIN_INPUT_TOKENS,
+    MIN_CONTEXT_TOKENS,
+    RuntimePreferences,
+    RuntimePreferencesError,
+)
 from personal_assistant.terminal_output import sanitize_terminal_text
 
 
 WINDOW_TITLE = "Personal Assistant"
+UI_FONT_FAMILY = (
+    "Helvetica Neue"
+    if sys.platform == "darwin"
+    else "Segoe UI"
+    if sys.platform == "win32"
+    else "DejaVu Sans"
+)
+CODE_FONT_FAMILY = (
+    "Menlo"
+    if sys.platform == "darwin"
+    else "Consolas"
+    if sys.platform == "win32"
+    else "DejaVu Sans Mono"
+)
 MAX_VISIBLE_MESSAGE_CHARS = 32_000
 MAX_TRANSCRIPT_BLOCKS = 2_000
 INLINE_MARKUP = re.compile(r"(\*\*[^*\n]+\*\*|`[^`\n]+`)")
@@ -184,8 +214,128 @@ class WelcomePage(QWidget):
         return field
 
 
+class MessageComposer(QPlainTextEdit):
+    """Multiline composer where Enter sends and Shift+Enter inserts a line."""
+
+    submit_requested = Signal()
+
+    def keyPressEvent(self, event: QKeyEvent) -> None:  # noqa: N802
+        if event.key() in {
+            Qt.Key.Key_Return,
+            Qt.Key.Key_Enter,
+        } and event.modifiers() in {
+            Qt.KeyboardModifier.NoModifier,
+            Qt.KeyboardModifier.KeypadModifier,
+        }:
+            self.submit_requested.emit()
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+
+class SettingsPage(QWidget):
+    save_requested = Signal(int, int, int)
+    back_requested = Signal()
+
+    def __init__(self) -> None:
+        super().__init__()
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(48, 36, 48, 36)
+        title = QLabel("Settings")
+        title.setObjectName("settingsTitle")
+        layout.addWidget(title)
+        explanation = QLabel(
+            "Adjust local model resource limits. Changes are validated, audited, "
+            "and applied the next time the app starts."
+        )
+        explanation.setWordWrap(True)
+        layout.addWidget(explanation)
+
+        card = QFrame()
+        card.setObjectName("card")
+        form = QFormLayout(card)
+        form.setContentsMargins(28, 28, 28, 28)
+        self._context_tokens = self._token_field(
+            MIN_CONTEXT_TOKENS,
+            MAX_CONTEXT_TOKENS,
+            1_024,
+        )
+        self._context_tokens.valueChanged.connect(self._context_window_changed)
+        self._default_response_tokens = self._token_field(1, 2_000, 100)
+        self._maximum_response_tokens = self._token_field(1, 2_000, 100)
+        self._maximum_response_tokens.valueChanged.connect(
+            self._response_ceiling_changed
+        )
+        form.addRow("Context window", self._context_tokens)
+        form.addRow("Default response limit", self._default_response_tokens)
+        form.addRow("Response ceiling", self._maximum_response_tokens)
+        note = QLabel(
+            "The response ceiling can be lowered but cannot exceed the project's "
+            "2,000-token safety bound. Larger context windows use more RAM."
+        )
+        note.setWordWrap(True)
+        form.addRow(note)
+        layout.addWidget(card)
+        self._result = QLabel()
+        self._result.setObjectName("settingsResult")
+        self._result.setWordWrap(True)
+        layout.addWidget(self._result)
+        buttons = QHBoxLayout()
+        back = QPushButton("Back to chat")
+        back.setObjectName("secondaryButton")
+        back.clicked.connect(self.back_requested)
+        save = QPushButton("Save settings")
+        save.clicked.connect(self._save)
+        buttons.addWidget(back)
+        buttons.addStretch()
+        buttons.addWidget(save)
+        layout.addLayout(buttons)
+        layout.addStretch()
+
+    def set_preferences(self, preferences: RuntimePreferences) -> None:
+        self._maximum_response_tokens.setValue(
+            preferences.maximum_response_tokens
+        )
+        self._default_response_tokens.setValue(
+            preferences.default_response_tokens
+        )
+        self._context_tokens.setValue(preferences.context_tokens)
+        self._result.clear()
+
+    def show_saved(self) -> None:
+        self._result.setText("Settings saved. Restart the app to apply them.")
+
+    @Slot()
+    def _save(self) -> None:
+        self.save_requested.emit(
+            self._context_tokens.value(),
+            self._default_response_tokens.value(),
+            self._maximum_response_tokens.value(),
+        )
+
+    @Slot(int)
+    def _response_ceiling_changed(self, ceiling: int) -> None:
+        self._default_response_tokens.setMaximum(ceiling)
+
+    @Slot(int)
+    def _context_window_changed(self, context_tokens: int) -> None:
+        self._maximum_response_tokens.setMaximum(
+            min(2_000, context_tokens - MIN_INPUT_TOKENS)
+        )
+
+    @staticmethod
+    def _token_field(minimum: int, maximum: int, step: int) -> QSpinBox:
+        field = QSpinBox()
+        field.setRange(minimum, maximum)
+        field.setSingleStep(step)
+        field.setGroupSeparatorShown(True)
+        field.setSuffix(" tokens")
+        return field
+
+
 class ChatPage(QWidget):
     message_requested = Signal(str, int)
+    settings_requested = Signal()
 
     def __init__(self) -> None:
         super().__init__()
@@ -198,10 +348,11 @@ class ChatPage(QWidget):
         header.addStretch()
         header.addWidget(QLabel("Response limit"))
         self._limit = QComboBox()
-        self._limit.addItem("Concise · 400", 400)
-        self._limit.addItem("Long · 1,200", 1_200)
-        self._limit.addItem("Maximum · 2,000", 2_000)
         header.addWidget(self._limit)
+        self._settings = QPushButton("Settings")
+        self._settings.setObjectName("secondaryButton")
+        self._settings.clicked.connect(self.settings_requested)
+        header.addWidget(self._settings)
         layout.addLayout(header)
 
         self._transcript = QTextEdit()
@@ -212,9 +363,12 @@ class ChatPage(QWidget):
         layout.addWidget(self._transcript, 1)
 
         composer = QHBoxLayout()
-        self._input = QPlainTextEdit()
-        self._input.setPlaceholderText("Message your assistant…")
+        self._input = MessageComposer()
+        self._input.setPlaceholderText(
+            "Message your assistant…  Enter to send · Shift+Enter for a new line"
+        )
         self._input.setMaximumHeight(110)
+        self._input.submit_requested.connect(self._submit)
         self._send = QPushButton("Send")
         self._send.setDefault(True)
         self._send.clicked.connect(self._submit)
@@ -225,14 +379,35 @@ class ChatPage(QWidget):
         self._assistant_start: int | None = None
         self._assistant_raw: list[str] = []
 
-    def configure_session(self, model_name: str, persistent_memory: bool) -> None:
+    def configure_session(
+        self,
+        model_name: str,
+        persistent_memory: bool,
+        default_response_tokens: int,
+        long_response_tokens: int,
+        maximum_response_tokens: int,
+    ) -> None:
         memory_text = "encrypted memory" if persistent_memory else "session only"
         self._status.setText(f"{model_name} · {memory_text}")
+        self._limit.clear()
+        choices = (
+            ("Default", default_response_tokens),
+            ("Long", long_response_tokens),
+            ("Maximum", maximum_response_tokens),
+        )
+        seen: set[int] = set()
+        for label, limit in choices:
+            if limit in seen:
+                continue
+            self._limit.addItem(f"{label} · {limit:,}", limit)
+            seen.add(limit)
+        self._limit.setCurrentIndex(0)
 
     def set_busy(self, busy: bool) -> None:
         self._input.setEnabled(not busy)
         self._send.setEnabled(not busy)
         self._limit.setEnabled(not busy)
+        self._settings.setEnabled(not busy)
         if not busy:
             self._input.setFocus()
 
@@ -292,6 +467,7 @@ class ChatPage(QWidget):
         role_format.setForeground(QColor(color))
         role_format.setFontWeight(QFont.Weight.DemiBold)
         role_format.setFontPointSize(11)
+        role_format.setFontFamilies([UI_FONT_FAMILY])
         self._append_with_format(f"{label}\n", role_format)
 
     def _append_plain(self, text: str, *, italic: bool = False) -> None:
@@ -369,7 +545,7 @@ class ChatPage(QWidget):
                 token_format.setFontWeight(QFont.Weight.Bold)
                 cursor.insertText(token[2:-2], token_format)
             else:
-                token_format.setFontFixedPitch(True)
+                token_format.setFontFamilies([CODE_FONT_FAMILY])
                 token_format.setBackground(QColor("#292f3a"))
                 token_format.setForeground(QColor("#d8e2ff"))
                 cursor.insertText(token[1:-1], token_format)
@@ -381,6 +557,7 @@ class ChatPage(QWidget):
         body_format = QTextCharFormat()
         body_format.setForeground(QColor("#e8eaf0"))
         body_format.setFontPointSize(14)
+        body_format.setFontFamilies([UI_FONT_FAMILY])
         return body_format
 
 
@@ -490,8 +667,10 @@ class AssistantWindow(QMainWindow):
         self._pages = QStackedWidget()
         self._welcome = WelcomePage()
         self._chat = ChatPage()
+        self._settings = SettingsPage()
         self._pages.addWidget(self._welcome)
         self._pages.addWidget(self._chat)
+        self._pages.addWidget(self._settings)
         self.setCentralWidget(self._pages)
 
         self._welcome.setup_requested.connect(self._start_setup)
@@ -501,6 +680,9 @@ class AssistantWindow(QMainWindow):
         self._welcome.unlock_requested.connect(self._start_unlock)
         self._welcome.session_only_requested.connect(self._start_session_only)
         self._chat.message_requested.connect(self._start_message)
+        self._chat.settings_requested.connect(self._show_settings)
+        self._settings.save_requested.connect(self._save_settings)
+        self._settings.back_requested.connect(self._return_to_chat)
         self._apply_styles()
         launch_state: ApplicationLaunchState | None = None
         try:
@@ -564,6 +746,9 @@ class AssistantWindow(QMainWindow):
         self._chat.configure_session(
             service.info.model_name,
             service.info.persistent_memory,
+            service.info.default_response_tokens,
+            service.info.long_response_tokens,
+            service.info.maximum_response_tokens,
         )
         for notice in service.info.startup_notices:
             self._chat.apply_event(
@@ -634,6 +819,35 @@ class AssistantWindow(QMainWindow):
             self._chat.set_busy(False)
         self._finish_close_if_ready()
 
+    @Slot()
+    def _show_settings(self) -> None:
+        self._settings.set_preferences(self._factory.runtime_preferences)
+        self._pages.setCurrentWidget(self._settings)
+
+    @Slot(int, int, int)
+    def _save_settings(
+        self,
+        context_tokens: int,
+        default_response_tokens: int,
+        maximum_response_tokens: int,
+    ) -> None:
+        try:
+            preferences = RuntimePreferences(
+                context_tokens=context_tokens,
+                default_response_tokens=default_response_tokens,
+                maximum_response_tokens=maximum_response_tokens,
+            )
+            self._factory.save_runtime_preferences(preferences)
+        except (ValueError, ApplicationSettingsError) as error:
+            self._show_safe_error(str(error))
+            return
+        self._settings.show_saved()
+
+    @Slot()
+    def _return_to_chat(self) -> None:
+        self._pages.setCurrentWidget(self._chat)
+        self._chat.set_busy(False)
+
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802
         self._closing = True
         self.hide()
@@ -665,9 +879,10 @@ class AssistantWindow(QMainWindow):
             QWidget { background: #111318; color: #e8eaf0; font-size: 14px; }
             QLabel { background: transparent; }
             #welcomeTitle { font-size: 30px; font-weight: 650; margin: 8px; }
+            #settingsTitle { font-size: 26px; font-weight: 650; margin: 8px; }
             #card { background: #1b1f27; border: 1px solid #303744;
                     border-radius: 14px; max-width: 620px; }
-            QLineEdit, QPlainTextEdit, QTextEdit, QComboBox {
+            QLineEdit, QPlainTextEdit, QTextEdit, QComboBox, QSpinBox {
                 background: #151820; border: 1px solid #394150;
                 border-radius: 8px; padding: 8px; selection-background-color: #526cff;
             }
@@ -690,18 +905,17 @@ def main() -> int:
     app = QApplication(sys.argv)
     app.setApplicationName(WINDOW_TITLE)
     app.setOrganizationName("Personal Assistant")
-    application_font = app.font()
-    application_font.setPointSize(13)
+    application_font = QFont(UI_FONT_FAMILY, 13)
     app.setFont(application_font)
     try:
-        settings = load_settings()
+        settings = load_desktop_settings()
         factory = AssistantApplicationFactory(
             settings,
-            recovery_store=SystemRecoveryCredentialStore(
+            recovery_store=default_recovery_credential_store(
                 settings.memory.data_directory
             ),
         )
-    except (ValueError, ApplicationServiceError):
+    except (ValueError, ApplicationServiceError, RuntimePreferencesError):
         QMessageBox.critical(
             None,
             WINDOW_TITLE,

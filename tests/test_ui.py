@@ -5,7 +5,9 @@ import unittest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PySide6.QtCore import Qt  # noqa: E402
 from PySide6.QtGui import QCloseEvent, QFont  # noqa: E402
+from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication, QLineEdit  # noqa: E402
 
 from personal_assistant.application_service import ApplicationLaunchState  # noqa: E402
@@ -13,13 +15,21 @@ from personal_assistant.conversation import (  # noqa: E402
     ConversationEvent,
     ConversationEventKind,
 )
-from personal_assistant.ui import AssistantWindow, ChatPage, WelcomePage  # noqa: E402
+from personal_assistant.runtime_preferences import RuntimePreferences  # noqa: E402
+from personal_assistant.ui import (  # noqa: E402
+    AssistantWindow,
+    ChatPage,
+    SettingsPage,
+    UI_FONT_FAMILY,
+    WelcomePage,
+)
 
 
 class NativeUiTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls.app = QApplication.instance() or QApplication([])
+        cls.app.setFont(QFont(UI_FONT_FAMILY, 13))
 
     def test_setup_fields_are_masked_and_cleared_before_signal_returns(self) -> None:
         page = WelcomePage()
@@ -98,6 +108,43 @@ class NativeUiTests(unittest.TestCase):
 
         self.assertEqual(sent, [])
         self.assertIn("too large for the interface", page.transcript_text())
+
+    def test_enter_submits_and_shift_enter_inserts_a_newline(self) -> None:
+        page = ChatPage()
+        page.configure_session("synthetic", False, 400, 1_200, 2_000)
+        sent: list[tuple[str, int]] = []
+        page.message_requested.connect(lambda text, limit: sent.append((text, limit)))
+        QTest.keyClicks(page._input, "first line")
+
+        QTest.keyClick(
+            page._input,
+            Qt.Key.Key_Return,
+            Qt.KeyboardModifier.ShiftModifier,
+        )
+
+        self.assertEqual(sent, [])
+        self.assertIn("\n", page._input.toPlainText())
+        page._input.insertPlainText("second line")
+        QTest.keyClick(page._input, Qt.Key.Key_Return)
+        self.assertEqual(sent, [("first line\nsecond line", 400)])
+        self.assertEqual(page._input.toPlainText(), "")
+
+    def test_settings_page_emits_validated_bounded_values(self) -> None:
+        page = SettingsPage()
+        page.set_preferences(
+            RuntimePreferences(
+                context_tokens=32_768,
+                default_response_tokens=800,
+                maximum_response_tokens=1_600,
+            )
+        )
+        saved: list[tuple[int, int, int]] = []
+        page.save_requested.connect(lambda *values: saved.append(values))
+
+        page._save()
+
+        self.assertEqual(saved, [(32_768, 800, 1_600)])
+        self.assertEqual(page._maximum_response_tokens.maximum(), 2_000)
 
     def test_busy_chat_prevents_a_second_visible_submission(self) -> None:
         page = ChatPage()

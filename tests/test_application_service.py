@@ -10,11 +10,16 @@ from personal_assistant.application_service import (
     ApplicationLaunchState,
     ApplicationOpenError,
     ApplicationRecoveryRequired,
+    ApplicationSettingsError,
     ApplicationSetupError,
     AssistantApplicationFactory,
 )
 from personal_assistant.config import AppSettings, MemorySettings
 from personal_assistant.model import ModelRequest, ModelResponse
+from personal_assistant.runtime_preferences import (
+    RuntimePreferences,
+    RuntimePreferencesStore,
+)
 
 
 RECOVERY = "synthetic application recovery"
@@ -48,6 +53,54 @@ class SyntheticRecoveryStore:
 
 
 class ApplicationServiceTests(unittest.TestCase):
+    def test_runtime_preferences_are_persisted_and_audited(self) -> None:
+        with TemporaryDirectory() as directory:
+            data_directory = Path(directory) / "private"
+            factory = AssistantApplicationFactory(
+                AppSettings(memory=MemorySettings(data_directory=data_directory))
+            )
+            preferences = RuntimePreferences(
+                context_tokens=32_768,
+                default_response_tokens=800,
+                maximum_response_tokens=1_600,
+            )
+
+            factory.save_runtime_preferences(preferences)
+
+            self.assertEqual(factory.runtime_preferences, preferences)
+            self.assertEqual(
+                RuntimePreferencesStore(
+                    data_directory / "preferences.json"
+                ).load(),
+                preferences,
+            )
+            audit = (data_directory / "audit.jsonl").read_text(encoding="utf-8")
+            self.assertIn('"operation":"configuration_update"', audit)
+            self.assertIn('"context_tokens":32768', audit)
+
+    def test_audit_failure_rolls_back_runtime_preferences(self) -> None:
+        with TemporaryDirectory() as directory:
+            data_directory = Path(directory) / "private"
+            factory = AssistantApplicationFactory(
+                AppSettings(memory=MemorySettings(data_directory=data_directory))
+            )
+
+            with patch.object(
+                factory,
+                "_audit_runtime_preferences",
+                side_effect=(None, AuditWriteError("synthetic audit failure")),
+            ):
+                with self.assertRaises(ApplicationSettingsError):
+                    factory.save_runtime_preferences(
+                        RuntimePreferences(context_tokens=32_768)
+                    )
+
+            self.assertIsNone(
+                RuntimePreferencesStore(
+                    data_directory / "preferences.json"
+                ).load()
+            )
+
     def test_setup_reports_only_whitelisted_actionable_input_errors(self) -> None:
         cases = (
             (
