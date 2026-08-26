@@ -158,9 +158,11 @@ complete; the batched Linux pull-request check is its final platform gate.
 - [x] Module 1.5 conversation experience: add code-owned appearance controls,
   automatic encrypted transcript persistence, continuable sidebar history,
   Private Chat, deletion, and graceful shutdown finalization.
-- [ ] Module 1.5 owner controls: add native candidate review, memory management,
-  backup/restore, bounded audit viewing, and settings without exposing authority
-  objects to widgets.
+- [x] Module 1.5 owner controls: add a compact native memory inventory, exact
+  source navigation for newly linked chat memories, and audited soft deletion
+  without exposing authority objects to widgets.
+- [ ] Module 1.5 owner controls: add pagination, native candidate reconciliation,
+  backup/restore, and bounded audit viewing.
 - [ ] Module 1.5 release gates: package and sign the macOS app, complete
   accessibility review, and verify packaged recovery and shutdown. Keep Windows
   packaging and runtime verification as a required later gate.
@@ -168,6 +170,33 @@ complete; the batched Linux pull-request check is its final platform gate.
 - [ ] Add a web/search tool only behind the tool registry and approval layer.
 
 ## Session history
+
+### 2026-08-26 — Native memory inventory and exact source navigation
+
+Completed:
+
+- Added a compact Settings memory table with stable broad categories, local
+  search, value/kind/status/update columns, source navigation, and individual
+  audited soft deletion. Widgets receive immutable bounded rows rather than
+  repository or database objects.
+- Linked newly created chat-derived memories to the exact opaque encrypted user
+  message ID. View source resolves the ID directly, opens the correct saved
+  conversation, and highlights the exact sequence even when text is duplicated.
+- Preserved deletion honesty: removing a chat cascades its source messages, so
+  the memory remains but source lookup returns a fixed deleted-or-unavailable
+  error. Older/imported memories report that they predate source links instead
+  of using text similarity.
+- Kept memory deletion recoverable: the row leaves ordinary retrieval while its
+  revision history and content-free audit event remain.
+- Verified all 330 local tests under the locked `uv` environment; one opt-in
+  performance test remained skipped.
+
+Next:
+
+- Add native pagination beyond the initial newest-100 inventory, candidate
+  reconciliation, backup/restore, and bounded audit viewing.
+- Run a native manual check that creates a new fact, opens its source, deletes
+  its chat, and verifies the unavailable-source message.
 
 ### 2026-08-26 — Tentative observation layer
 

@@ -52,7 +52,13 @@ from personal_assistant.portable_security import (
 class ExplicitMemoryHandler(Protocol):
     """Handle a user instruction intercepted before model submission."""
 
-    def remember(self, content: str, correlation_id: UUID) -> str:
+    def remember(
+        self,
+        content: str,
+        correlation_id: UUID,
+        *,
+        source_ref: str | None = None,
+    ) -> str:
         """Return a fixed user-facing outcome without echoing content."""
 
 
@@ -158,7 +164,13 @@ class MemoryRuntime:
             key_provider.close()
             raise
 
-    def remember(self, content: str, correlation_id: UUID) -> str:
+    def remember(
+        self,
+        content: str,
+        correlation_id: UUID,
+        *,
+        source_ref: str | None = None,
+    ) -> str:
         """Persist one explicit low-risk fact or return a safe fixed outcome."""
 
         normalized = " ".join(content.split())
@@ -172,7 +184,7 @@ class MemoryRuntime:
                     Sensitivity.NORMAL,
                     MentionPolicy.MAY_MENTION_WHEN_RELEVANT,
                     Scope(ScopeType.GLOBAL),
-                    f"turn:{correlation_id}",
+                    source_ref or f"turn:{correlation_id}",
                 ),
                 correlation_id,
             )

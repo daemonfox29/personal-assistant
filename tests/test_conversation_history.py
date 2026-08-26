@@ -9,6 +9,7 @@ from uuid import uuid4
 from personal_assistant.audit import AuditWriteError, InMemoryAuditSink
 from personal_assistant.conversation_history import (
     ConversationHistoryError,
+    ConversationNotFoundError,
     ConversationHistoryRepository,
     ConversationResponseMessage,
     ConversationRole,
@@ -124,6 +125,45 @@ class ConversationHistoryTests(unittest.TestCase):
             ).fetchone()[0]
         self.assertEqual(count, 0)
         self.assertEqual(search_count, 0)
+
+    def test_message_reference_resolves_exact_source_then_fails_after_delete(
+        self,
+    ) -> None:
+        reference = self.repository.begin_turn_with_reference(
+            None,
+            "My synthetic source statement",
+            uuid4(),
+        )
+        self.repository.finish_turn(
+            reference.conversation_id,
+            (
+                ConversationResponseMessage(
+                    ConversationRole.ASSISTANT,
+                    "Synthetic response",
+                ),
+            ),
+            uuid4(),
+        )
+
+        source = self.repository.load_message_source(reference.message_id, uuid4())
+
+        self.assertEqual(
+            source.conversation.summary.conversation_id,
+            reference.conversation_id,
+        )
+        self.assertEqual(source.source_sequence, reference.sequence)
+        self.assertEqual(
+            next(
+                message.content
+                for message in source.conversation.messages
+                if message.sequence == source.source_sequence
+            ),
+            "My synthetic source statement",
+        )
+
+        self.repository.delete_conversation(reference.conversation_id, uuid4())
+        with self.assertRaises(ConversationNotFoundError):
+            self.repository.load_message_source(reference.message_id, uuid4())
 
     def test_explicit_search_returns_bounded_prior_conversation_neighborhood(self) -> None:
         prior_id = self.repository.begin_turn(

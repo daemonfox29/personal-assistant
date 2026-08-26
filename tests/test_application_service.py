@@ -5,6 +5,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
+from uuid import uuid4
 
 from personal_assistant.audit import AuditWriteError
 from personal_assistant.application_service import (
@@ -14,6 +15,7 @@ from personal_assistant.application_service import (
     ApplicationSettingsError,
     ApplicationSetupError,
     AssistantApplicationFactory,
+    MemorySourceUnavailableError,
 )
 from personal_assistant.config import AppSettings, MemorySettings
 from personal_assistant.model import ModelRequest, ModelResponse
@@ -84,6 +86,118 @@ class SyntheticRecoveryStore:
 
 
 class ApplicationServiceTests(unittest.TestCase):
+    def test_memory_inventory_opens_exact_source_and_reports_deleted_chat(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            settings = AppSettings(
+                memory=MemorySettings(
+                    data_directory=Path(temporary_directory) / "private"
+                )
+            )
+            factory = AssistantApplicationFactory(settings)
+            factory.setup(RECOVERY, RECOVERY, PASSCODE, PASSCODE)
+            with patch(
+                "personal_assistant.application_service.OllamaModel",
+                return_value=SyntheticModel(),
+            ):
+                service = factory.open(RECOVERY)
+                tuple(
+                    service.iter_events(
+                        "My name is Synthetic Source Person."
+                    )
+                )
+                inventory = service.list_memories()
+                self.assertEqual(len(inventory), 1)
+                self.assertIn("Synthetic Source Person", inventory[0].value)
+
+                source = service.open_memory_source(inventory[0].record_id)
+                source_message = next(
+                    message
+                    for message in source.conversation.messages
+                    if message.sequence == source.source_sequence
+                )
+                self.assertEqual(
+                    source_message.content,
+                    "My name is Synthetic Source Person.",
+                )
+
+                service.delete_conversation(
+                    source.conversation.summary.conversation_id
+                )
+                with self.assertRaisesRegex(
+                    MemorySourceUnavailableError,
+                    "deleted or is unavailable",
+                ):
+                    service.open_memory_source(inventory[0].record_id)
+                service.close()
+
+    def test_settings_delete_soft_deletes_memory_from_inventory(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            settings = AppSettings(
+                memory=MemorySettings(
+                    data_directory=Path(temporary_directory) / "private"
+                )
+            )
+            factory = AssistantApplicationFactory(settings)
+            factory.setup(RECOVERY, RECOVERY, PASSCODE, PASSCODE)
+            with patch(
+                "personal_assistant.application_service.OllamaModel",
+                return_value=SyntheticModel(),
+            ):
+                service = factory.open(RECOVERY)
+                tuple(service.iter_events("My dog is Synthetic Table Scooby."))
+                memory = service.list_memories()[0]
+
+                service.delete_memory(memory.record_id)
+
+                self.assertEqual(service.list_memories(), ())
+                history = service._runtime.repository.get_record_history(
+                    memory.record_id,
+                    uuid4(),
+                )
+                self.assertEqual(history[-1].status.value, "deleted")
+                service.close()
+
+    def test_tentative_observation_links_to_the_exact_completed_chat_message(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            settings = AppSettings(
+                memory=MemorySettings(
+                    data_directory=Path(temporary_directory) / "private"
+                )
+            )
+            factory = AssistantApplicationFactory(settings)
+            factory.setup(RECOVERY, RECOVERY, PASSCODE, PASSCODE)
+            with patch(
+                "personal_assistant.application_service.OllamaModel",
+                return_value=SyntheticObservationModel(),
+            ):
+                service = factory.open(RECOVERY)
+                original = "Lately synthetic interruptions have felt draining."
+                tuple(service.iter_events(original))
+                service.new_conversation()
+                tuple(
+                    service.iter_events(
+                        "How have synthetic interruptions affected me?"
+                    )
+                )
+                observation = next(
+                    item
+                    for item in service.list_memories()
+                    if item.kind == "insight"
+                )
+
+                source = service.open_memory_source(observation.record_id)
+
+                self.assertEqual(
+                    next(
+                        message.content
+                        for message in source.conversation.messages
+                        if message.sequence == source.source_sequence
+                    ),
+                    original,
+                )
+                service.close()
     def test_new_chat_receives_tentative_observation_without_overwriting_fact(
         self,
     ) -> None:

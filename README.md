@@ -191,6 +191,18 @@ response ceiling cannot exceed the code-enforced 2,000-token maximum. Settings
 changes are stored as non-secret versioned JSON and audited without chat or
 personal-memory content.
 
+The same Settings page includes a compact, searchable memory table with broad
+category filters, saved value, kind, status, update date, **View source**, and
+**Delete**. It uses the already unlocked encrypted session without asking for a
+second credential. New chat-derived memories link to the exact opaque saved
+message ID: View source opens that conversation and highlights the originating
+turn. If the chat or message was deleted, the app reports that the source is
+unavailable; memories created before source linking or by trusted imports report
+that limitation rather than guessing from similar text. Delete removes a memory
+from normal use through a recoverable revision and records a content-free audit
+event. The first table load remains bounded to the newest 100 records; native
+pagination is still required before larger inventories.
+
 The native app commits a user message before generation and commits completed
 assistant output before reporting completion. If the window is closed during a
 response, it remains visible in a disabled “finishing and saving” state until

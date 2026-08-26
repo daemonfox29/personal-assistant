@@ -27,6 +27,7 @@ from personal_assistant.conversation import (
 )
 from personal_assistant.conversation_history import (
     ConversationHistoryError,
+    ConversationNotFoundError,
     ConversationHistoryRepository,
     ConversationResponseMessage,
     ConversationRole,
@@ -46,6 +47,19 @@ from personal_assistant.memory_analyzer import (
     PostResponseMemoryWorker,
 )
 from personal_assistant.memory_runtime import MemoryRuntime
+from personal_assistant.memory_repository import MemoryRecord
+from personal_assistant.memory_types import (
+    ActorType,
+    EventPayload,
+    FactPayload,
+    InsightPayload,
+    NotePayload,
+    PolicyPreferencePayload,
+    PreferencePayload,
+    Provenance,
+    RecordStatus,
+    SourceType,
+)
 from personal_assistant.ollama_adapter import OllamaModel
 from personal_assistant.model import (
     MalformedModelResponseError,
@@ -87,6 +101,10 @@ class ApplicationRecoveryRequired(ApplicationOpenError):
     """Automatic unlock was unavailable, so trusted recovery entry is needed."""
 
 
+class MemorySourceUnavailableError(ApplicationOpenError):
+    """A memory has no resolvable live saved-message provenance."""
+
+
 class ApplicationLaunchState(StrEnum):
     SETUP_REQUIRED = "setup_required"
     AUTOMATIC_UNLOCK = "automatic_unlock"
@@ -103,6 +121,22 @@ class ApplicationSessionInfo:
     maximum_response_tokens: int
     history_available: bool = False
     startup_notices: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class MemoryInventoryItem:
+    record_id: UUID
+    category: str
+    value: str
+    kind: str
+    status: str
+    updated_at: str
+
+
+@dataclass(frozen=True)
+class MemorySourceLocation:
+    conversation: StoredConversation
+    source_sequence: int
 
 
 class AssistantApplicationService:
@@ -186,14 +220,17 @@ class AssistantApplicationService:
             persist = repository is not None and not self._private_chat
             allow_persistent_memory = not self._private_chat
             active_id = self._active_conversation_id
+        source_ref: str | None = None
         correlation_id = uuid4()
         if persist:
             try:
-                active_id = repository.begin_turn(
+                turn_reference = repository.begin_turn_with_reference(
                     active_id,
                     user_text,
                     correlation_id,
                 )
+                active_id = turn_reference.conversation_id
+                source_ref = f"message:{turn_reference.message_id}"
             except ConversationHistoryError as error:
                 raise ApplicationOpenError(
                     "This message was not sent because conversation history could "
@@ -247,6 +284,10 @@ class AssistantApplicationService:
             max_response_tokens=max_response_tokens,
             allow_persistent_memory=allow_persistent_memory,
             conversation_recall_context=recall_context,
+            memory_source_ref=source_ref,
+            memory_correlation_id=(
+                correlation_id if source_ref is not None else None
+            ),
         ):
             if event.kind is ConversationEventKind.ASSISTANT_CHUNK:
                 assistant_parts.append(event.text)
@@ -388,6 +429,198 @@ class AssistantApplicationService:
             with self._lock:
                 self._active_conversation_id = None
                 self._private_chat = False
+
+    def list_memories(self) -> tuple[MemoryInventoryItem, ...]:
+        """Return a bounded trusted-UI inventory from the unlocked runtime."""
+
+        with self._lock:
+            if self._closed:
+                raise ApplicationOpenError("This assistant session is closed.")
+            runtime = self._runtime
+        if runtime is None:
+            return ()
+        try:
+            records = runtime.repository.list_records(uuid4())
+            return tuple(
+                self._memory_inventory_item(record)
+                for record in records
+                if record.status
+                in {
+                    RecordStatus.CONFIRMED,
+                    RecordStatus.CANDIDATE,
+                    RecordStatus.ARCHIVED,
+                }
+            )
+        except Exception as error:
+            raise ApplicationOpenError(
+                "Saved memories could not be listed safely."
+            ) from error
+
+    def delete_memory(self, record_id: UUID) -> None:
+        """Soft-delete one memory from ordinary retrieval with an audit revision."""
+
+        with self._lock:
+            if self._closed:
+                raise ApplicationOpenError("This assistant session is closed.")
+            runtime = self._runtime
+        if runtime is None:
+            raise ApplicationOpenError("Saved memories require encrypted memory.")
+        correlation_id = uuid4()
+        try:
+            record = runtime.repository.inspect_record(record_id, correlation_id)
+            runtime.repository.delete_record(
+                record.record_id,
+                record.row_version,
+                Provenance(
+                    SourceType.TRUSTED_INTERFACE,
+                    "settings-memory-delete",
+                    ActorType.USER,
+                ),
+                correlation_id,
+            )
+        except Exception as error:
+            raise ApplicationOpenError(
+                "The selected memory could not be deleted safely."
+            ) from error
+
+    def open_memory_source(self, record_id: UUID) -> MemorySourceLocation:
+        """Open the exact saved message linked by revision provenance."""
+
+        with self._lock:
+            if self._closed:
+                raise ApplicationOpenError("This assistant session is closed.")
+            runtime = self._runtime
+            history_repository = self._conversation_history
+        if runtime is None or history_repository is None:
+            raise MemorySourceUnavailableError(
+                "Memory sources require encrypted saved conversations."
+            )
+        correlation_id = uuid4()
+        try:
+            revisions = runtime.repository.get_record_history(
+                record_id,
+                correlation_id,
+            )
+        except Exception as error:
+            raise ApplicationOpenError(
+                "The selected memory could not be inspected safely."
+            ) from error
+        source_ref = next(
+            (
+                revision.provenance.source_ref
+                for revision in reversed(revisions)
+                if revision.provenance.source_ref.startswith("message:")
+            ),
+            None,
+        )
+        if source_ref is None:
+            raise MemorySourceUnavailableError(
+                "This memory predates source links or came from a trusted import "
+                "or administrative action."
+            )
+        try:
+            message_id = UUID(source_ref.removeprefix("message:"))
+            source = history_repository.load_message_source(
+                message_id,
+                correlation_id,
+            )
+            self._conversation.replace_history(
+                source.conversation.completed_turns(),
+                wait_for_memory=True,
+            )
+        except (ValueError, ConversationNotFoundError) as error:
+            raise MemorySourceUnavailableError(
+                "The source conversation or message was deleted or is unavailable."
+            ) from error
+        except (ConversationHistoryError, RuntimeError, TypeError) as error:
+            raise ApplicationOpenError(
+                "The memory source could not be opened safely."
+            ) from error
+        with self._lock:
+            self._active_conversation_id = source.conversation.summary.conversation_id
+            self._private_chat = False
+        return MemorySourceLocation(source.conversation, source.source_sequence)
+
+    @staticmethod
+    def _memory_inventory_item(record: MemoryRecord) -> MemoryInventoryItem:
+        payload = record.revision.payload
+        if isinstance(payload, FactPayload):
+            value = payload.statement
+            category = AssistantApplicationService._memory_category(value)
+        elif isinstance(payload, PreferencePayload):
+            value = payload.preference
+            category = "Preferences & routines"
+        elif isinstance(payload, EventPayload):
+            value = payload.summary
+            category = "Places & events"
+        elif isinstance(payload, InsightPayload):
+            value = payload.observation
+            category = "Observations"
+        elif isinstance(payload, NotePayload):
+            value = f"{payload.title}: {payload.body}"
+            category = "Notes & projects"
+        elif isinstance(payload, PolicyPreferencePayload):
+            value = payload.subject
+            category = "Memory controls"
+        else:  # pragma: no cover - typed repository exhaustiveness guard
+            raise TypeError("Memory payload kind is not supported by the UI.")
+        return MemoryInventoryItem(
+            record.record_id,
+            category,
+            value,
+            record.kind.value,
+            record.status.value,
+            record.updated_at.date().isoformat(),
+        )
+
+    @staticmethod
+    def _memory_category(value: str) -> str:
+        """Place facts in a small stable UI category without a model call."""
+
+        text = value.casefold()
+        if any(
+            term in text
+            for term in (
+                " dog ",
+                " cat ",
+                " pet ",
+                " partner ",
+                " spouse ",
+                " family ",
+            )
+        ):
+            return "People & pets"
+        if any(
+            term in text
+            for term in (
+                "health",
+                "allerg",
+                "sensitiv",
+                "intoleran",
+                "diet",
+                "medical",
+                "wellbeing",
+            )
+        ):
+            return "Health & wellbeing"
+        if any(
+            term in text
+            for term in ("project", "goal", "build", "career", "plan")
+        ):
+            return "Projects & goals"
+        if any(
+            term in text
+            for term in (
+                "live in",
+                "located",
+                "city",
+                "state",
+                "country",
+                "event",
+            )
+        ):
+            return "Places & events"
+        return "About me"
 
     def close(self) -> None:
         with self._lock:

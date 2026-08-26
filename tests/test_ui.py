@@ -10,9 +10,12 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtCore import Qt  # noqa: E402
 from PySide6.QtGui import QCloseEvent, QFont  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
-from PySide6.QtWidgets import QApplication, QLineEdit  # noqa: E402
+from PySide6.QtWidgets import QApplication, QLineEdit, QPushButton  # noqa: E402
 
-from personal_assistant.application_service import ApplicationLaunchState  # noqa: E402
+from personal_assistant.application_service import (  # noqa: E402
+    ApplicationLaunchState,
+    MemoryInventoryItem,
+)
 from personal_assistant.conversation import (  # noqa: E402
     ConversationEvent,
     ConversationEventKind,
@@ -180,6 +183,50 @@ class NativeUiTests(unittest.TestCase):
         )
         self.assertEqual(page._maximum_response_tokens.maximum(), 2_000)
 
+    def test_settings_memory_table_is_compact_filterable_and_emits_row_actions(
+        self,
+    ) -> None:
+        page = SettingsPage()
+        first_id = uuid4()
+        second_id = uuid4()
+        page.set_memories(
+            (
+                MemoryInventoryItem(
+                    first_id,
+                    "People & pets",
+                    "Luna likes synthetic rope toys",
+                    "preference",
+                    "confirmed",
+                    "2026-08-26",
+                ),
+                MemoryInventoryItem(
+                    second_id,
+                    "Observations",
+                    "Synthetic schedule changes may be draining",
+                    "insight",
+                    "candidate",
+                    "2026-08-25",
+                ),
+            )
+        )
+        source_requests: list[str] = []
+        delete_requests: list[str] = []
+        page.memory_source_requested.connect(source_requests.append)
+        page.memory_delete_requested.connect(delete_requests.append)
+
+        self.assertEqual(page._memory_table.rowCount(), 2)
+        self.assertEqual(page._memory_table.item(0, 1).text(), "Luna likes synthetic rope toys")
+        page._memory_search.setText("schedule")
+        self.assertTrue(page._memory_table.isRowHidden(0))
+        self.assertFalse(page._memory_table.isRowHidden(1))
+
+        actions = page._memory_table.cellWidget(1, 5)
+        buttons = actions.findChildren(QPushButton)
+        buttons[0].click()
+        buttons[1].click()
+        self.assertEqual(source_requests, [str(second_id)])
+        self.assertEqual(delete_requests, [str(second_id)])
+
     def test_sidebar_selects_and_renders_a_structured_saved_conversation(self) -> None:
         page = ChatPage()
         conversation_id = uuid4()
@@ -213,6 +260,52 @@ class NativeUiTests(unittest.TestCase):
         self.assertEqual(selected, [str(conversation_id)])
         self.assertIn("Who is Scooby?", page.transcript_text())
         self.assertIn("Scooby is your dog.", page.transcript_text())
+
+    def test_source_navigation_highlights_exact_message_sequence(self) -> None:
+        page = ChatPage()
+        summary = ConversationSummary(
+            uuid4(),
+            "Synthetic source chat",
+            datetime(2026, 1, 1, tzinfo=timezone.utc),
+        )
+        conversation = StoredConversation(
+            summary,
+            (
+                StoredConversationMessage(
+                    ConversationRole.USER,
+                    "Repeated synthetic text",
+                    1,
+                ),
+                StoredConversationMessage(
+                    ConversationRole.ASSISTANT,
+                    "Synthetic first response",
+                    2,
+                ),
+                StoredConversationMessage(
+                    ConversationRole.USER,
+                    "Repeated synthetic text",
+                    3,
+                ),
+                StoredConversationMessage(
+                    ConversationRole.ASSISTANT,
+                    "Synthetic second response",
+                    4,
+                ),
+            ),
+        )
+
+        page.show_stored_conversation(conversation, highlight_sequence=3)
+
+        selections = page._transcript.extraSelections()
+        self.assertEqual(len(selections), 1)
+        self.assertIn(
+            "Repeated synthetic text",
+            selections[0].cursor.selectedText(),
+        )
+        self.assertIn(
+            "Synthetic second response",
+            page.transcript_text(),
+        )
 
     def test_busy_chat_prevents_a_second_visible_submission(self) -> None:
         page = ChatPage()

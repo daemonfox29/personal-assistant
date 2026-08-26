@@ -86,10 +86,15 @@ The first usable slice includes:
    confirmed permanent deletion from the live database.
 7. Existing explicit-memory phrases and post-response candidate analysis
    through the same trusted runtime used by the CLI.
+8. A compact memory inventory in Settings, grouped by a small stable category
+   filter rather than one permanent panel per entity. Each row shows the saved
+   value, kind, status, update date, source navigation, and audited soft-delete
+   control through immutable application-service values.
 
-Memory management, candidate review, backup/restore, and the bounded
-audit viewer follow as additional panels over service methods. They must not be
-implemented by exposing repository objects to widgets.
+Candidate confirmation/rejection, backup/restore, pagination beyond the initial
+bounded inventory, and the bounded audit viewer follow as additional panels over
+service methods. They must not be implemented by exposing repository objects to
+widgets.
 
 ## Conversation-history retention amendment
 
@@ -117,6 +122,17 @@ most three matching conversations with at most four nearby user/assistant
 messages each in a token-bounded, untrusted-data JSON envelope. Ordinary prompts
 do not search transcripts. Database reads are bounded; very large archives
 require future pagination even though the full rows remain stored.
+
+New memory revisions created from saved chat input use the exact opaque
+`conversation_messages.message_id` as provenance. **View source** resolves that
+identifier directly, opens the owning conversation, and highlights the exact
+message sequence without searching by personal text. Deleting a conversation
+cascades its messages, so the memory remains but source navigation returns a
+fixed deleted-or-unavailable error. Older memories and trusted imports without a
+message identifier report that they predate source links; the app never guesses
+a source from matching words. Memory deletion is a recoverable lifecycle
+transition that removes the row from normal retrieval while preserving revision
+history and a content-free audit event.
 
 Confirmed low-risk memories remain global rather than transcript-scoped. When a
 new or saved chat replaces active RAM history, its first persistent-memory
@@ -232,6 +248,12 @@ gate.
 - Explicit prior-chat recall returns only bounded nearby transcript excerpts in
   an untrusted-data envelope; ordinary prompts and Private Chat cannot use it.
 - Private Chat creates no transcript or memory activity.
+- The Settings inventory displays compact memory rows through immutable service
+  values; deleting one removes it from normal retrieval while preserving its
+  audited revision history.
+- New chat-derived memories open and highlight their exact source message;
+  deleted, unavailable, imported, and pre-source-link origins fail with fixed
+  safe errors and never use text similarity as provenance.
 - Permanent deletion removes live transcript rows, audits no content, and warns
   that encrypted backups retain data until snapshot expiry.
 - Window shutdown closes background work and memory before returning.

@@ -46,6 +46,17 @@ tables are not canonical memory and are not searched by ordinary memory
 retrieval. Selecting one conversation restores only its newest complete turns
 through the existing token-bounded RAM context.
 
+For new chat-derived memory, the provenance `source_ref` contains the opaque
+saved user-message ID, not its content. The trusted application service can
+resolve that ID to one live conversation and exact sequence for source
+navigation; widgets receive only an immutable conversation plus the sequence to
+highlight. Conversation deletion cascades the source message and intentionally
+leaves a dangling non-secret provenance reference, producing a fixed unavailable
+outcome. Older/imported memories without this reference are never matched back
+to transcripts by text. The Settings memory table similarly receives bounded
+immutable inventory rows and invokes narrow source/delete methods rather than
+repository handles.
+
 The native app can retrieve the previously verified recovery secret through a
 narrow operating-system credential-store adapter. The adapter is bound to the
 configured data location, accepts only reviewed protected backends, and falls

@@ -124,6 +124,15 @@ class ConversationSummary:
 
 
 @dataclass(frozen=True)
+class ConversationMessageReference:
+    """Opaque link from one just-persisted user message to later provenance."""
+
+    conversation_id: UUID
+    message_id: UUID
+    sequence: int
+
+
+@dataclass(frozen=True)
 class StoredConversationMessage:
     role: ConversationRole
     content: str
@@ -165,6 +174,12 @@ class StoredConversation:
 
 
 @dataclass(frozen=True)
+class StoredConversationSource:
+    conversation: StoredConversation
+    source_sequence: int
+
+
+@dataclass(frozen=True)
 class ConversationRecallMatch:
     """One bounded transcript neighborhood returned by encrypted search."""
 
@@ -199,6 +214,20 @@ class ConversationHistoryRepository:
         correlation_id: UUID,
     ) -> UUID:
         """Durably append a user message, creating its conversation if needed."""
+
+        return self.begin_turn_with_reference(
+            conversation_id,
+            user_text,
+            correlation_id,
+        ).conversation_id
+
+    def begin_turn_with_reference(
+        self,
+        conversation_id: UUID | None,
+        user_text: str,
+        correlation_id: UUID,
+    ) -> ConversationMessageReference:
+        """Append a user message and return only its opaque persisted location."""
 
         content = self._validated_content(user_text)
         active_id = self._new_id() if conversation_id is None else conversation_id
@@ -272,7 +301,11 @@ class ConversationHistoryRepository:
             raise ConversationHistoryError(
                 "Conversation history could not be saved safely."
             ) from error
-        return active_id
+        return ConversationMessageReference(
+            active_id,
+            UUID(message_id),
+            sequence,
+        )
 
     def finish_turn(
         self,
@@ -508,6 +541,56 @@ class ConversationHistoryRepository:
             self._failed_audit(correlation_id, "conversation_load", started)
             raise ConversationHistoryError(
                 "Conversation history could not be read safely."
+            ) from error
+
+    def load_message_source(
+        self,
+        message_id: UUID,
+        correlation_id: UUID,
+    ) -> StoredConversationSource:
+        """Resolve one provenance message without searching or guessing by text."""
+
+        self._require_uuid(message_id)
+        started = self._start_audit(correlation_id, "conversation_source_load")
+        try:
+            with self._connections.connect(correlation_id) as connection:
+                row = connection.execute(
+                    "SELECT m.conversation_id, m.sequence "
+                    "FROM conversation_messages m JOIN conversations c "
+                    "ON c.conversation_id = m.conversation_id "
+                    "WHERE m.message_id = ? AND m.role = 'user' "
+                    "AND c.archived = 0",
+                    (str(message_id),),
+                ).fetchone()
+            if row is None:
+                raise ConversationNotFoundError(
+                    "The source conversation or message was not found."
+                )
+            conversation = self.load_conversation(UUID(row[0]), correlation_id)
+            if not any(
+                message.sequence == int(row[1])
+                for message in conversation.messages
+            ):
+                raise ConversationNotFoundError(
+                    "The source message is outside the retained conversation view."
+                )
+            result = StoredConversationSource(conversation, int(row[1]))
+            self._finish_audit(
+                correlation_id,
+                "conversation_source_load",
+                AuditOutcome.SUCCEEDED,
+                AuditReasonCode.NORMAL,
+                started,
+                1,
+            )
+            return result
+        except ConversationHistoryError:
+            self._failed_audit(correlation_id, "conversation_source_load", started)
+            raise
+        except Exception as error:
+            self._failed_audit(correlation_id, "conversation_source_load", started)
+            raise ConversationHistoryError(
+                "The memory source could not be read safely."
             ) from error
 
     def delete_conversation(

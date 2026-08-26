@@ -466,10 +466,18 @@ class PostResponseMemoryWorker:
         )
         self._thread.start()
 
-    def submit(self, user_text: str, assistant_text: str) -> bool:
+    def submit(
+        self,
+        user_text: str,
+        assistant_text: str,
+        *,
+        source_ref: str | None = None,
+        correlation_id: UUID | None = None,
+    ) -> bool:
         """Queue without blocking; return false when one newer turn cannot fit."""
 
-        turn_id = uuid4()
+        turn_id = correlation_id or uuid4()
+        resolved_source_ref = source_ref or f"turn:{turn_id}"
         if self._cancelled.is_set():
             self._safe_emit(
                 turn_id,
@@ -483,7 +491,7 @@ class PostResponseMemoryWorker:
                     _CompletedTurn(
                         user_text,
                         assistant_text,
-                        f"turn:{turn_id}",
+                        resolved_source_ref,
                         turn_id,
                     )
                 )
@@ -498,7 +506,13 @@ class PostResponseMemoryWorker:
             return False
         return True
 
-    def capture_before_response(self, user_text: str) -> tuple[str, ...] | None:
+    def capture_before_response(
+        self,
+        user_text: str,
+        *,
+        source_ref: str | None = None,
+        correlation_id: UUID | None = None,
+    ) -> tuple[str, ...] | None:
         """Synchronously commit clear direct facts and return trusted UI notices.
 
         ``None`` means the deterministic gate did not select this message, so the
@@ -508,8 +522,8 @@ class PostResponseMemoryWorker:
         selected = _direct_memory_statements(user_text, include_uncertain=True)
         if self._cancelled.is_set() or not selected:
             return None
-        correlation_id = uuid4()
-        source_ref = f"turn:{correlation_id}"
+        correlation_id = correlation_id or uuid4()
+        source_ref = source_ref or f"turn:{correlation_id}"
         clear_statements = clear_direct_memory_statements(user_text)
         uncertain_statements = tuple(
             sentence

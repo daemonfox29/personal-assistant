@@ -29,15 +29,34 @@ from personal_assistant.terminal_output import sanitize_terminal_text
 
 
 class ExplicitMemoryHandler(Protocol):
-    def remember(self, content: str, correlation_id: UUID) -> str:
+    def remember(
+        self,
+        content: str,
+        correlation_id: UUID,
+        *,
+        source_ref: str | None = None,
+    ) -> str:
         """Store an explicit memory through a trusted deterministic boundary."""
 
 
 class PostResponseWorker(Protocol):
-    def capture_before_response(self, user_text: str) -> tuple[str, ...] | None:
+    def capture_before_response(
+        self,
+        user_text: str,
+        *,
+        source_ref: str | None = None,
+        correlation_id: UUID | None = None,
+    ) -> tuple[str, ...] | None:
         """Commit a clear direct memory and return fixed notices when selected."""
 
-    def submit(self, user_text: str, assistant_text: str) -> bool:
+    def submit(
+        self,
+        user_text: str,
+        assistant_text: str,
+        *,
+        source_ref: str | None = None,
+        correlation_id: UUID | None = None,
+    ) -> bool:
         """Queue one completed turn without blocking visible output."""
 
     def wait_until_idle(self, timeout_seconds: float = 15.0) -> bool:
@@ -109,6 +128,8 @@ class ConversationService:
         max_response_tokens: int | None = None,
         allow_persistent_memory: bool = True,
         conversation_recall_context: str | None = None,
+        memory_source_ref: str | None = None,
+        memory_correlation_id: UUID | None = None,
     ) -> Iterator[ConversationEvent]:
         """Yield sanitized events for one request without concurrent generation."""
 
@@ -148,7 +169,11 @@ class ConversationService:
                 memory_handoff_query = self._memory_handoff_query
                 self._memory_handoff_query = None
             explicit_result = (
-                self._handle_explicit_memory(user_text)
+                self._handle_explicit_memory(
+                    user_text,
+                    source_ref=memory_source_ref,
+                    correlation_id=memory_correlation_id,
+                )
                 if allow_persistent_memory
                 else None
             )
@@ -167,7 +192,11 @@ class ConversationService:
                     yield ConversationEvent(ConversationEventKind.NOTICE, prepared)
                 return
             pre_response_memory = (
-                self._capture_pre_response_memory(prepared.user_text)
+                self._capture_pre_response_memory(
+                    prepared.user_text,
+                    source_ref=memory_source_ref,
+                    correlation_id=memory_correlation_id,
+                )
                 if allow_persistent_memory
                 else None
             )
@@ -213,10 +242,18 @@ class ConversationService:
                     if pre_response_memory is not None:
                         self._last_completed_user_text = prepared.user_text
                     else:
-                        accepted = self._post_response_worker.submit(
-                            prepared.user_text,
-                            response_text,
-                        )
+                        if memory_source_ref is None:
+                            accepted = self._post_response_worker.submit(
+                                prepared.user_text,
+                                response_text,
+                            )
+                        else:
+                            accepted = self._post_response_worker.submit(
+                                prepared.user_text,
+                                response_text,
+                                source_ref=memory_source_ref,
+                                correlation_id=memory_correlation_id,
+                            )
                         self._last_completed_user_text = (
                             prepared.user_text if accepted else None
                         )
@@ -281,6 +318,9 @@ class ConversationService:
     def _capture_pre_response_memory(
         self,
         user_text: str,
+        *,
+        source_ref: str | None,
+        correlation_id: UUID | None,
     ) -> tuple[str, ...] | None:
         worker = self._post_response_worker
         if worker is None:
@@ -289,7 +329,15 @@ class ConversationService:
         if not callable(capture):
             return None
         try:
-            result = capture(user_text)
+            result = (
+                capture(user_text)
+                if source_ref is None
+                else capture(
+                    user_text,
+                    source_ref=source_ref,
+                    correlation_id=correlation_id,
+                )
+            )
         except Exception:
             return (
                 "Memory not saved: personal information. Memory processing "
@@ -303,7 +351,13 @@ class ConversationService:
             return None
         return result
 
-    def _handle_explicit_memory(self, prompt: str) -> str | None:
+    def _handle_explicit_memory(
+        self,
+        prompt: str,
+        *,
+        source_ref: str | None,
+        correlation_id: UUID | None,
+    ) -> str | None:
         if self._explicit_memory_handler is None:
             return None
         stripped = prompt.strip()
@@ -317,7 +371,17 @@ class ConversationService:
             content = stripped[len("remember that ") :].strip()
         if content is None:
             return None
-        return self._explicit_memory_handler.remember(content, uuid4())
+        memory_correlation_id = correlation_id or uuid4()
+        if source_ref is None:
+            return self._explicit_memory_handler.remember(
+                content,
+                memory_correlation_id,
+            )
+        return self._explicit_memory_handler.remember(
+            content,
+            memory_correlation_id,
+            source_ref=source_ref,
+        )
 
     def _prepare_turn(
         self,

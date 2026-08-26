@@ -19,6 +19,7 @@ from PySide6.QtGui import (
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
+    QHeaderView,
     QFormLayout,
     QFrame,
     QHBoxLayout,
@@ -30,6 +31,8 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
+    QTableWidget,
+    QTableWidgetItem,
     QSpinBox,
     QSplitter,
     QStackedWidget,
@@ -46,6 +49,7 @@ from personal_assistant.application_service import (
     ApplicationSettingsError,
     AssistantApplicationFactory,
     AssistantApplicationService,
+    MemoryInventoryItem,
 )
 from personal_assistant.config import load_desktop_settings
 from personal_assistant.conversation import ConversationEvent, ConversationEventKind
@@ -269,6 +273,8 @@ class MessageComposer(QPlainTextEdit):
 
 class SettingsPage(QWidget):
     save_requested = Signal(int, int, int, str, str, int)
+    memory_source_requested = Signal(str)
+    memory_delete_requested = Signal(str)
     back_requested = Signal()
 
     def __init__(self) -> None:
@@ -324,6 +330,44 @@ class SettingsPage(QWidget):
         note.setWordWrap(True)
         form.addRow(note)
         layout.addWidget(card)
+
+        memory_heading = QHBoxLayout()
+        memory_heading.addWidget(QLabel("Saved memories"))
+        memory_heading.addStretch()
+        self._memory_category = QComboBox()
+        self._memory_category.addItem("All categories")
+        self._memory_category.currentTextChanged.connect(
+            self._filter_memory_rows
+        )
+        self._memory_search = QLineEdit()
+        self._memory_search.setPlaceholderText("Search memories")
+        self._memory_search.setClearButtonEnabled(True)
+        self._memory_search.textChanged.connect(self._filter_memory_rows)
+        memory_heading.addWidget(self._memory_category)
+        memory_heading.addWidget(self._memory_search)
+        layout.addLayout(memory_heading)
+
+        self._memory_table = QTableWidget(0, 6)
+        self._memory_table.setHorizontalHeaderLabels(
+            ("Category", "Memory", "Type", "Status", "Updated", "Actions")
+        )
+        self._memory_table.setEditTriggers(
+            QTableWidget.EditTrigger.NoEditTriggers
+        )
+        self._memory_table.setSelectionBehavior(
+            QTableWidget.SelectionBehavior.SelectRows
+        )
+        self._memory_table.setAlternatingRowColors(True)
+        self._memory_table.verticalHeader().setVisible(False)
+        header = self._memory_table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        for column in (2, 3, 4, 5):
+            header.setSectionResizeMode(
+                column,
+                QHeaderView.ResizeMode.ResizeToContents,
+            )
+        layout.addWidget(self._memory_table, 1)
         self._result = QLabel()
         self._result.setObjectName("settingsResult")
         self._result.setWordWrap(True)
@@ -338,7 +382,6 @@ class SettingsPage(QWidget):
         buttons.addStretch()
         buttons.addWidget(save)
         layout.addLayout(buttons)
-        layout.addStretch()
 
     def set_preferences(self, preferences: RuntimePreferences) -> None:
         self._maximum_response_tokens.setValue(
@@ -358,6 +401,68 @@ class SettingsPage(QWidget):
             "Settings saved. Appearance is applied now; model limits apply after "
             "restart."
         )
+
+    def set_memories(self, memories: tuple[MemoryInventoryItem, ...]) -> None:
+        self._memory_table.setRowCount(0)
+        categories = sorted({memory.category for memory in memories})
+        selected_category = self._memory_category.currentText()
+        self._memory_category.blockSignals(True)
+        self._memory_category.clear()
+        self._memory_category.addItem("All categories")
+        self._memory_category.addItems(categories)
+        category_index = self._memory_category.findText(selected_category)
+        self._memory_category.setCurrentIndex(max(0, category_index))
+        self._memory_category.blockSignals(False)
+        for memory in memories:
+            row = self._memory_table.rowCount()
+            self._memory_table.insertRow(row)
+            values = (
+                memory.category,
+                sanitize_terminal_text(memory.value),
+                memory.kind.replace("_", " ").title(),
+                memory.status.title(),
+                memory.updated_at,
+            )
+            for column, value in enumerate(values):
+                item = QTableWidgetItem(value)
+                item.setData(Qt.ItemDataRole.UserRole, str(memory.record_id))
+                self._memory_table.setItem(row, column, item)
+            actions = QWidget()
+            action_layout = QHBoxLayout(actions)
+            action_layout.setContentsMargins(0, 0, 0, 0)
+            action_layout.setSpacing(6)
+            source = QPushButton("View source")
+            source.setObjectName("tableAction")
+            source.clicked.connect(
+                lambda _checked=False, identifier=str(memory.record_id):
+                self.memory_source_requested.emit(identifier)
+            )
+            delete = QPushButton("Delete")
+            delete.setObjectName("tableDeleteAction")
+            delete.clicked.connect(
+                lambda _checked=False, identifier=str(memory.record_id):
+                self.memory_delete_requested.emit(identifier)
+            )
+            action_layout.addWidget(source)
+            action_layout.addWidget(delete)
+            self._memory_table.setCellWidget(row, 5, actions)
+        self._memory_table.resizeRowsToContents()
+        self._filter_memory_rows()
+
+    @Slot()
+    def _filter_memory_rows(self) -> None:
+        category = self._memory_category.currentText()
+        query = self._memory_search.text().strip().casefold()
+        for row in range(self._memory_table.rowCount()):
+            row_category = self._memory_table.item(row, 0).text()
+            searchable = " ".join(
+                self._memory_table.item(row, column).text()
+                for column in range(5)
+            ).casefold()
+            visible = (
+                category == "All categories" or row_category == category
+            ) and (not query or query in searchable)
+            self._memory_table.setRowHidden(row, not visible)
 
     @Slot()
     def _save(self) -> None:
@@ -614,9 +719,16 @@ class ChatPage(QWidget):
             else f"{self._base_status} · new conversation"
         )
 
-    def show_stored_conversation(self, conversation: StoredConversation) -> None:
+    def show_stored_conversation(
+        self,
+        conversation: StoredConversation,
+        *,
+        highlight_sequence: int | None = None,
+    ) -> None:
         self._reset_transcript()
+        highlight_range: tuple[int, int] | None = None
         for message in conversation.messages:
+            start = self._transcript.textCursor().position()
             if message.role is ConversationRole.USER:
                 self.append_user(message.content)
             elif message.role is ConversationRole.ASSISTANT:
@@ -631,6 +743,25 @@ class ChatPage(QWidget):
                 self.apply_event(
                     ConversationEvent(ConversationEventKind.NOTICE, message.content)
                 )
+            if message.sequence == highlight_sequence:
+                highlight_range = (
+                    start,
+                    self._transcript.textCursor().position(),
+                )
+        if highlight_range is not None:
+            cursor = QTextCursor(self._transcript.document())
+            cursor.setPosition(highlight_range[0])
+            cursor.setPosition(
+                highlight_range[1],
+                QTextCursor.MoveMode.KeepAnchor,
+            )
+            selection = QTextEdit.ExtraSelection()
+            selection.cursor = cursor
+            selection.format.setBackground(QColor("#ffe28a"))
+            selection.format.setForeground(QColor("#202124"))
+            self._transcript.setExtraSelections([selection])
+            self._transcript.setTextCursor(cursor)
+            self._transcript.ensureCursorVisible()
         self._status.setText(self._base_status)
 
     def set_appearance(
@@ -1022,6 +1153,8 @@ class AssistantWindow(QMainWindow):
         self._chat.conversation_requested.connect(self._open_conversation)
         self._chat.delete_requested.connect(self._delete_conversation)
         self._settings.save_requested.connect(self._save_settings)
+        self._settings.memory_source_requested.connect(self._open_memory_source)
+        self._settings.memory_delete_requested.connect(self._delete_memory)
         self._settings.back_requested.connect(self._return_to_chat)
         QApplication.instance().styleHints().colorSchemeChanged.connect(
             self._system_theme_changed
@@ -1168,7 +1301,59 @@ class AssistantWindow(QMainWindow):
     @Slot()
     def _show_settings(self) -> None:
         self._settings.set_preferences(self._factory.runtime_preferences)
+        if self._service is not None:
+            try:
+                self._settings.set_memories(self._service.list_memories())
+            except ApplicationOpenError as error:
+                self._show_safe_error(str(error))
+                return
         self._pages.setCurrentWidget(self._settings)
+
+    @Slot(str)
+    def _open_memory_source(self, identifier: str) -> None:
+        if self._service is None or self._chat_thread is not None:
+            return
+        try:
+            source = self._service.open_memory_source(UUID(identifier))
+        except (ValueError, ApplicationOpenError) as error:
+            message = (
+                str(error)
+                if isinstance(error, ApplicationOpenError)
+                else "The selected memory identifier is invalid."
+            )
+            self._show_safe_error(message)
+            return
+        self._chat.show_stored_conversation(
+            source.conversation,
+            highlight_sequence=source.source_sequence,
+        )
+        self._pages.setCurrentWidget(self._chat)
+        self._refresh_history()
+
+    @Slot(str)
+    def _delete_memory(self, identifier: str) -> None:
+        if self._service is None or self._chat_thread is not None:
+            return
+        answer = QMessageBox.question(
+            self,
+            WINDOW_TITLE,
+            "Delete this memory from normal use? Its revision history and the "
+            "audited deletion event will remain available for recovery.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            self._service.delete_memory(UUID(identifier))
+            self._settings.set_memories(self._service.list_memories())
+        except (ValueError, ApplicationOpenError) as error:
+            message = (
+                str(error)
+                if isinstance(error, ApplicationOpenError)
+                else "The selected memory identifier is invalid."
+            )
+            self._show_safe_error(message)
 
     @Slot(int, int, int, str, str, int)
     def _save_settings(
