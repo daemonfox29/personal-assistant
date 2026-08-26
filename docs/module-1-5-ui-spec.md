@@ -54,6 +54,7 @@ AssistantApplicationService
     |
     +-- ConversationService -> model adapter
     +-- MemoryRuntime -> encrypted repository and retrieval
+    +-- ConversationHistoryRepository -> encrypted transcript tables
     +-- PasscodeApprovalGate -> exact one-use authorization
     +-- typed audit boundaries
 ```
@@ -77,13 +78,50 @@ The first usable slice includes:
    bounded response-limit selection, one active request at a time, plain-text
    rendering, fixed safe errors, and graceful shutdown.
 5. A settings screen that atomically persists bounded context-window, default-
-   response, and response-ceiling values for the next application launch.
-6. Existing explicit-memory phrases and post-response candidate analysis
+   response, response-ceiling, code-owned system/light/dark theme, installed
+   font-family, and font-size values. Version-one preferences migrate to safe
+   appearance defaults.
+6. An encrypted conversation sidebar with automatic saving, deterministic local
+   titles, new-chat and Private Chat controls, reopen-and-continue behavior, and
+   confirmed permanent deletion from the live database.
+7. Existing explicit-memory phrases and post-response candidate analysis
    through the same trusted runtime used by the CLI.
 
 Memory management, candidate review, backup/restore, and the bounded
 audit viewer follow as additional panels over service methods. They must not be
 implemented by exposing repository objects to widgets.
+
+## Conversation-history retention amendment
+
+Conversation history is an archive, not persistent memory. Complete transcript
+content is stored in dedicated `conversations` and `conversation_messages`
+tables inside the existing SQLCipher database. Sidebar list and transcript-load
+operations return immutable bounded values through `AssistantApplicationService`;
+widgets never receive repository or connection objects.
+
+The user message commits before model generation begins. Assistant content and
+fixed notices commit synchronously before the completed event reaches the UI.
+Closing the window waits for an active generation worker to finish persistence,
+then closes the conversation service and encrypted runtime. Forced process
+termination, operating-system failure, or hardware loss cannot be given the same
+graceful-shutdown guarantee, but the already-committed user message remains.
+
+Opening a saved conversation restores only complete user/assistant exchanges to
+the existing token-bounded RAM context. Notices and unanswered prompts remain
+visible but cannot become model roles. Listing other conversations never loads
+their content into RAM or model context. Database reads are bounded; very large
+archives require future pagination even though the full rows remain stored.
+
+Private Chat stores no transcript, retrieves no persistent memory, intercepts no
+explicit-memory command, and produces no automatic memory suggestions. It still
+uses bounded in-RAM turns for continuity until a different conversation starts
+or the process exits.
+
+Permanent deletion cascades through live transcript rows and emits content-free
+audit outcomes. An encrypted backup may retain the deleted rows until that
+snapshot expires under normal backup retention; the confirmation dialog states
+this limitation. Search, archive, retention timers, and immediate cryptographic
+erasure across old snapshots are deferred.
 
 ## Resource and responsiveness rules
 
@@ -91,8 +129,9 @@ implemented by exposing repository objects to widgets.
 - Only one chat generation may run per application session.
 - Inputs, output accumulation, session history, persistent context, and response
   tokens retain their existing hard bounds.
-- Closing the window stops accepting work, cancels future candidate persistence,
-  closes the memory runtime, and releases application-owned key references.
+- Closing the window stops accepting work, waits for active transcript
+  finalization, cancels future candidate persistence, closes the memory runtime,
+  and releases application-owned key references.
 - No hidden retry loop, web server, browser runtime, telemetry, or background
   network service is introduced by the UI.
 
@@ -134,6 +173,16 @@ gate.
 - A second simultaneous request is deterministically refused.
 - Enter submits a prompt, Shift+Enter remains multiline, and settings survive a
   restart without exceeding the fixed context and response bounds.
+- System/light/dark theme, installed-font selection, and bounded global font size
+  survive restart without accepting model-authored stylesheets.
+- Saved user messages commit before generation; completed assistant output
+  commits before the UI reports completion; a graceful close waits for this
+  boundary before releasing database keys.
+- A saved conversation reopens with structured roles and continues through the
+  same bounded context engine. Other sidebar entries consume no model context.
+- Private Chat creates no transcript or memory activity.
+- Permanent deletion removes live transcript rows, audits no content, and warns
+  that encrypted backups retain data until snapshot expiry.
 - Window shutdown closes background work and memory before returning.
 - UI tests run headlessly and cover secret clearing, busy-state enforcement,
   safe errors, plain-text rendering, and shutdown.

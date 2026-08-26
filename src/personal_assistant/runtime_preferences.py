@@ -1,6 +1,7 @@
 """Validated non-secret preferences persisted for the native application."""
 
 from dataclasses import dataclass
+from enum import StrEnum
 import json
 import os
 from pathlib import Path
@@ -10,12 +11,21 @@ from tempfile import mkstemp
 from personal_assistant.model import validate_response_token_limit
 
 
-PREFERENCES_VERSION = 1
+PREFERENCES_VERSION = 2
 PREFERENCES_FILENAME = "preferences.json"
 MIN_CONTEXT_TOKENS = 2_048
 MAX_CONTEXT_TOKENS = 131_072
 MIN_INPUT_TOKENS = 1_024
 MAX_PREFERENCES_BYTES = 4_096
+MIN_UI_FONT_SIZE = 11
+MAX_UI_FONT_SIZE = 24
+MAX_FONT_FAMILY_CHARS = 128
+
+
+class ThemePreference(StrEnum):
+    SYSTEM = "system"
+    LIGHT = "light"
+    DARK = "dark"
 
 
 class RuntimePreferencesError(RuntimeError):
@@ -29,6 +39,9 @@ class RuntimePreferences:
     context_tokens: int = 16_384
     default_response_tokens: int = 400
     maximum_response_tokens: int = 2_000
+    theme: ThemePreference = ThemePreference.SYSTEM
+    font_family: str = "system"
+    font_size: int = 13
 
     def __post_init__(self) -> None:
         if (
@@ -49,6 +62,21 @@ class RuntimePreferences:
             raise ValueError(
                 "The context window must reserve at least 1,024 tokens for input."
             )
+        if not isinstance(self.theme, ThemePreference):
+            raise ValueError("The interface theme is invalid.")
+        if (
+            not isinstance(self.font_family, str)
+            or not self.font_family
+            or len(self.font_family) > MAX_FONT_FAMILY_CHARS
+            or any(ord(character) < 32 for character in self.font_family)
+        ):
+            raise ValueError("The interface font is invalid.")
+        if (
+            isinstance(self.font_size, bool)
+            or not isinstance(self.font_size, int)
+            or not MIN_UI_FONT_SIZE <= self.font_size <= MAX_UI_FONT_SIZE
+        ):
+            raise ValueError("The interface font size is outside its range.")
 
 
 @dataclass(frozen=True)
@@ -88,24 +116,39 @@ class RuntimePreferencesStore:
             finally:
                 if descriptor >= 0:
                     os.close(descriptor)
-            if not isinstance(payload, dict) or set(payload) != {
+            if not isinstance(payload, dict):
+                raise RuntimePreferencesError("The preferences file is invalid.")
+            version = payload.get("version")
+            if isinstance(version, bool) or version not in {1, PREFERENCES_VERSION}:
+                raise RuntimePreferencesError(
+                    "The preferences version is not supported."
+                )
+            version_one_keys = {
                 "context_tokens",
                 "default_response_tokens",
                 "maximum_response_tokens",
                 "version",
-            }:
-                raise RuntimePreferencesError("The preferences file is invalid.")
-            if (
-                isinstance(payload["version"], bool)
-                or payload["version"] != PREFERENCES_VERSION
+            }
+            version_two_keys = version_one_keys | {
+                "theme",
+                "font_family",
+                "font_size",
+            }
+            if set(payload) != (
+                version_one_keys if version == 1 else version_two_keys
             ):
-                raise RuntimePreferencesError(
-                    "The preferences version is not supported."
-                )
+                raise RuntimePreferencesError("The preferences file is invalid.")
             return RuntimePreferences(
                 context_tokens=payload["context_tokens"],
                 default_response_tokens=payload["default_response_tokens"],
                 maximum_response_tokens=payload["maximum_response_tokens"],
+                theme=(
+                    ThemePreference.SYSTEM
+                    if version == 1
+                    else ThemePreference(payload["theme"])
+                ),
+                font_family=("system" if version == 1 else payload["font_family"]),
+                font_size=(13 if version == 1 else payload["font_size"]),
             )
         except RuntimePreferencesError:
             raise
@@ -127,6 +170,9 @@ class RuntimePreferencesStore:
                     "context_tokens": preferences.context_tokens,
                     "default_response_tokens": preferences.default_response_tokens,
                     "maximum_response_tokens": preferences.maximum_response_tokens,
+                    "theme": preferences.theme.value,
+                    "font_family": preferences.font_family,
+                    "font_size": preferences.font_size,
                     "version": PREFERENCES_VERSION,
                 },
                 sort_keys=True,

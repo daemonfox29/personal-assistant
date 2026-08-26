@@ -14,6 +14,7 @@ from personal_assistant.backup import (
     EncryptedBackupManager,
 )
 from personal_assistant.config import MemorySettings
+from personal_assistant.conversation_history import ConversationHistoryRepository
 from personal_assistant.encrypted_database import (
     EncryptedDatabase,
     EncryptedDatabaseSettings,
@@ -64,6 +65,7 @@ class MemoryRuntime:
     audit_sink: AuditSink
     database: EncryptedDatabase
     repository: MemoryRepository
+    conversation_history: ConversationHistoryRepository
     capture: MemoryCaptureCoordinator
     context_provider: RepositoryMemoryContextProvider
     approval_gate: PasscodeApprovalGate
@@ -113,6 +115,7 @@ class MemoryRuntime:
                 connection_provider=database,
                 audit_sink=sink,
             )
+            conversation_history = ConversationHistoryRepository(database, sink)
             repository.expire_candidates(uuid4())
             capture = MemoryCaptureCoordinator(repository, sink)
             context = RepositoryMemoryContextProvider(
@@ -144,6 +147,7 @@ class MemoryRuntime:
                 sink,
                 database,
                 repository,
+                conversation_history,
                 capture,
                 context,
                 approval_gate,

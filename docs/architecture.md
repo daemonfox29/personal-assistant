@@ -40,6 +40,12 @@ bounded encrypted retrieval → untrusted-data system envelope → token-bounded
 structured messages → model adapter → local Ollama model → sanitized streamed
 display events
 
+After encrypted unlock, the application service may also append structured
+conversation messages and return bounded sidebar summaries. Those transcript
+tables are not canonical memory and are not searched by ordinary memory
+retrieval. Selecting one conversation restores only its newest complete turns
+through the existing token-bounded RAM context.
+
 The native app can retrieve the previously verified recovery secret through a
 narrow operating-system credential-store adapter. The adapter is bound to the
 configured data location, accepts only reviewed protected backends, and falls
@@ -72,16 +78,19 @@ User request → coordinator → model and/or tools → permission layer → app
 The first native interface uses PySide6 widgets over a narrow application
 service. Widgets do not receive database connections, keys, approval authorities,
 audit sinks, or model adapters. The terminal interface remains a recovery and
-developer fallback over the same conversation service. Recent conversation is
-held only in RAM for the current session. System, user, and assistant messages
-remain separate data structures; history retains only complete recent turns
-within a conservative token budget.
+developer fallback over the same conversation service. The native interface can
+archive structured messages in the encrypted database, while only complete
+recent turns from the active conversation enter RAM context. System, user, and
+assistant messages remain separate data structures and retain a conservative
+token budget.
 
 The settings widget similarly receives only bounded non-secret preference
 values. It asks the application factory to atomically persist a versioned JSON
 document and emit typed configuration events; it never receives the audit sink,
 model adapter, database, or credential store. Context and response-limit changes
-take effect when the next session is composed.
+take effect when the next session is composed. Code-owned system/light/dark
+palettes and an installed font preference cannot contain arbitrary stylesheet
+content.
 
 Because the native widgets and application service share one Python process,
 this narrow API is a modularity and review boundary rather than a sandbox against
@@ -98,11 +107,13 @@ The labeling can reduce accidental instruction-following but is not assumed to
 make the model reliable; deterministic permission and executor boundaries
 remain responsible for preventing actions.
 
-Closing the process drops the application's session-history references. Module 1
-stores selected confirmed memories and revision history, not a transcript of
-every conversation. This is an application retention boundary, not guaranteed
-physical erasure from Python, native libraries, Ollama, the operating system,
-swap, backups, or crash diagnostics.
+Closing the process drops the active RAM-context references. Module 1.5 can also
+retain full structured transcripts in dedicated encrypted tables. These rows are
+separate from selected memory and are loaded only for the conversation the owner
+opens. Private Chat bypasses transcript storage, persistent retrieval, explicit
+memory capture, and suggestion analysis. Neither mode guarantees physical
+erasure from Python, native libraries, Ollama, the operating system, swap,
+backups, or crash diagnostics.
 
 Future versions may add bounded worker agents. Worker agents will receive limited tasks and permissions from the coordinator rather than unrestricted access.
 

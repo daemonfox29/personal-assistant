@@ -8,6 +8,7 @@ import unittest
 
 from personal_assistant.config import load_desktop_settings
 from personal_assistant.runtime_preferences import (
+    PREFERENCES_VERSION,
     RuntimePreferences,
     RuntimePreferencesError,
     RuntimePreferencesStore,
@@ -28,9 +29,33 @@ class RuntimePreferencesTests(unittest.TestCase):
             store.save(preferences)
 
             self.assertEqual(store.load(), preferences)
-            self.assertEqual(json.loads(path.read_text())["version"], 1)
+            self.assertEqual(
+                json.loads(path.read_text())["version"],
+                PREFERENCES_VERSION,
+            )
             if os.name == "posix":
                 self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+
+    def test_version_one_preferences_gain_safe_appearance_defaults(self) -> None:
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "preferences.json"
+            path.write_text(
+                json.dumps(
+                    {
+                        "context_tokens": 16_384,
+                        "default_response_tokens": 400,
+                        "maximum_response_tokens": 2_000,
+                        "version": 1,
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            preferences = RuntimePreferencesStore(path).load()
+
+            self.assertIsNotNone(preferences)
+            self.assertEqual(preferences.font_family, "system")
+            self.assertEqual(preferences.font_size, 13)
 
     def test_desktop_loader_applies_file_then_environment_override(self) -> None:
         with TemporaryDirectory() as directory:
@@ -79,6 +104,9 @@ class RuntimePreferencesTests(unittest.TestCase):
 
         with self.assertRaises(ValueError):
             RuntimePreferences(default_response_tokens=True)
+
+        with self.assertRaises(ValueError):
+            RuntimePreferences(font_family="unsafe\nfont")
 
     def test_delete_removes_only_the_expected_regular_file(self) -> None:
         with TemporaryDirectory() as directory:

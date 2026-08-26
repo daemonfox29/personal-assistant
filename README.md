@@ -57,6 +57,13 @@ Completed answers receive code-defined native formatting for headings, lists,
 bold emphasis, and inline code. Model content is never interpreted as HTML and
 cannot create active links or remote resources.
 
+After encrypted unlock, native conversations save automatically to the existing
+SQLCipher database and appear in the left sidebar. Selecting one restores its
+complete recent turns through the same bounded role-aware context engine so the
+conversation can continue. **Private chat** creates no transcript, retrieves no
+persistent memory, accepts no explicit memory command, and creates no automatic
+memory suggestions.
+
 The command-line interface remains a developer and recovery fallback:
 
 ```bash
@@ -128,11 +135,21 @@ uv run --locked python -m personal_assistant.memory_admin reject RECORD_ID
 
 In native chat, Enter sends the current prompt and Shift+Enter inserts a new
 line. The Settings page persists a model context window, default response limit,
-and response ceiling for the next launch. The context window is bounded to
-2,048–131,072 tokens and must retain at least 1,024 tokens for input; the
+response ceiling, code-owned system/light/dark theme, installed font, and a
+bounded global font size. Appearance changes apply immediately and follow later
+native launches; model limits apply after restart. The context window is bounded
+to 2,048–131,072 tokens and must retain at least 1,024 tokens for input; the
 response ceiling cannot exceed the code-enforced 2,000-token maximum. Settings
 changes are stored as non-secret versioned JSON and audited without chat or
 personal-memory content.
+
+The native app commits a user message before generation and commits completed
+assistant output before reporting completion. If the window is closed during a
+response, it remains visible in a disabled “finishing and saving” state until
+the transcript is finalized and the encrypted runtime closes. Forced process or
+machine termination cannot receive the same guarantee. Deleting a sidebar
+conversation removes its live encrypted rows after confirmation; existing
+encrypted backups may retain it until those snapshots expire.
 
 Candidate lists show metadata only; sensitive candidate content stays hidden
 until the high-risk passcode is verified. The trusted interface also provides
@@ -191,12 +208,14 @@ service details.
 - Type `/max <question>` for up to 2,000 response tokens.
 - Type `/limit <1-2000> <question>` to choose a custom response budget.
 
-Recent chat turns are referenced in application RAM only while the app is open.
-Complete turns are evicted from oldest to newest when they exceed the configured
-history budget. Closing the app drops the application's references and the app
-does not deliberately save this conversation to a file or database. Python,
-Ollama, macOS, swap, crash reports, or other system facilities may retain bytes
-temporarily; this is not a claim of secure physical memory erasure.
+The command-line fallback and native Private Chat retain recent turns in
+application RAM only. Normal unlocked native chat additionally stores structured
+transcripts in dedicated encrypted tables. In every mode, only complete recent
+turns from the active conversation enter model context; they are evicted from
+oldest to newest when they exceed the configured history budget. Other saved
+sidebar conversations consume no model context. Python, Ollama, the operating
+system, swap, backups, crash reports, or other system facilities may retain
+bytes; this is not a claim of secure physical erasure.
 
 Conversation roles remain structurally separate when sent to the model, so
 user text cannot become a trusted system or assistant message. The context

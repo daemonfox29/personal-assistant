@@ -57,7 +57,52 @@ class RecordingMemoryHandler:
         return "Synthetic memory saved."
 
 
+class RecordingContextProvider:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def context_for(self, user_text: str, correlation_id: UUID) -> str:
+        self.calls += 1
+        return "\nPersistent context that private chat must not receive."
+
+
+class RecordingPostResponseWorker:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def submit(self, user_text: str, assistant_text: str) -> bool:
+        self.calls += 1
+        return True
+
+    def close(self) -> None:
+        pass
+
+
 class ConversationServiceTests(unittest.TestCase):
+    def test_private_request_uses_no_persistent_memory_or_suggestions(self) -> None:
+        model = SyntheticStreamingModel()
+        memory = RecordingMemoryHandler()
+        context = RecordingContextProvider()
+        worker = RecordingPostResponseWorker()
+        service = ConversationService(
+            model,
+            memory_context_provider=context,
+            explicit_memory_handler=memory,
+            post_response_worker=worker,
+        )
+
+        tuple(
+            service.events_for(
+                "remember that this private statement is temporary",
+                allow_persistent_memory=False,
+            )
+        )
+
+        self.assertEqual(context.calls, 0)
+        self.assertEqual(memory.calls, [])
+        self.assertEqual(worker.calls, 0)
+        self.assertEqual(len(model.requests), 1)
+
     def test_stream_is_sanitized_structured_and_limit_bounded(self) -> None:
         model = SyntheticStreamingModel()
         service = ConversationService(model)

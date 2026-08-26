@@ -131,6 +131,8 @@ class MigrationTests(unittest.TestCase):
                         "record_links",
                         "memory_feedback",
                         "deletion_ledger",
+                        "conversations",
+                        "conversation_messages",
                     }.issubset(tables)
                 )
                 history = connection.execute(
@@ -228,7 +230,10 @@ class MigrationTests(unittest.TestCase):
             current_runner, _ = self._runner(database)
             result = current_runner.migrate(uuid4())
 
-            self.assertEqual(result.applied_versions, (14, 15, 16, 17))
+            self.assertEqual(
+                result.applied_versions,
+                (14, 15, 16, 17, 18, 19, 20),
+            )
             with database.connect(uuid4()) as connection:
                 tables = {
                     row[0]
@@ -297,7 +302,7 @@ class MigrationTests(unittest.TestCase):
             current_runner, _ = self._runner(database)
             result = current_runner.migrate(uuid4())
 
-            self.assertEqual(result.applied_versions, (16, 17))
+            self.assertEqual(result.applied_versions, (16, 17, 18, 19, 20))
             with database.connect(uuid4()) as connection:
                 rows = connection.execute(
                     "SELECT record_id FROM record_search "

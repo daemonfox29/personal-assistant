@@ -39,6 +39,15 @@ This document is the handoff point between coding sessions. At the end of each s
   Both the native UI and terminal fallback use the same UI-neutral conversation
   service. Widgets receive no database, key, audit, approval, credential-store,
   or model authority objects.
+- The native UI now has code-owned system/light/dark palettes, installed-font
+  selection, and bounded global font sizing in backward-compatible versioned
+  preferences. Its conversation sidebar automatically stores structured
+  transcripts in the unlocked SQLCipher database, reopens them as continuable
+  token-bounded chats, and supports permanent live-database deletion with an
+  explicit backup-retention warning. Private Chat bypasses transcript storage,
+  persistent retrieval, explicit memory capture, and suggestion analysis.
+  Graceful window shutdown waits for an active response to finish its synchronous
+  transcript commit before releasing database keys.
 - The local permission policy is implemented and covered by automated tests.
 - GitHub Actions is configured to test pull requests targeting `main` before
   merge. The public repository has an active ruleset requiring the `test`
@@ -91,7 +100,7 @@ This document is the handoff point between coding sessions. At the end of each s
   helper functions and database attachment through a connection authorizer,
   and emits content-free database-open audit events. It has been tested only
   with synthetic data.
-- The encrypted schema is built from 17 fixed, packaged, single-statement SQL
+- The encrypted schema is built from 20 fixed, packaged, single-statement SQL
   migrations. Exact SHA-256 history is stored in the database; missing,
   duplicate, reordered, changed, unknown, or untracked history fails closed.
   The entire pending migration batch commits atomically or rolls back.
@@ -141,6 +150,9 @@ complete; the batched Linux pull-request check is its final platform gate.
 - [x] Module 1.5 foundation: add a native setup, recovery/automatic unlock,
   session-only, and streaming-chat interface over a narrow application-service
   boundary.
+- [x] Module 1.5 conversation experience: add code-owned appearance controls,
+  automatic encrypted transcript persistence, continuable sidebar history,
+  Private Chat, deletion, and graceful shutdown finalization.
 - [ ] Module 1.5 owner controls: add native candidate review, memory management,
   backup/restore, bounded audit viewing, and settings without exposing authority
   objects to widgets.
@@ -151,6 +163,34 @@ complete; the batched Linux pull-request check is its final platform gate.
 - [ ] Add a web/search tool only behind the tool registry and approval layer.
 
 ## Session history
+
+### 2026-08-26 — Appearance and encrypted conversation sidebar
+
+Completed:
+
+- Extended backward-compatible native preferences with system/light/dark theme,
+  installed-font selection, and a bounded global font size. Themes use only
+  code-owned palettes; preferences cannot inject arbitrary stylesheets.
+- Added three forward-only encrypted migrations for conversation metadata,
+  structured transcript messages, and deterministic message ordering.
+- Added a narrow audited conversation-history repository. User messages commit
+  before generation, assistant content commits synchronously before completion,
+  and sidebar reads never expose database objects or load unrelated transcripts
+  into model context.
+- Added new, private, reopen-and-continue, and permanent-delete sidebar flows.
+  Private Chat bypasses transcript storage, persistent-memory retrieval,
+  explicit memory capture, and suggestion analysis.
+- Changed graceful window shutdown to wait for an active response worker to
+  finish transcript persistence before closing encrypted memory.
+- Verified 290 tests locally with the normal performance test skipped. The
+  separate 100,000-record encrypted retrieval benchmark passed at 14.07 ms
+  median and 14.24 ms p95 over 30 queries.
+
+Next:
+
+- Exercise create, close, reopen, continue, Private Chat, and delete against the
+  owner's real encrypted database in the native app.
+- Continue with native candidate review and backup/restore controls.
 
 ### 2026-08-26 — Natural recall and exact-statement capture
 

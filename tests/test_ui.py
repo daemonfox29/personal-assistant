@@ -2,6 +2,8 @@
 
 import os
 import unittest
+from datetime import datetime, timezone
+from uuid import uuid4
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -14,6 +16,12 @@ from personal_assistant.application_service import ApplicationLaunchState  # noq
 from personal_assistant.conversation import (  # noqa: E402
     ConversationEvent,
     ConversationEventKind,
+)
+from personal_assistant.conversation_history import (  # noqa: E402
+    ConversationRole,
+    ConversationSummary,
+    StoredConversation,
+    StoredConversationMessage,
 )
 from personal_assistant.runtime_preferences import RuntimePreferences  # noqa: E402
 from personal_assistant.ui import (  # noqa: E402
@@ -143,8 +151,45 @@ class NativeUiTests(unittest.TestCase):
 
         page._save()
 
-        self.assertEqual(saved, [(32_768, 800, 1_600)])
+        self.assertEqual(
+            saved,
+            [(32_768, 800, 1_600, "system", "system", 13)],
+        )
         self.assertEqual(page._maximum_response_tokens.maximum(), 2_000)
+
+    def test_sidebar_selects_and_renders_a_structured_saved_conversation(self) -> None:
+        page = ChatPage()
+        conversation_id = uuid4()
+        summary = ConversationSummary(
+            conversation_id,
+            "Scooby history",
+            datetime(2026, 1, 1, tzinfo=timezone.utc),
+        )
+        stored = StoredConversation(
+            summary,
+            (
+                StoredConversationMessage(
+                    ConversationRole.USER,
+                    "Who is Scooby?",
+                    1,
+                ),
+                StoredConversationMessage(
+                    ConversationRole.ASSISTANT,
+                    "Scooby is your dog.",
+                    2,
+                ),
+            ),
+        )
+        selected: list[str] = []
+        page.conversation_requested.connect(selected.append)
+
+        page.set_conversations((summary,), conversation_id)
+        page._conversation_list.itemClicked.emit(page._conversation_list.item(0))
+        page.show_stored_conversation(stored)
+
+        self.assertEqual(selected, [str(conversation_id)])
+        self.assertIn("Who is Scooby?", page.transcript_text())
+        self.assertIn("Scooby is your dog.", page.transcript_text())
 
     def test_busy_chat_prevents_a_second_visible_submission(self) -> None:
         page = ChatPage()
@@ -157,6 +202,8 @@ class NativeUiTests(unittest.TestCase):
 
     def test_window_shutdown_closes_the_application_service(self) -> None:
         class Factory:
+            runtime_preferences = RuntimePreferences()
+
             @staticmethod
             def launch_state() -> ApplicationLaunchState:
                 return ApplicationLaunchState.SESSION_ONLY
@@ -180,6 +227,7 @@ class NativeUiTests(unittest.TestCase):
     def test_failed_post_setup_startup_refreshes_to_unlock_state(self) -> None:
         class Factory:
             state = ApplicationLaunchState.SETUP_REQUIRED
+            runtime_preferences = RuntimePreferences()
 
             def launch_state(self) -> ApplicationLaunchState:
                 return self.state

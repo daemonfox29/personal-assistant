@@ -20,7 +20,19 @@ from personal_assistant.audit import (
 from personal_assistant.audit_file import AuditFileSettings, JsonLinesAuditSink
 from personal_assistant.backup import BackupError
 from personal_assistant.config import AppSettings
-from personal_assistant.conversation import ConversationEvent, ConversationService
+from personal_assistant.conversation import (
+    ConversationEvent,
+    ConversationEventKind,
+    ConversationService,
+)
+from personal_assistant.conversation_history import (
+    ConversationHistoryError,
+    ConversationHistoryRepository,
+    ConversationResponseMessage,
+    ConversationRole,
+    ConversationSummary,
+    StoredConversation,
+)
 from personal_assistant.credential_store import (
     CredentialStoreError,
     RecoveryCredentialStore,
@@ -85,6 +97,7 @@ class ApplicationSessionInfo:
     default_response_tokens: int
     long_response_tokens: int
     maximum_response_tokens: int
+    history_available: bool = False
     startup_notices: tuple[str, ...] = ()
 
 
@@ -96,11 +109,16 @@ class AssistantApplicationService:
         conversation: ConversationService,
         runtime: MemoryRuntime | None,
         info: ApplicationSessionInfo,
+        conversation_history: ConversationHistoryRepository | None = None,
     ) -> None:
         self._conversation = conversation
         self._runtime = runtime
         self._info = info
+        self._conversation_history = conversation_history
+        self._active_conversation_id: UUID | None = None
+        self._private_chat = conversation_history is None
         self._lock = Lock()
+        self._request_lock = Lock()
         self._closed = False
 
     @property
@@ -115,11 +133,8 @@ class AssistantApplicationService:
     ) -> tuple[ConversationEvent, ...]:
         """Return one bounded event stream as immutable UI-facing values."""
 
-        with self._lock:
-            if self._closed:
-                raise ApplicationOpenError("This assistant session is closed.")
         return tuple(
-            self._conversation.events_for(
+            self.iter_events(
                 user_text,
                 max_response_tokens=max_response_tokens,
             )
@@ -133,22 +148,214 @@ class AssistantApplicationService:
     ) -> Iterator[ConversationEvent]:
         """Yield UI-facing events incrementally for streaming presentation."""
 
+        if not self._request_lock.acquire(blocking=False):
+            yield ConversationEvent(
+                ConversationEventKind.NOTICE,
+                "A response is already being generated.",
+            )
+            return
+        try:
+            yield from self._iter_events(
+                user_text,
+                max_response_tokens=max_response_tokens,
+            )
+        finally:
+            self._request_lock.release()
+
+    def _iter_events(
+        self,
+        user_text: str,
+        *,
+        max_response_tokens: int | None = None,
+    ) -> Iterator[ConversationEvent]:
+        """Persist and produce one request while the service request lock is held."""
+
         with self._lock:
             if self._closed:
                 raise ApplicationOpenError("This assistant session is closed.")
-        yield from self._conversation.events_for(
+            repository = self._conversation_history
+            persist = repository is not None and not self._private_chat
+            allow_persistent_memory = not self._private_chat
+            active_id = self._active_conversation_id
+        correlation_id = uuid4()
+        if persist:
+            try:
+                active_id = repository.begin_turn(
+                    active_id,
+                    user_text,
+                    correlation_id,
+                )
+            except ConversationHistoryError as error:
+                raise ApplicationOpenError(
+                    "This message was not sent because conversation history could "
+                    "not be saved safely."
+                ) from error
+            with self._lock:
+                self._active_conversation_id = active_id
+
+        assistant_parts: list[str] = []
+        responses: list[ConversationResponseMessage] = []
+        finalized = False
+
+        def flush_assistant() -> None:
+            if assistant_parts:
+                responses.append(
+                    ConversationResponseMessage(
+                        ConversationRole.ASSISTANT,
+                        "".join(assistant_parts),
+                    )
+                )
+                assistant_parts.clear()
+
+        for event in self._conversation.events_for(
             user_text,
             max_response_tokens=max_response_tokens,
-        )
+            allow_persistent_memory=allow_persistent_memory,
+        ):
+            if event.kind is ConversationEventKind.ASSISTANT_CHUNK:
+                assistant_parts.append(event.text)
+            elif event.kind is ConversationEventKind.NOTICE and event.text:
+                flush_assistant()
+                responses.append(
+                    ConversationResponseMessage(
+                        ConversationRole.NOTICE,
+                        event.text,
+                    )
+                )
+            if (
+                event.kind is ConversationEventKind.COMPLETED
+                and persist
+                and active_id is not None
+            ):
+                flush_assistant()
+                if event.limit_reached:
+                    responses.append(
+                        ConversationResponseMessage(
+                            ConversationRole.NOTICE,
+                            "Response stopped at its selected token limit.",
+                        )
+                    )
+                try:
+                    repository.finish_turn(
+                        active_id,
+                        tuple(responses),
+                        correlation_id,
+                    )
+                except ConversationHistoryError as error:
+                    raise ApplicationOpenError(
+                        "The response finished, but conversation history could not "
+                        "be saved safely. Keep the app open and try again."
+                    ) from error
+                finalized = True
+            yield event
+        flush_assistant()
+        if persist and active_id is not None and not finalized and responses:
+            try:
+                repository.finish_turn(
+                    active_id,
+                    tuple(responses),
+                    correlation_id,
+                )
+            except ConversationHistoryError as error:
+                raise ApplicationOpenError(
+                    "Conversation history could not be finalized safely."
+                ) from error
+
+    @property
+    def active_conversation_id(self) -> UUID | None:
+        with self._lock:
+            return self._active_conversation_id
+
+    @property
+    def private_chat(self) -> bool:
+        with self._lock:
+            return self._private_chat
+
+    def list_conversations(self) -> tuple[ConversationSummary, ...]:
+        with self._lock:
+            if self._closed:
+                raise ApplicationOpenError("This assistant session is closed.")
+            repository = self._conversation_history
+        if repository is None:
+            return ()
+        try:
+            return repository.list_conversations(uuid4())
+        except ConversationHistoryError as error:
+            raise ApplicationOpenError(
+                "Conversation history could not be listed safely."
+            ) from error
+
+    def new_conversation(self, *, private: bool = False) -> None:
+        if not isinstance(private, bool):
+            raise ApplicationOpenError("The conversation privacy mode is invalid.")
+        with self._lock:
+            if self._closed:
+                raise ApplicationOpenError("This assistant session is closed.")
+            if not private and self._conversation_history is None:
+                private = True
+        try:
+            self._conversation.replace_history(())
+        except (RuntimeError, TypeError) as error:
+            raise ApplicationOpenError(
+                "A new conversation cannot start while a response is active."
+            ) from error
+        with self._lock:
+            self._active_conversation_id = None
+            self._private_chat = private
+
+    def open_conversation(self, conversation_id: UUID) -> StoredConversation:
+        with self._lock:
+            if self._closed:
+                raise ApplicationOpenError("This assistant session is closed.")
+            repository = self._conversation_history
+        if repository is None:
+            raise ApplicationOpenError(
+                "Saved conversations require encrypted memory."
+            )
+        try:
+            stored = repository.load_conversation(conversation_id, uuid4())
+            self._conversation.replace_history(stored.completed_turns())
+        except (ConversationHistoryError, RuntimeError, TypeError) as error:
+            raise ApplicationOpenError(
+                "The saved conversation could not be opened safely."
+            ) from error
+        with self._lock:
+            self._active_conversation_id = stored.summary.conversation_id
+            self._private_chat = False
+        return stored
+
+    def delete_conversation(self, conversation_id: UUID) -> None:
+        with self._lock:
+            if self._closed:
+                raise ApplicationOpenError("This assistant session is closed.")
+            repository = self._conversation_history
+            is_active = conversation_id == self._active_conversation_id
+        if repository is None:
+            raise ApplicationOpenError(
+                "Saved conversations require encrypted memory."
+            )
+        try:
+            repository.delete_conversation(conversation_id, uuid4())
+            if is_active:
+                self._conversation.replace_history(())
+        except (ConversationHistoryError, RuntimeError, TypeError) as error:
+            raise ApplicationOpenError(
+                "The conversation could not be deleted safely."
+            ) from error
+        if is_active:
+            with self._lock:
+                self._active_conversation_id = None
+                self._private_chat = False
 
     def close(self) -> None:
         with self._lock:
             if self._closed:
                 return
             self._closed = True
-        self._conversation.close()
-        if self._runtime is not None:
-            self._runtime.close()
+        with self._request_lock:
+            self._conversation.close()
+            if self._runtime is not None:
+                self._runtime.close()
 
 
 class AssistantApplicationFactory:
@@ -169,10 +376,28 @@ class AssistantApplicationFactory:
             raise TypeError("Application factory requires a recovery credential store.")
         self._settings = settings
         self._recovery_store = recovery_store
+        stored_preferences = RuntimePreferencesStore(
+            settings.memory.data_directory / PREFERENCES_FILENAME
+        ).load()
         self._runtime_preferences = RuntimePreferences(
             context_tokens=settings.ollama.context_tokens,
             default_response_tokens=settings.ollama.max_response_tokens,
             maximum_response_tokens=settings.chat.maximum_response_tokens,
+            theme=(
+                stored_preferences.theme
+                if stored_preferences is not None
+                else RuntimePreferences().theme
+            ),
+            font_family=(
+                stored_preferences.font_family
+                if stored_preferences is not None
+                else RuntimePreferences().font_family
+            ),
+            font_size=(
+                stored_preferences.font_size
+                if stored_preferences is not None
+                else RuntimePreferences().font_size
+            ),
         )
 
     @property
@@ -393,8 +618,10 @@ class AssistantApplicationFactory:
                     self._settings.ollama.max_response_tokens,
                     self._settings.chat.long_response_tokens,
                     self._settings.chat.maximum_response_tokens,
+                    runtime is not None,
                     tuple(notices),
                 ),
+                None if runtime is None else runtime.conversation_history,
             )
         except ApplicationServiceError:
             if runtime is not None:

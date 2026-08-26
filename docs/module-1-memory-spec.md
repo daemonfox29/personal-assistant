@@ -78,6 +78,12 @@ must be replaceable behind narrow interfaces.
 
 Deferred capabilities are tracked in [Future Features](future-features.md).
 
+Module 1.5 later approved encrypted conversation history as a separate retention
+feature. That amendment does not make transcripts canonical memory: they remain
+separate conversation/message records, are never searched by ordinary memory
+retrieval, and are loaded into model context only when the owner explicitly
+opens that conversation. See [Module 1.5 Native UI Specification](module-1-5-ui-spec.md).
+
 ## Trust boundaries
 
 ### Model

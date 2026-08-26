@@ -4,12 +4,14 @@ import os
 import re
 import sys
 from threading import Event
+from uuid import UUID
 
 from PySide6.QtCore import QObject, QThread, Qt, Signal, Slot
 from PySide6.QtGui import (
     QColor,
     QCloseEvent,
     QFont,
+    QFontDatabase,
     QKeyEvent,
     QTextCharFormat,
     QTextCursor,
@@ -22,11 +24,14 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
     QMainWindow,
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
     QSpinBox,
+    QSplitter,
     QStackedWidget,
     QTextEdit,
     QVBoxLayout,
@@ -44,13 +49,21 @@ from personal_assistant.application_service import (
 )
 from personal_assistant.config import load_desktop_settings
 from personal_assistant.conversation import ConversationEvent, ConversationEventKind
+from personal_assistant.conversation_history import (
+    ConversationRole,
+    ConversationSummary,
+    StoredConversation,
+)
 from personal_assistant.credential_store import default_recovery_credential_store
 from personal_assistant.runtime_preferences import (
     MAX_CONTEXT_TOKENS,
+    MAX_UI_FONT_SIZE,
     MIN_INPUT_TOKENS,
     MIN_CONTEXT_TOKENS,
+    MIN_UI_FONT_SIZE,
     RuntimePreferences,
     RuntimePreferencesError,
+    ThemePreference,
 )
 from personal_assistant.terminal_output import sanitize_terminal_text
 
@@ -72,6 +85,7 @@ CODE_FONT_FAMILY = (
 )
 MAX_VISIBLE_MESSAGE_CHARS = 32_000
 MAX_TRANSCRIPT_BLOCKS = 2_000
+MAX_DISPLAY_MESSAGES = 2_000
 INLINE_MARKUP = re.compile(r"(\*\*[^*\n]+\*\*|`[^`\n]+`)")
 HEADING_MARKUP = re.compile(r"^(#{1,3})\s+(.+)$")
 BULLET_MARKUP = re.compile(r"^\s*[-*]\s+(.+)$")
@@ -234,7 +248,7 @@ class MessageComposer(QPlainTextEdit):
 
 
 class SettingsPage(QWidget):
-    save_requested = Signal(int, int, int)
+    save_requested = Signal(int, int, int, str, str, int)
     back_requested = Signal()
 
     def __init__(self) -> None:
@@ -245,8 +259,8 @@ class SettingsPage(QWidget):
         title.setObjectName("settingsTitle")
         layout.addWidget(title)
         explanation = QLabel(
-            "Adjust local model resource limits. Changes are validated, audited, "
-            "and applied the next time the app starts."
+            "Adjust appearance and local model resource limits. Changes are "
+            "validated and audited; model limits apply after restart."
         )
         explanation.setWordWrap(True)
         layout.addWidget(explanation)
@@ -269,6 +283,20 @@ class SettingsPage(QWidget):
         form.addRow("Context window", self._context_tokens)
         form.addRow("Default response limit", self._default_response_tokens)
         form.addRow("Response ceiling", self._maximum_response_tokens)
+        self._theme = QComboBox()
+        self._theme.addItem("Follow system", ThemePreference.SYSTEM.value)
+        self._theme.addItem("Light", ThemePreference.LIGHT.value)
+        self._theme.addItem("Dark", ThemePreference.DARK.value)
+        self._font_family = QComboBox()
+        self._font_family.addItem("System default", "system")
+        for family in QFontDatabase.families():
+            self._font_family.addItem(family, family)
+        self._font_size = QSpinBox()
+        self._font_size.setRange(MIN_UI_FONT_SIZE, MAX_UI_FONT_SIZE)
+        self._font_size.setSuffix(" pt")
+        form.addRow("Appearance", self._theme)
+        form.addRow("Interface font", self._font_family)
+        form.addRow("Interface font size", self._font_size)
         note = QLabel(
             "The response ceiling can be lowered but cannot exceed the project's "
             "2,000-token safety bound. Larger context windows use more RAM."
@@ -300,10 +328,16 @@ class SettingsPage(QWidget):
             preferences.default_response_tokens
         )
         self._context_tokens.setValue(preferences.context_tokens)
+        self._set_combo_value(self._theme, preferences.theme.value)
+        self._set_combo_value(self._font_family, preferences.font_family)
+        self._font_size.setValue(preferences.font_size)
         self._result.clear()
 
     def show_saved(self) -> None:
-        self._result.setText("Settings saved. Restart the app to apply them.")
+        self._result.setText(
+            "Settings saved. Appearance is applied now; model limits apply after "
+            "restart."
+        )
 
     @Slot()
     def _save(self) -> None:
@@ -311,6 +345,9 @@ class SettingsPage(QWidget):
             self._context_tokens.value(),
             self._default_response_tokens.value(),
             self._maximum_response_tokens.value(),
+            str(self._theme.currentData()),
+            str(self._font_family.currentData()),
+            self._font_size.value(),
         )
 
     @Slot(int)
@@ -332,14 +369,57 @@ class SettingsPage(QWidget):
         field.setSuffix(" tokens")
         return field
 
+    @staticmethod
+    def _set_combo_value(combo: QComboBox, value: str) -> None:
+        index = combo.findData(value)
+        combo.setCurrentIndex(0 if index < 0 else index)
+
 
 class ChatPage(QWidget):
     message_requested = Signal(str, int)
     settings_requested = Signal()
+    new_chat_requested = Signal(bool)
+    conversation_requested = Signal(str)
+    delete_requested = Signal(str)
 
     def __init__(self) -> None:
         super().__init__()
-        layout = QVBoxLayout(self)
+        outer = QHBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+        outer.addWidget(splitter)
+
+        self._sidebar = QFrame()
+        self._sidebar.setObjectName("historySidebar")
+        sidebar = QVBoxLayout(self._sidebar)
+        sidebar.setContentsMargins(14, 18, 14, 18)
+        history_title = QLabel("Conversations")
+        history_title.setObjectName("historyTitle")
+        sidebar.addWidget(history_title)
+        self._new_chat = QPushButton("New chat")
+        self._new_chat.clicked.connect(lambda: self.new_chat_requested.emit(False))
+        sidebar.addWidget(self._new_chat)
+        self._private_chat = QPushButton("Private chat")
+        self._private_chat.setObjectName("secondaryButton")
+        self._private_chat.setToolTip(
+            "Starts a chat that is not saved and does not create memory suggestions."
+        )
+        self._private_chat.clicked.connect(
+            lambda: self.new_chat_requested.emit(True)
+        )
+        sidebar.addWidget(self._private_chat)
+        self._conversation_list = QListWidget()
+        self._conversation_list.setObjectName("conversationList")
+        self._conversation_list.itemClicked.connect(self._conversation_clicked)
+        sidebar.addWidget(self._conversation_list, 1)
+        self._delete_chat = QPushButton("Delete selected")
+        self._delete_chat.setObjectName("secondaryButton")
+        self._delete_chat.clicked.connect(self._delete_selected)
+        sidebar.addWidget(self._delete_chat)
+        splitter.addWidget(self._sidebar)
+
+        chat_panel = QWidget()
+        layout = QVBoxLayout(chat_panel)
         layout.setContentsMargins(24, 20, 24, 20)
         header = QHBoxLayout()
         self._status = QLabel("Local session")
@@ -378,6 +458,22 @@ class ChatPage(QWidget):
         self._assistant_open = False
         self._assistant_start: int | None = None
         self._assistant_raw: list[str] = []
+        self._display_messages: list[tuple[ConversationRole, str]] = []
+        self._base_status = "Local session"
+        self._font_family = UI_FONT_FAMILY
+        self._font_size = 14
+        self._role_colors = {
+            "You": "#7aa2ff",
+            "Assistant": "#9ee6b8",
+            "Notice": "#f0bd73",
+        }
+        self._body_color = "#e8eaf0"
+        self._code_background = "#292f3a"
+        self._code_color = "#d8e2ff"
+        splitter.addWidget(chat_panel)
+        splitter.setSizes([240, 700])
+        splitter.setStretchFactor(0, 0)
+        splitter.setStretchFactor(1, 1)
 
     def configure_session(
         self,
@@ -388,7 +484,9 @@ class ChatPage(QWidget):
         maximum_response_tokens: int,
     ) -> None:
         memory_text = "encrypted memory" if persistent_memory else "session only"
-        self._status.setText(f"{model_name} · {memory_text}")
+        self._base_status = f"{model_name} · {memory_text}"
+        self._status.setText(self._base_status)
+        self._sidebar.setVisible(persistent_memory)
         self._limit.clear()
         choices = (
             ("Default", default_response_tokens),
@@ -408,17 +506,27 @@ class ChatPage(QWidget):
         self._send.setEnabled(not busy)
         self._limit.setEnabled(not busy)
         self._settings.setEnabled(not busy)
+        self._new_chat.setEnabled(not busy)
+        self._private_chat.setEnabled(not busy)
+        self._conversation_list.setEnabled(not busy)
+        self._delete_chat.setEnabled(not busy)
         if not busy:
             self._input.setFocus()
 
-    def append_user(self, text: str) -> None:
-        self._append_role("You", "#7aa2ff")
-        self._append_plain(f"{sanitize_terminal_text(text)}\n\n")
+    def show_closing(self) -> None:
+        self.set_busy(True)
+        self._status.setText("Finishing the response and saving before close…")
 
-    def apply_event(self, event: ConversationEvent) -> None:
+    def append_user(self, text: str, *, record: bool = True) -> None:
+        self._append_role("You")
+        self._append_plain(f"{sanitize_terminal_text(text)}\n\n")
+        if record:
+            self._record_display_message(ConversationRole.USER, text)
+
+    def apply_event(self, event: ConversationEvent, *, record: bool = True) -> None:
         if event.kind is ConversationEventKind.ASSISTANT_CHUNK:
             if not self._assistant_open:
-                self._append_role("Assistant", "#9ee6b8")
+                self._append_role("Assistant")
                 self._assistant_open = True
                 self._assistant_raw = []
                 self._transcript.document().setMaximumBlockCount(0)
@@ -427,21 +535,160 @@ class ChatPage(QWidget):
             self._assistant_raw.append(event.text)
         elif event.kind is ConversationEventKind.NOTICE:
             if self._assistant_open:
-                self._finish_assistant()
-            self._append_role("Notice", "#f0bd73")
+                self._finish_assistant(record=record)
+            self._append_role("Notice")
             self._append_plain(f"{event.text}\n\n", italic=True)
+            if record:
+                self._record_display_message(ConversationRole.NOTICE, event.text)
         elif event.kind is ConversationEventKind.COMPLETED:
             if self._assistant_open:
-                self._finish_assistant()
+                self._finish_assistant(record=record)
             if event.limit_reached:
-                self._append_role("Notice", "#f0bd73")
+                limit_notice = "Response stopped at its selected token limit."
+                self._append_role("Notice")
                 self._append_plain(
-                    "Response stopped at its selected token limit.\n\n",
+                    f"{limit_notice}\n\n",
                     italic=True,
                 )
+                if record:
+                    self._record_display_message(
+                        ConversationRole.NOTICE,
+                        limit_notice,
+                    )
 
     def transcript_text(self) -> str:
         return self._transcript.toPlainText()
+
+    def set_conversations(
+        self,
+        conversations: tuple[ConversationSummary, ...],
+        active_id: UUID | None,
+    ) -> None:
+        self._conversation_list.clear()
+        active_text = None if active_id is None else str(active_id)
+        for conversation in conversations:
+            safe_title = sanitize_terminal_text(conversation.title)
+            item = QListWidgetItem(safe_title)
+            identifier = str(conversation.conversation_id)
+            item.setData(Qt.ItemDataRole.UserRole, identifier)
+            item.setToolTip(safe_title)
+            self._conversation_list.addItem(item)
+            if identifier == active_text:
+                self._conversation_list.setCurrentItem(item)
+
+    def show_new_conversation(self, *, private: bool) -> None:
+        self._reset_transcript()
+        self._conversation_list.clearSelection()
+        self._status.setText(
+            f"{self._base_status} · private, not saved"
+            if private
+            else f"{self._base_status} · new conversation"
+        )
+
+    def show_stored_conversation(self, conversation: StoredConversation) -> None:
+        self._reset_transcript()
+        for message in conversation.messages:
+            if message.role is ConversationRole.USER:
+                self.append_user(message.content)
+            elif message.role is ConversationRole.ASSISTANT:
+                self.apply_event(
+                    ConversationEvent(
+                        ConversationEventKind.ASSISTANT_CHUNK,
+                        message.content,
+                    )
+                )
+                self.apply_event(ConversationEvent(ConversationEventKind.COMPLETED))
+            else:
+                self.apply_event(
+                    ConversationEvent(ConversationEventKind.NOTICE, message.content)
+                )
+        self._status.setText(self._base_status)
+
+    def set_appearance(
+        self,
+        font_family: str,
+        font_size: int,
+        *,
+        dark: bool,
+    ) -> None:
+        self._font_family = font_family
+        self._font_size = font_size
+        if dark:
+            self._role_colors = {
+                "You": "#7aa2ff",
+                "Assistant": "#9ee6b8",
+                "Notice": "#f0bd73",
+            }
+            self._body_color = "#e8eaf0"
+            self._code_background = "#292f3a"
+            self._code_color = "#d8e2ff"
+        else:
+            self._role_colors = {
+                "You": "#315fd1",
+                "Assistant": "#16724a",
+                "Notice": "#8a5a16",
+            }
+            self._body_color = "#30333a"
+            self._code_background = "#e7e9ee"
+            self._code_color = "#273552"
+        self._rerender_transcript()
+
+    def _reset_transcript(self) -> None:
+        self._transcript.clear()
+        self._transcript.document().setMaximumBlockCount(MAX_TRANSCRIPT_BLOCKS)
+        self._assistant_open = False
+        self._assistant_start = None
+        self._assistant_raw = []
+        self._display_messages = []
+
+    def _record_display_message(
+        self,
+        role: ConversationRole,
+        content: str,
+    ) -> None:
+        self._display_messages.append((role, content))
+        if len(self._display_messages) > MAX_DISPLAY_MESSAGES:
+            del self._display_messages[: -MAX_DISPLAY_MESSAGES]
+
+    def _rerender_transcript(self) -> None:
+        messages = tuple(self._display_messages)
+        self._reset_transcript()
+        for role, content in messages:
+            if role is ConversationRole.USER:
+                self.append_user(content, record=False)
+            elif role is ConversationRole.ASSISTANT:
+                self.apply_event(
+                    ConversationEvent(
+                        ConversationEventKind.ASSISTANT_CHUNK,
+                        content,
+                    ),
+                    record=False,
+                )
+                self.apply_event(
+                    ConversationEvent(ConversationEventKind.COMPLETED),
+                    record=False,
+                )
+            else:
+                self.apply_event(
+                    ConversationEvent(ConversationEventKind.NOTICE, content),
+                    record=False,
+                )
+        self._display_messages = list(messages)
+
+    @Slot(QListWidgetItem)
+    def _conversation_clicked(self, item: QListWidgetItem) -> None:
+        identifier = item.data(Qt.ItemDataRole.UserRole)
+        if isinstance(identifier, str):
+            self.conversation_requested.emit(identifier)
+
+    @Slot()
+    def _delete_selected(self) -> None:
+        item = self._conversation_list.currentItem()
+        if item is None:
+            return
+        identifier = item.data(Qt.ItemDataRole.UserRole)
+        if isinstance(identifier, str):
+            self.delete_requested.emit(identifier)
 
     @Slot()
     def _submit(self) -> None:
@@ -462,12 +709,12 @@ class ChatPage(QWidget):
         self.append_user(text)
         self.message_requested.emit(text, response_limit)
 
-    def _append_role(self, label: str, color: str) -> None:
+    def _append_role(self, label: str) -> None:
         role_format = QTextCharFormat()
-        role_format.setForeground(QColor(color))
+        role_format.setForeground(QColor(self._role_colors[label]))
         role_format.setFontWeight(QFont.Weight.DemiBold)
-        role_format.setFontPointSize(11)
-        role_format.setFontFamilies([UI_FONT_FAMILY])
+        role_format.setFontPointSize(max(MIN_UI_FONT_SIZE, self._font_size - 2))
+        role_format.setFontFamilies([self._font_family])
         self._append_with_format(f"{label}\n", role_format)
 
     def _append_plain(self, text: str, *, italic: bool = False) -> None:
@@ -486,7 +733,7 @@ class ChatPage(QWidget):
         self._transcript.setTextCursor(cursor)
         self._transcript.ensureCursorVisible()
 
-    def _finish_assistant(self) -> None:
+    def _finish_assistant(self, *, record: bool = True) -> None:
         start = self._assistant_start
         if start is None:
             self._assistant_open = False
@@ -498,7 +745,8 @@ class ChatPage(QWidget):
             QTextCursor.MoveMode.KeepAnchor,
         )
         cursor.removeSelectedText()
-        self._insert_safe_markdown(cursor, "".join(self._assistant_raw))
+        assistant_text = "".join(self._assistant_raw)
+        self._insert_safe_markdown(cursor, assistant_text)
         cursor.insertText("\n\n", self._body_format())
         self._transcript.setTextCursor(cursor)
         self._transcript.ensureCursorVisible()
@@ -506,6 +754,11 @@ class ChatPage(QWidget):
         self._assistant_open = False
         self._assistant_start = None
         self._assistant_raw = []
+        if record:
+            self._record_display_message(
+                ConversationRole.ASSISTANT,
+                assistant_text,
+            )
 
     def _insert_safe_markdown(self, cursor: QTextCursor, text: str) -> None:
         """Apply a small inert Markdown subset through native text formats."""
@@ -518,16 +771,18 @@ class ChatPage(QWidget):
             if heading is not None:
                 heading_format = self._body_format()
                 heading_format.setFontWeight(QFont.Weight.Bold)
-                heading_format.setFontPointSize(19 - (2 * len(heading.group(1))))
+                heading_format.setFontPointSize(
+                    self._font_size + max(1, 5 - (2 * len(heading.group(1))))
+                )
                 cursor.insertText(heading.group(2), heading_format)
             elif bullet is not None:
                 bullet_format = self._body_format()
-                bullet_format.setForeground(QColor("#9ee6b8"))
+                bullet_format.setForeground(QColor(self._role_colors["Assistant"]))
                 cursor.insertText("• ", bullet_format)
                 self._insert_inline(cursor, bullet.group(1))
             elif numbered is not None:
                 number_format = self._body_format()
-                number_format.setForeground(QColor("#9ee6b8"))
+                number_format.setForeground(QColor(self._role_colors["Assistant"]))
                 cursor.insertText(f"{numbered.group(1)}. ", number_format)
                 self._insert_inline(cursor, numbered.group(2))
             else:
@@ -546,18 +801,17 @@ class ChatPage(QWidget):
                 cursor.insertText(token[2:-2], token_format)
             else:
                 token_format.setFontFamilies([CODE_FONT_FAMILY])
-                token_format.setBackground(QColor("#292f3a"))
-                token_format.setForeground(QColor("#d8e2ff"))
+                token_format.setBackground(QColor(self._code_background))
+                token_format.setForeground(QColor(self._code_color))
                 cursor.insertText(token[1:-1], token_format)
             position = match.end()
         cursor.insertText(text[position:], self._body_format())
 
-    @staticmethod
-    def _body_format() -> QTextCharFormat:
+    def _body_format(self) -> QTextCharFormat:
         body_format = QTextCharFormat()
-        body_format.setForeground(QColor("#e8eaf0"))
-        body_format.setFontPointSize(14)
-        body_format.setFontFamilies([UI_FONT_FAMILY])
+        body_format.setForeground(QColor(self._body_color))
+        body_format.setFontPointSize(self._font_size)
+        body_format.setFontFamilies([self._font_family])
         return body_format
 
 
@@ -660,6 +914,7 @@ class AssistantWindow(QMainWindow):
         self._chat_thread: QThread | None = None
         self._chat_worker: _ChatWorker | None = None
         self._closing = False
+        self._appearance_preferences = factory.runtime_preferences
         self.setWindowTitle(WINDOW_TITLE)
         self.resize(940, 720)
         self.setMinimumSize(720, 540)
@@ -681,9 +936,15 @@ class AssistantWindow(QMainWindow):
         self._welcome.session_only_requested.connect(self._start_session_only)
         self._chat.message_requested.connect(self._start_message)
         self._chat.settings_requested.connect(self._show_settings)
+        self._chat.new_chat_requested.connect(self._new_chat)
+        self._chat.conversation_requested.connect(self._open_conversation)
+        self._chat.delete_requested.connect(self._delete_conversation)
         self._settings.save_requested.connect(self._save_settings)
         self._settings.back_requested.connect(self._return_to_chat)
-        self._apply_styles()
+        QApplication.instance().styleHints().colorSchemeChanged.connect(
+            self._system_theme_changed
+        )
+        self._apply_appearance(self._appearance_preferences)
         launch_state: ApplicationLaunchState | None = None
         try:
             launch_state = factory.launch_state()
@@ -750,6 +1011,8 @@ class AssistantWindow(QMainWindow):
             service.info.long_response_tokens,
             service.info.maximum_response_tokens,
         )
+        self._chat.show_new_conversation(private=service.private_chat)
+        self._refresh_history()
         for notice in service.info.startup_notices:
             self._chat.apply_event(
                 ConversationEvent(ConversationEventKind.NOTICE, notice)
@@ -816,6 +1079,7 @@ class AssistantWindow(QMainWindow):
         self._chat_thread = None
         self._chat_worker = None
         if not self._closing:
+            self._refresh_history()
             self._chat.set_busy(False)
         self._finish_close_if_ready()
 
@@ -824,24 +1088,100 @@ class AssistantWindow(QMainWindow):
         self._settings.set_preferences(self._factory.runtime_preferences)
         self._pages.setCurrentWidget(self._settings)
 
-    @Slot(int, int, int)
+    @Slot(int, int, int, str, str, int)
     def _save_settings(
         self,
         context_tokens: int,
         default_response_tokens: int,
         maximum_response_tokens: int,
+        theme: str,
+        font_family: str,
+        font_size: int,
     ) -> None:
         try:
             preferences = RuntimePreferences(
                 context_tokens=context_tokens,
                 default_response_tokens=default_response_tokens,
                 maximum_response_tokens=maximum_response_tokens,
+                theme=ThemePreference(theme),
+                font_family=font_family,
+                font_size=font_size,
             )
             self._factory.save_runtime_preferences(preferences)
         except (ValueError, ApplicationSettingsError) as error:
             self._show_safe_error(str(error))
             return
+        self._apply_appearance(preferences)
         self._settings.show_saved()
+
+    @Slot(bool)
+    def _new_chat(self, private: bool) -> None:
+        if self._service is None or self._chat_thread is not None:
+            return
+        try:
+            self._service.new_conversation(private=private)
+        except ApplicationOpenError as error:
+            self._show_safe_error(str(error))
+            return
+        self._chat.show_new_conversation(private=self._service.private_chat)
+        self._refresh_history()
+
+    @Slot(str)
+    def _open_conversation(self, identifier: str) -> None:
+        if self._service is None or self._chat_thread is not None:
+            return
+        try:
+            conversation = self._service.open_conversation(UUID(identifier))
+        except (ValueError, ApplicationOpenError) as error:
+            message = (
+                str(error)
+                if isinstance(error, ApplicationOpenError)
+                else "The selected conversation identifier is invalid."
+            )
+            self._show_safe_error(message)
+            return
+        self._chat.show_stored_conversation(conversation)
+        self._refresh_history()
+
+    @Slot(str)
+    def _delete_conversation(self, identifier: str) -> None:
+        if self._service is None or self._chat_thread is not None:
+            return
+        answer = QMessageBox.question(
+            self,
+            WINDOW_TITLE,
+            "Permanently delete this conversation from the live encrypted "
+            "database? Existing encrypted backups retain it until they expire.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            self._service.delete_conversation(UUID(identifier))
+        except (ValueError, ApplicationOpenError) as error:
+            message = (
+                str(error)
+                if isinstance(error, ApplicationOpenError)
+                else "The selected conversation identifier is invalid."
+            )
+            self._show_safe_error(message)
+            return
+        self._chat.show_new_conversation(private=False)
+        self._refresh_history()
+
+    def _refresh_history(self) -> None:
+        if self._service is None:
+            return
+        try:
+            conversations = self._service.list_conversations()
+        except ApplicationOpenError as error:
+            self._show_safe_error(str(error))
+            return
+        self._chat.set_conversations(
+            conversations,
+            self._service.active_conversation_id,
+        )
 
     @Slot()
     def _return_to_chat(self) -> None:
@@ -850,15 +1190,15 @@ class AssistantWindow(QMainWindow):
 
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802
         self._closing = True
-        self.hide()
         if self._startup_worker is not None:
             self._startup_worker.cancel()
-        if self._service is not None:
-            self._service.close()
-            self._service = None
         if self._startup_thread is not None or self._chat_thread is not None:
+            if self._chat_thread is not None:
+                self._pages.setCurrentWidget(self._chat)
+                self._chat.show_closing()
             event.ignore()
             return
+        self._close_service()
         event.accept()
         QApplication.instance().quit()
 
@@ -868,33 +1208,121 @@ class AssistantWindow(QMainWindow):
             and self._startup_thread is None
             and self._chat_thread is None
         ):
+            self._close_service()
+            self.hide()
             QApplication.instance().quit()
+
+    def _close_service(self) -> None:
+        if self._service is not None:
+            self._service.close()
+            self._service = None
 
     def _show_safe_error(self, message: str) -> None:
         QMessageBox.warning(self, WINDOW_TITLE, message)
 
-    def _apply_styles(self) -> None:
-        self.setStyleSheet(
-            """
-            QWidget { background: #111318; color: #e8eaf0; font-size: 14px; }
-            QLabel { background: transparent; }
-            #welcomeTitle { font-size: 30px; font-weight: 650; margin: 8px; }
-            #settingsTitle { font-size: 26px; font-weight: 650; margin: 8px; }
-            #card { background: #1b1f27; border: 1px solid #303744;
-                    border-radius: 14px; max-width: 620px; }
-            QLineEdit, QPlainTextEdit, QTextEdit, QComboBox, QSpinBox {
-                background: #151820; border: 1px solid #394150;
-                border-radius: 8px; padding: 8px; selection-background-color: #526cff;
+    def _apply_appearance(self, preferences: RuntimePreferences) -> None:
+        self._appearance_preferences = preferences
+        installed_families = set(QFontDatabase.families())
+        font_family = (
+            preferences.font_family
+            if preferences.font_family != "system"
+            and preferences.font_family in installed_families
+            else UI_FONT_FAMILY
+        )
+        QApplication.instance().setFont(QFont(font_family, preferences.font_size))
+        if preferences.theme is ThemePreference.DARK:
+            dark = True
+        elif preferences.theme is ThemePreference.LIGHT:
+            dark = False
+        else:
+            scheme = QApplication.instance().styleHints().colorScheme()
+            dark = scheme is Qt.ColorScheme.Dark
+            if scheme is Qt.ColorScheme.Unknown:
+                dark = (
+                    QApplication.instance().palette().window().color().lightness()
+                    < 128
+                )
+        self._chat.set_appearance(
+            font_family,
+            preferences.font_size,
+            dark=dark,
+        )
+        self._apply_styles(dark=dark, font_size=preferences.font_size)
+
+    def _system_theme_changed(self, _scheme: object) -> None:
+        if self._appearance_preferences.theme is ThemePreference.SYSTEM:
+            self._apply_appearance(self._appearance_preferences)
+
+    def _apply_styles(self, *, dark: bool, font_size: int) -> None:
+        colors = (
+            {
+                "window": "#111318",
+                "text": "#e8eaf0",
+                "card": "#1b1f27",
+                "border": "#303744",
+                "field": "#151820",
+                "field_border": "#394150",
+                "primary": "#536dfe",
+                "primary_hover": "#657cff",
+                "disabled": "#343947",
+                "disabled_text": "#858b99",
+                "secondary_border": "#4b5568",
+                "secondary_hover": "#252b36",
+                "muted": "#aeb6c8",
+                "selection": "#526cff",
+                "sidebar": "#171a20",
             }
-            #transcript { padding: 12px; }
-            QPushButton { background: #536dfe; border: 0; border-radius: 8px;
-                          padding: 9px 14px; font-weight: 600; }
-            QPushButton:hover { background: #657cff; }
-            QPushButton:disabled { background: #343947; color: #858b99; }
-            #secondaryButton { background: transparent; border: 1px solid #4b5568; }
-            #secondaryButton:hover { background: #252b36; }
-            #sessionStatus { color: #aeb6c8; }
+            if dark
+            else {
+                "window": "#f2f1ee",
+                "text": "#30333a",
+                "card": "#faf9f6",
+                "border": "#d5d3ce",
+                "field": "#fbfaf7",
+                "field_border": "#c9c8c3",
+                "primary": "#4668c8",
+                "primary_hover": "#3759b5",
+                "disabled": "#d9d8d4",
+                "disabled_text": "#8a8985",
+                "secondary_border": "#aaa9a4",
+                "secondary_hover": "#e6e4df",
+                "muted": "#666a73",
+                "selection": "#7f9be0",
+                "sidebar": "#e9e7e2",
+            }
+        )
+        self.setStyleSheet(
+            f"""
+            QWidget {{ background: {colors['window']}; color: {colors['text']}; }}
+            QLabel {{ background: transparent; }}
+            #welcomeTitle {{ font-size: {font_size + 10}pt; font-weight: 650;
+                             margin: 8px; }}
+            #settingsTitle {{ font-size: {font_size + 7}pt; font-weight: 650;
+                              margin: 8px; }}
+            #historyTitle {{ font-size: {font_size + 3}pt; font-weight: 650; }}
+            #historySidebar {{ background: {colors['sidebar']};
+                              border-right: 1px solid {colors['border']}; }}
+            #conversationList {{ background: transparent; border: 0; padding: 2px; }}
+            #conversationList::item {{ border-radius: 7px; padding: 8px; }}
+            #conversationList::item:selected {{ background: {colors['selection']}; }}
+            #card {{ background: {colors['card']}; border: 1px solid {colors['border']};
+                    border-radius: 14px; max-width: 620px; }}
+            QLineEdit, QPlainTextEdit, QTextEdit, QComboBox, QSpinBox {{
+                background: %s; border: 1px solid %s;
+                border-radius: 8px; padding: 8px; selection-background-color: %s;
+            }}
+            #transcript {{ padding: 12px; }}
+            QPushButton {{ background: {colors['primary']}; border: 0;
+                          border-radius: 8px; padding: 9px 14px; font-weight: 600; }}
+            QPushButton:hover {{ background: {colors['primary_hover']}; }}
+            QPushButton:disabled {{ background: {colors['disabled']};
+                                    color: {colors['disabled_text']}; }}
+            #secondaryButton {{ background: transparent;
+                                border: 1px solid {colors['secondary_border']}; }}
+            #secondaryButton:hover {{ background: {colors['secondary_hover']}; }}
+            #sessionStatus {{ color: {colors['muted']}; }}
             """
+            % (colors["field"], colors["field_border"], colors["selection"])
         )
 
 

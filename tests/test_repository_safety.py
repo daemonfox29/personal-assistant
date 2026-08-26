@@ -10,28 +10,26 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 
 
 class RepositorySafetyTests(unittest.TestCase):
-    def test_memory_repository_sql_is_fixed_source_code(self) -> None:
-        source = (
-            REPOSITORY_ROOT
-            / "src"
-            / "personal_assistant"
-            / "memory_repository.py"
-        ).read_text()
-        tree = ast.parse(source)
-        execute_calls = [
-            node
-            for node in ast.walk(tree)
-            if isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Attribute)
-            and node.func.attr == "execute"
-        ]
+    def test_repository_sql_is_fixed_source_code(self) -> None:
+        for filename in ("memory_repository.py", "conversation_history.py"):
+            source = (
+                REPOSITORY_ROOT / "src" / "personal_assistant" / filename
+            ).read_text()
+            tree = ast.parse(source)
+            execute_calls = [
+                node
+                for node in ast.walk(tree)
+                if isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr in {"execute", "executemany"}
+            ]
 
-        self.assertTrue(execute_calls)
-        for call in execute_calls:
-            with self.subTest(line=call.lineno):
-                self.assertTrue(call.args)
-                self.assertIsInstance(call.args[0], ast.Constant)
-                self.assertIsInstance(call.args[0].value, str)
+            self.assertTrue(execute_calls)
+            for call in execute_calls:
+                with self.subTest(filename=filename, line=call.lineno):
+                    self.assertTrue(call.args)
+                    self.assertIsInstance(call.args[0], ast.Constant)
+                    self.assertIsInstance(call.args[0].value, str)
 
     def test_encrypted_database_dependency_is_exactly_pinned(self) -> None:
         project_metadata = (REPOSITORY_ROOT / "pyproject.toml").read_text()

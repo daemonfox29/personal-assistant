@@ -21,6 +21,7 @@ from personal_assistant.model import (
     validate_response_token_limit,
 )
 from personal_assistant.session_memory import (
+    ConversationTurn,
     MessageTooLargeError,
     SessionConversationMemory,
 )
@@ -97,6 +98,7 @@ class ConversationService:
         user_text: str,
         *,
         max_response_tokens: int | None = None,
+        allow_persistent_memory: bool = True,
     ) -> Iterator[ConversationEvent]:
         """Yield sanitized events for one request without concurrent generation."""
 
@@ -121,11 +123,19 @@ class ConversationService:
                     "This assistant session is closed.",
                 )
                 return
-            explicit_result = self._handle_explicit_memory(user_text)
+            explicit_result = (
+                self._handle_explicit_memory(user_text)
+                if allow_persistent_memory
+                else None
+            )
             if explicit_result is not None:
                 yield ConversationEvent(ConversationEventKind.NOTICE, explicit_result)
                 return
-            prepared = self._prepare_turn(user_text, max_response_tokens)
+            prepared = self._prepare_turn(
+                user_text,
+                max_response_tokens,
+                allow_persistent_memory=allow_persistent_memory,
+            )
             if isinstance(prepared, str):
                 if prepared:
                     yield ConversationEvent(ConversationEventKind.NOTICE, prepared)
@@ -165,7 +175,7 @@ class ConversationService:
                 closed = self._closed
             if not closed:
                 self._memory.add_turn(prepared.user_text, response_text)
-                if self._post_response_worker is not None:
+                if allow_persistent_memory and self._post_response_worker is not None:
                     self._post_response_worker.submit(
                         prepared.user_text,
                         response_text,
@@ -187,6 +197,19 @@ class ConversationService:
         if self._post_response_worker is not None:
             self._post_response_worker.close()
 
+    def replace_history(self, turns: tuple[ConversationTurn, ...]) -> None:
+        """Load bounded complete turns while no request is in progress."""
+
+        if not self._request_lock.acquire(blocking=False):
+            raise RuntimeError("Conversation history cannot change during a request.")
+        try:
+            with self._lifecycle_lock:
+                if self._closed:
+                    raise RuntimeError("This conversation service is closed.")
+            self._memory.replace_turns(turns)
+        finally:
+            self._request_lock.release()
+
     def _handle_explicit_memory(self, prompt: str) -> str | None:
         if self._explicit_memory_handler is None:
             return None
@@ -207,6 +230,8 @@ class ConversationService:
         self,
         user_text: str,
         requested_response_tokens: int | None,
+        *,
+        allow_persistent_memory: bool = True,
     ) -> _PreparedTurn | str:
         stripped = user_text.strip()
         if not stripped:
@@ -228,7 +253,7 @@ class ConversationService:
         base_system_text = response_instruction(response_limit)
         persistent_context: str | None = None
         notices: list[str] = []
-        if self._memory_context_provider is not None:
+        if allow_persistent_memory and self._memory_context_provider is not None:
             try:
                 persistent_context = self._memory_context_provider.context_for(
                     user_text,

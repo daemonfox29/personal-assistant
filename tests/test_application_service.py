@@ -27,10 +27,14 @@ PASSCODE = "synthetic-application-2468"
 
 
 class SyntheticModel:
+    def __init__(self) -> None:
+        self.requests: list[ModelRequest] = []
+
     def warm_up(self) -> None:
         pass
 
     def generate(self, request: ModelRequest) -> ModelResponse:
+        self.requests.append(request)
         return ModelResponse("synthetic response")
 
 
@@ -53,6 +57,65 @@ class SyntheticRecoveryStore:
 
 
 class ApplicationServiceTests(unittest.TestCase):
+    def test_saved_conversation_reopens_and_continues_with_bounded_roles(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            settings = AppSettings(
+                memory=MemorySettings(
+                    data_directory=Path(temporary_directory) / "private"
+                )
+            )
+            factory = AssistantApplicationFactory(settings)
+            factory.setup(RECOVERY, RECOVERY, PASSCODE, PASSCODE)
+            first_model = SyntheticModel()
+            second_model = SyntheticModel()
+            with patch(
+                "personal_assistant.application_service.OllamaModel",
+                side_effect=(first_model, second_model),
+            ):
+                first = factory.open(RECOVERY)
+                tuple(first.iter_events("My dog is Scooby"))
+                summaries = first.list_conversations()
+                first.close()
+
+                second = factory.open(RECOVERY)
+                reopened = second.open_conversation(
+                    summaries[0].conversation_id
+                )
+                tuple(second.iter_events("What is my dog's name?"))
+                second.close()
+
+            self.assertEqual(reopened.messages[0].content, "My dog is Scooby")
+            request_contents = [
+                message.content for message in second_model.requests[0].messages
+            ]
+            self.assertIn("My dog is Scooby", request_contents)
+            self.assertIn("synthetic response", request_contents)
+            self.assertEqual(
+                first_model.requests[0].messages[-1].content,
+                "My dog is Scooby",
+            )
+
+    def test_private_chat_does_not_create_saved_conversation(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            settings = AppSettings(
+                memory=MemorySettings(
+                    data_directory=Path(temporary_directory) / "private"
+                )
+            )
+            factory = AssistantApplicationFactory(settings)
+            factory.setup(RECOVERY, RECOVERY, PASSCODE, PASSCODE)
+            with patch(
+                "personal_assistant.application_service.OllamaModel",
+                return_value=SyntheticModel(),
+            ):
+                service = factory.open(RECOVERY)
+                service.new_conversation(private=True)
+                tuple(service.iter_events("Do not save this"))
+                conversations = service.list_conversations()
+                service.close()
+
+            self.assertEqual(conversations, ())
+
     def test_runtime_preferences_are_persisted_and_audited(self) -> None:
         with TemporaryDirectory() as directory:
             data_directory = Path(directory) / "private"
