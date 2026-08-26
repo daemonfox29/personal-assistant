@@ -31,11 +31,14 @@ This document is the handoff point between coding sessions. At the end of each s
   backup, and restore. A new installation remains session-only until setup
   succeeds.
 - Module 1.5 now has a lean native PySide6 foundation: masked first-run setup,
-  recovery unlock before model loading, explicit session-only startup, streaming
-  plain-text chat, fixed safe failures, bounded response selection, and graceful
-  lifecycle shutdown. Both the native UI and terminal fallback use the same
-  UI-neutral conversation service. Widgets receive no database, key, audit,
-  approval, or model authority objects.
+  recovery unlock before model loading, protected OS credential-store automatic
+  unlock after one verified recovery entry, safe manual fallback, explicit
+  session-only startup, streaming plain-text chat, fixed safe failures, bounded
+  response selection, and graceful lifecycle shutdown. Credential reads and
+  writes are content-free audited; unknown or plaintext backends fail closed.
+  Both the native UI and terminal fallback use the same UI-neutral conversation
+  service. Widgets receive no database, key, audit, approval, credential-store,
+  or model authority objects.
 - The local permission policy is implemented and covered by automated tests.
 - GitHub Actions is configured to test pull requests targeting `main` before
   merge. The public repository has an active ruleset requiring the `test`
@@ -56,7 +59,9 @@ This document is the handoff point between coding sessions. At the end of each s
   is open. After trusted setup and recovery unlock, it retrieves only eligible
   confirmed persistent records, intercepts explicit remember instructions, and
   analyzes completed turns asynchronously into quarantined candidates. It has
-  no tools, browser access, credential access, or web capability.
+  no tools, browser access, broad credential access, or web capability; the
+  native composition alone receives a narrow automatic-unlock credential
+  adapter that is never exposed to the model or widgets.
 - Conversation policy is documented separately from the action-permission policy.
 - `docs/security-principles.md` is the governing threat model and review
   checklist for every future capability; design decisions should explicitly
@@ -133,8 +138,9 @@ complete; the batched Linux pull-request check is its final platform gate.
   restart-persistent synthetic recall.
 - [x] Module 1 deployment gate: implement portable key onboarding, verified
   recovery, trusted passcode approval, candidate review, and runtime wiring.
-- [x] Module 1.5 foundation: add a native setup, unlock, session-only, and
-  streaming-chat interface over a narrow application-service boundary.
+- [x] Module 1.5 foundation: add a native setup, recovery/automatic unlock,
+  session-only, and streaming-chat interface over a narrow application-service
+  boundary.
 - [ ] Module 1.5 owner controls: add native candidate review, memory management,
   backup/restore, bounded audit viewing, and settings without exposing authority
   objects to widgets.
@@ -145,6 +151,33 @@ complete; the batched Linux pull-request check is its final platform gate.
 - [ ] Add a web/search tool only behind the tool registry and approval layer.
 
 ## Session history
+
+### 2026-08-26 — Protected automatic unlock
+
+Completed:
+
+- Added a narrow OS credential-store adapter so the native app can enroll the
+  recovery secret only after a successful database unlock and then start later
+  sessions without a recovery-passphrase prompt.
+- Kept the portable recovery passphrase and high-risk passcode separate. Missing,
+  unavailable, or stale automatic-unlock material falls back to the trusted
+  recovery screen before model loading and never creates a new database.
+- Restricted production use to reviewed protected keyring backends, pinned and
+  hash-locked `keyring` 25.7.0, and explicitly excluded plaintext fallback.
+- Added content-free audit events for credential reads and enrollment without
+  credential values, OS account names, or data paths.
+- Verified the real macOS Keychain with a temporary synthetic write/read/delete
+  round trip; the temporary credential was removed afterward.
+- Verified 261 tests locally; the opt-in 100,000-record retrieval benchmark is
+  the only normal-suite skip. Windows and Linux credential backends remain
+  explicit platform verification gates.
+
+Next:
+
+- Enter the recovery passphrase once in the native app to enroll the existing
+  encrypted database, then verify the following launch reaches chat without a
+  passphrase prompt.
+- Continue with native candidate review and memory owner controls.
 
 ### 2026-08-25 — Module 1.5 native UI foundation
 

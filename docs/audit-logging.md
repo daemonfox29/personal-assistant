@@ -20,6 +20,8 @@ Security and workflow boundaries should emit structured events for:
 - proposed tool actions and permission decisions;
 - approval receipt issuance, verification, use, expiry, and rejection;
 - tool execution start and outcome;
+- automatic-unlock credential reads, verified enrollment, deletion, and safe
+  fallback without the credential value or account/path identifiers;
 - database migration and repository-operation outcomes; and
 - startup, shutdown, configuration validation, and audit-writer failures.
 
@@ -71,9 +73,10 @@ not preserve a potentially sensitive raw location.
 - [ ] Integrate typed events into each model, authorization, tool, database, and
   backup boundary as that boundary is implemented or deliberately revised.
 
-The encrypted-database connection boundary now emits start, success, and safe
-failure events. Repository queries, migrations, backups, model requests,
-authorization decisions, and tools still require their own integrations.
+The encrypted-database connection and native automatic-unlock credential
+boundaries now emit start, success, and safe failure events. Repository queries,
+migrations, backups, model requests, authorization decisions, and tools retain
+their own focused integration requirements as those paths evolve.
 
 The writer accepts only typed enums, UUIDs, bounded integers, and allowlisted
 safe labels. It has no free-form message field. This makes prompt, response,

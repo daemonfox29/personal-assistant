@@ -47,6 +47,15 @@ class RepositorySafetyTests(unittest.TestCase):
         self.assertIn('name = "pyside6-essentials"', lockfile)
         self.assertIn('version = "6.11.2"', lockfile)
 
+    def test_credential_store_is_pinned_without_plaintext_backend(self) -> None:
+        project_metadata = (REPOSITORY_ROOT / "pyproject.toml").read_text()
+        lockfile = (REPOSITORY_ROOT / "uv.lock").read_text()
+
+        self.assertIn('"keyring==25.7.0"', project_metadata)
+        self.assertIn('name = "keyring"', lockfile)
+        self.assertIn('version = "25.7.0"', lockfile)
+        self.assertNotIn('name = "keyrings-alt"', lockfile)
+
     def test_uv_version_lockfile_and_ci_are_pinned(self) -> None:
         project_metadata = (REPOSITORY_ROOT / "pyproject.toml").read_text()
         lockfile = (REPOSITORY_ROOT / "uv.lock").read_text()

@@ -44,6 +44,7 @@ class AuditOperation(StrEnum):
     STARTUP = "startup"
     SHUTDOWN = "shutdown"
     CONFIGURATION_VALIDATE = "configuration_validate"
+    CREDENTIAL_ACCESS = "credential_access"
     MODEL_REQUEST = "model_request"
     PERMISSION_EVALUATE = "permission_evaluate"
     APPROVAL_ISSUE = "approval_issue"

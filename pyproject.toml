@@ -9,6 +9,7 @@ description = "A modular, local-first personal AI assistant"
 readme = "README.md"
 requires-python = ">=3.11,<3.15"
 dependencies = [
+    "keyring==25.7.0",
     "pyside6-essentials==6.11.2",
     "sqlcipher3==0.6.2",
 ]

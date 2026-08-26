@@ -467,8 +467,11 @@ a production bypass.
 - Data must briefly exist decrypted in process memory while validated,
   retrieved, and used. Minimize amount and lifetime, release references, and
   never claim guaranteed physical erasure from RAM, swap, or crash facilities.
-- The optional OS credential-store adapter may support automatic unlock, while
-  a separate portable recovery passphrase preserves cross-platform recovery.
+- The native app may store a verified recovery secret through its narrow OS
+  credential-store adapter for automatic unlock, while a separate owner-held
+  copy preserves portable recovery. Unknown, null, or plaintext credential
+  backends fail closed to manual recovery; they never trigger plaintext storage
+  or creation of a replacement database.
 
 Loss of all key material means encrypted data is unrecoverable. Setup and key
 rotation must verify recovery material before accepting real records.

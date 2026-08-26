@@ -28,12 +28,14 @@ from PySide6.QtWidgets import (
 from personal_assistant.application_service import (
     ApplicationLaunchState,
     ApplicationOpenError,
+    ApplicationRecoveryRequired,
     ApplicationServiceError,
     AssistantApplicationFactory,
     AssistantApplicationService,
 )
 from personal_assistant.config import load_settings
 from personal_assistant.conversation import ConversationEvent, ConversationEventKind
+from personal_assistant.credential_store import SystemRecoveryCredentialStore
 from personal_assistant.terminal_output import sanitize_terminal_text
 
 
@@ -48,6 +50,7 @@ NUMBERED_MARKUP = re.compile(r"^\s*(\d{1,3})[.)]\s+(.+)$")
 
 class WelcomePage(QWidget):
     setup_requested = Signal(str, str, str, str)
+    automatic_unlock_requested = Signal()
     unlock_requested = Signal(str)
     session_only_requested = Signal()
 
@@ -92,7 +95,17 @@ class WelcomePage(QWidget):
         self._session_only = QPushButton("Continue without persistent memory")
         self._session_only.setObjectName("secondaryButton")
         self._session_only.clicked.connect(self.session_only_requested)
-        if state is ApplicationLaunchState.UNLOCK_REQUIRED:
+        if state is ApplicationLaunchState.AUTOMATIC_UNLOCK:
+            explanation = QLabel(
+                "Encrypted memory will unlock through this computer's protected "
+                "credential store."
+            )
+            explanation.setWordWrap(True)
+            self._form.addRow(explanation)
+            self._primary.setText("Start securely")
+            self._form.addRow(self._primary)
+            self._session_only.hide()
+        elif state is ApplicationLaunchState.UNLOCK_REQUIRED:
             self._form.addRow("Recovery passphrase", self._recovery)
             self._primary.setText("Unlock and start")
             self._form.addRow(self._primary)
@@ -129,6 +142,9 @@ class WelcomePage(QWidget):
 
     @Slot()
     def _submit(self) -> None:
+        if self._state is ApplicationLaunchState.AUTOMATIC_UNLOCK:
+            self.automatic_unlock_requested.emit()
+            return
         if self._state is ApplicationLaunchState.UNLOCK_REQUIRED:
             recovery = self._recovery.text()
             self._clear_secret_fields()
@@ -370,6 +386,7 @@ class ChatPage(QWidget):
 
 class _StartupWorker(QObject):
     succeeded = Signal(object)
+    recovery_required = Signal()
     failed = Signal(str)
     finished = Signal()
 
@@ -405,6 +422,8 @@ class _StartupWorker(QObject):
                 service = self._factory.open(recovery)
             elif self._mode == "unlock":
                 service = self._factory.open(self._secrets[0])
+            elif self._mode == "automatic":
+                service = self._factory.open()
             else:
                 service = self._factory.open(session_only=True)
             if self._cancelled.is_set():
@@ -412,6 +431,8 @@ class _StartupWorker(QObject):
             else:
                 self.succeeded.emit(service)
                 service = None
+        except ApplicationRecoveryRequired:
+            self.recovery_required.emit()
         except ApplicationServiceError as error:
             self.failed.emit(str(error))
         finally:
@@ -474,15 +495,22 @@ class AssistantWindow(QMainWindow):
         self.setCentralWidget(self._pages)
 
         self._welcome.setup_requested.connect(self._start_setup)
+        self._welcome.automatic_unlock_requested.connect(
+            self._start_automatic_unlock
+        )
         self._welcome.unlock_requested.connect(self._start_unlock)
         self._welcome.session_only_requested.connect(self._start_session_only)
         self._chat.message_requested.connect(self._start_message)
         self._apply_styles()
+        launch_state: ApplicationLaunchState | None = None
         try:
-            self._welcome.set_state(factory.launch_state())
+            launch_state = factory.launch_state()
+            self._welcome.set_state(launch_state)
         except ApplicationOpenError as error:
             self._welcome.setEnabled(False)
             self._show_safe_error(str(error))
+        if launch_state is ApplicationLaunchState.AUTOMATIC_UNLOCK:
+            self._start_automatic_unlock()
 
     @Slot(str, str, str, str)
     def _start_setup(
@@ -502,6 +530,10 @@ class AssistantWindow(QMainWindow):
         self._start_application("unlock", (recovery,))
 
     @Slot()
+    def _start_automatic_unlock(self) -> None:
+        self._start_application("automatic", ())
+
+    @Slot()
     def _start_session_only(self) -> None:
         self._start_application("session", ())
 
@@ -514,6 +546,7 @@ class AssistantWindow(QMainWindow):
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
         worker.succeeded.connect(self._application_started)
+        worker.recovery_required.connect(self._recovery_required)
         worker.failed.connect(self._startup_failed)
         worker.finished.connect(thread.quit)
         worker.finished.connect(worker.deleteLater)
@@ -551,6 +584,13 @@ class AssistantWindow(QMainWindow):
             else:
                 self._welcome.setEnabled(True)
                 self._welcome.set_busy(False)
+
+    @Slot()
+    def _recovery_required(self) -> None:
+        if not self._closing:
+            self._welcome.set_state(ApplicationLaunchState.UNLOCK_REQUIRED)
+            self._welcome.setEnabled(True)
+            self._welcome.set_busy(False)
 
     @Slot()
     def _startup_finished(self) -> None:
@@ -654,7 +694,13 @@ def main() -> int:
     application_font.setPointSize(13)
     app.setFont(application_font)
     try:
-        factory = AssistantApplicationFactory(load_settings())
+        settings = load_settings()
+        factory = AssistantApplicationFactory(
+            settings,
+            recovery_store=SystemRecoveryCredentialStore(
+                settings.memory.data_directory
+            ),
+        )
     except (ValueError, ApplicationServiceError):
         QMessageBox.critical(
             None,

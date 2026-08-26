@@ -22,7 +22,8 @@ portable recovery, encrypted backup and guided restore, and a bounded chat-
 context adapter. A new installation stays session-only until the owner completes
 the trusted local setup. A lean native Module 1.5 interface now provides local
 setup, recovery unlock, session-only use, and streaming chat without a browser
-or UI web server. Tools are not enabled.
+or UI web server. A verified recovery entry can enroll protected automatic
+unlock for later native-app launches. Tools are not enabled.
 
 ## Set up the project
 
@@ -48,8 +49,10 @@ uv run --locked personal-assistant-ui
 ```
 
 The native app guides first-run encrypted-memory setup or recovery unlock, then
-starts Ollama and opens streaming chat. Unlock is attempted before Ollama is
-loaded, and model output is displayed only as inert local text.
+starts Ollama and opens streaming chat. After one verified recovery entry, later
+native launches use the operating system's protected credential store and do
+not show a startup passphrase field. Unlock is attempted before Ollama is loaded,
+and model output is displayed only as inert local text.
 Completed answers receive code-defined native formatting for headings, lists,
 bold emphasis, and inline code. Model content is never interpreted as HTML and
 cannot create active links or remote resources.
@@ -72,11 +75,23 @@ uv run --locked python -m personal_assistant.memory_admin setup
 uv run --locked python -m personal_assistant.memory_admin verify-recovery
 ```
 
-The recovery passphrase derives the SQLCipher key each time the app starts. It
-is not stored, and losing it makes the database and its backups unrecoverable.
+The recovery passphrase derives the SQLCipher key. The portable security
+manifest and database never contain it. After a successful native-app unlock,
+the app stores it in the operating system's protected credential store so later
+native launches can unlock automatically. Keep a separate copy: the credential
+store entry is machine-local and may be lost during account, operating-system,
+or computer recovery. Without either that entry or the recovery passphrase, the
+database and its backups are unrecoverable.
 The high-risk passcode authorizes one exact sensitive operation at a time; it
 cannot override a prohibited action. Failed attempts are audited and the
 lockout survives command restarts.
+
+Automatic unlock deliberately trades some local-launch protection for
+convenience. Someone already operating your unlocked OS account may be able to
+open ordinary chat and recalled memory. It does not bypass the separate
+high-risk passcode, and copying only the data directory to another machine does
+not copy the protected credential. The command-line recovery interface continues
+to request the recovery passphrase explicitly.
 
 By default, persistent files use one stable local directory:
 `~/.personal-assistant/`. The encrypted database is always
@@ -86,9 +101,11 @@ to create a replacement if it is missing. Database creation is enabled only
 inside the explicit first-run setup transaction. Set an absolute
 `PERSONAL_ASSISTANT_DATA_DIR` before first setup to choose another location.
 
-After setup, start chat normally and enter the recovery passphrase at its hidden
-prompt. Use `/remember <information>` or `remember that <information>` for an
-explicit ordinary memory. Automatic analysis runs after the visible answer. An
+For an existing installation, the first native launch after this update asks
+for the recovery passphrase once, verifies the encrypted database, and enrolls
+automatic unlock. Later native launches proceed without that prompt. Use
+`/remember <information>` or `remember that <information>` for an explicit
+ordinary memory. Automatic analysis runs after the visible answer. An
 exact low-risk quote copied from your current message may become confirmed
 memory, but deterministic code stores only that quote—not the model's subject or
 paraphrase. Mismatched, inferred, sensitive, conflicting, or credential-like

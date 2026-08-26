@@ -69,8 +69,9 @@ The first usable slice includes:
 
 1. A first-run setup screen with hidden recovery-passphrase and high-risk-
    passcode fields and local confirmation.
-2. A recovery unlock screen that does not load the model until encrypted memory
-   has unlocked successfully.
+2. Protected automatic unlock after one verified recovery entry, with a recovery
+   screen fallback when the machine-local credential is absent or stale. Neither
+   path loads the model until encrypted memory unlocks successfully.
 3. An explicitly labeled session-only option when memory is not configured.
 4. A streaming chat screen with bounded response-limit selection, one active
    request at a time, plain-text rendering, fixed safe errors, and graceful
@@ -95,10 +96,12 @@ implemented by exposing repository objects to widgets.
 
 ## Dependency decision
 
-Use only `PySide6-Essentials`, pinned and hash-locked through `uv`. The Essentials
-wheel includes the required QtCore, QtGui, QtWidgets, and QtTest modules without
-the larger PySide6 Addons bundle. New Qt modules require an explicit dependency
-and security review.
+Use `PySide6-Essentials` for the interface and `keyring` for the narrow automatic-
+unlock adapter, both pinned and hash-locked through `uv`. Qt Essentials includes
+the required QtCore, QtGui, QtWidgets, and QtTest modules without the larger
+PySide6 Addons bundle. The credential adapter rejects unknown, null, and
+plaintext backends instead of weakening to unprotected storage. New Qt modules
+or credential backends require an explicit dependency and security review.
 
 Qt is dynamically linked through the official wheels. Distribution must retain
 the required LGPL notices and allow replacement of the Qt libraries as required
@@ -107,10 +110,13 @@ gate.
 
 ## Acceptance criteria
 
-- Setup, unlock, and ordinary chat require no terminal interaction after launch.
+- Setup, recovery, automatic unlock, and ordinary chat require no terminal
+  interaction after launch.
 - Secret fields are masked, never echoed into chat, never passed to the model,
   and cleared from widgets immediately after use.
 - A failed unlock does not load the model or expose raw errors.
+- Missing or stale automatic-unlock credentials fall back to recovery entry and
+  never create a replacement database.
 - The UI cannot access repository, key-provider, receipt-authority, or audit-sink
   attributes through its public service contract.
 - Model output is inserted only as sanitized text with code-owned native
@@ -126,7 +132,8 @@ gate.
 
 - Native memory-management and backup panels.
 - Packaged `.app` creation, code signing, and click-to-launch installation.
-- Windows packaging and runtime verification.
+- Windows packaging and runtime verification, including its native credential
+  backend and recovery fallback.
 - Accessibility, keyboard navigation, high-DPI, and screen-reader review.
 - A signed update mechanism. The application must not self-update until package
   authenticity and rollback behavior are designed and tested.

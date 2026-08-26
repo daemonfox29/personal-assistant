@@ -95,8 +95,9 @@ Module 1 data boundary is implemented. It should let the user:
   asked`, and `never mention`;
 - view effective settings after global, conversation, topic, and session
   overrides are applied;
-- configure a cross-platform encrypted database and portable recovery method,
-  with optional operating-system credential-store integration;
+- configure the cross-platform encrypted database, portable recovery method,
+  and operating-system credential-store automatic unlock, including removal or
+  re-enrollment of the machine-local credential;
 - choose an external-drive backup destination, run or schedule one daily
   backup, set retention and size limits, verify backup health, and perform a
   guided restore; and
@@ -112,9 +113,9 @@ reapply the permanent-deletion ledger so purged records are not resurrected.
 
 Current Module 1 defaults to preserve or expose through that future UI:
 
-- continue requiring the portable recovery passphrase at startup; optionally
-  add automatic unlock through the current operating system's credential store
-  only after a separate cross-platform design and threat review;
+- use protected automatic unlock for the native app after one verified recovery
+  entry, with manual recovery fallback; keep Windows and Linux credential-store
+  behavior unverified until their explicit platform gates pass;
 - do not require a separate login for ordinary conversation; require a local
   passcode or passphrase entered through the trusted interface for each exact
   high-risk operation;

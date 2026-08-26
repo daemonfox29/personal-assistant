@@ -5,9 +5,11 @@ from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
 
+from personal_assistant.audit import AuditWriteError
 from personal_assistant.application_service import (
     ApplicationLaunchState,
     ApplicationOpenError,
+    ApplicationRecoveryRequired,
     ApplicationSetupError,
     AssistantApplicationFactory,
 )
@@ -25,6 +27,24 @@ class SyntheticModel:
 
     def generate(self, request: ModelRequest) -> ModelResponse:
         return ModelResponse("synthetic response")
+
+
+class SyntheticRecoveryStore:
+    def __init__(self, recovery: str | None = None) -> None:
+        self.recovery = recovery
+        self.writes: list[str] = []
+        self.deletes = 0
+
+    def read_recovery(self) -> str | None:
+        return self.recovery
+
+    def write_recovery(self, recovery_passphrase: str) -> None:
+        self.recovery = recovery_passphrase
+        self.writes.append(recovery_passphrase)
+
+    def delete_recovery(self) -> None:
+        self.recovery = None
+        self.deletes += 1
 
 
 class ApplicationServiceTests(unittest.TestCase):
@@ -106,6 +126,100 @@ class ApplicationServiceTests(unittest.TestCase):
                     factory.open("incorrect synthetic recovery")
 
             model_type.assert_not_called()
+
+    def test_verified_manual_unlock_enrolls_then_uses_automatic_unlock(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            settings = AppSettings(
+                memory=MemorySettings(
+                    data_directory=Path(temporary_directory) / "private"
+                )
+            )
+            store = SyntheticRecoveryStore()
+            factory = AssistantApplicationFactory(
+                settings,
+                recovery_store=store,
+            )
+            factory.setup(RECOVERY, RECOVERY, PASSCODE, PASSCODE)
+            self.assertEqual(
+                factory.launch_state(),
+                ApplicationLaunchState.AUTOMATIC_UNLOCK,
+            )
+
+            with patch(
+                "personal_assistant.application_service.OllamaModel",
+                return_value=SyntheticModel(),
+            ):
+                first = factory.open(RECOVERY)
+                first.close()
+                second = factory.open()
+                second.close()
+
+            self.assertEqual(store.writes, [RECOVERY])
+            self.assertEqual(store.recovery, RECOVERY)
+            audit_text = (settings.memory.data_directory / "audit.jsonl").read_text(
+                encoding="utf-8"
+            )
+            self.assertIn('"operation":"credential_access"', audit_text)
+            self.assertIn("automatic_unlock_write", audit_text)
+            self.assertIn("automatic_unlock_read", audit_text)
+            self.assertNotIn(RECOVERY, audit_text)
+
+    def test_missing_or_stale_automatic_secret_requires_manual_recovery(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            settings = AppSettings(
+                memory=MemorySettings(
+                    data_directory=Path(temporary_directory) / "private"
+                )
+            )
+            manual_factory = AssistantApplicationFactory(settings)
+            manual_factory.setup(RECOVERY, RECOVERY, PASSCODE, PASSCODE)
+
+            for stored_recovery, expected_deletes in (
+                (None, 0),
+                ("incorrect synthetic recovery", 1),
+            ):
+                with self.subTest(stored_recovery=stored_recovery):
+                    store = SyntheticRecoveryStore(stored_recovery)
+                    factory = AssistantApplicationFactory(
+                        settings,
+                        recovery_store=store,
+                    )
+                    with patch(
+                        "personal_assistant.application_service.OllamaModel"
+                    ) as model_type:
+                        with self.assertRaises(ApplicationRecoveryRequired):
+                            factory.open()
+
+                    self.assertEqual(store.deletes, expected_deletes)
+                    model_type.assert_not_called()
+
+    def test_enrollment_audit_failure_removes_automatic_secret(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            settings = AppSettings(
+                memory=MemorySettings(
+                    data_directory=Path(temporary_directory) / "private"
+                )
+            )
+            store = SyntheticRecoveryStore()
+            factory = AssistantApplicationFactory(
+                settings,
+                recovery_store=store,
+            )
+            factory.setup(RECOVERY, RECOVERY, PASSCODE, PASSCODE)
+
+            with patch(
+                "personal_assistant.application_service.OllamaModel",
+                return_value=SyntheticModel(),
+            ), patch.object(
+                factory,
+                "_audit_credential_access",
+                side_effect=(None, AuditWriteError("synthetic audit failure")),
+            ):
+                with self.assertRaises(ApplicationOpenError):
+                    factory.open(RECOVERY)
+
+            self.assertIsNone(store.recovery)
+            self.assertEqual(store.deletes, 1)
 
     def test_missing_database_fails_closed_without_creating_a_replacement(self) -> None:
         with TemporaryDirectory() as temporary_directory:

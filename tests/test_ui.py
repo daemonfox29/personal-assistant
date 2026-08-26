@@ -41,6 +41,17 @@ class NativeUiTests(unittest.TestCase):
         self.assertEqual(captured[0], ("recovery", "recovery", "passcode", "passcode"))
         self.assertTrue(all(field.text() == "" for field in fields))
 
+    def test_automatic_unlock_state_needs_no_secret_field(self) -> None:
+        page = WelcomePage()
+        page.set_state(ApplicationLaunchState.AUTOMATIC_UNLOCK)
+        requested: list[bool] = []
+        page.automatic_unlock_requested.connect(lambda: requested.append(True))
+
+        page._submit()
+
+        self.assertEqual(requested, [True])
+        self.assertEqual(page._form.labelForField(page._recovery), None)
+
     def test_transcript_uses_plain_text_and_exposes_invisible_controls(self) -> None:
         page = ChatPage()
         page.append_user("<img src=https://example.invalid>\u202e")

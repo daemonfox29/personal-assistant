@@ -5,12 +5,26 @@ from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 from threading import Lock
-from uuid import uuid4
+from uuid import UUID, uuid4
 
+from personal_assistant.audit import (
+    AuditComponent,
+    AuditError,
+    AuditEvent,
+    AuditMetadataItem,
+    AuditMetadataKey,
+    AuditOperation,
+    AuditOutcome,
+    AuditReasonCode,
+)
 from personal_assistant.audit_file import AuditFileSettings, JsonLinesAuditSink
 from personal_assistant.backup import BackupError
 from personal_assistant.config import AppSettings
 from personal_assistant.conversation import ConversationEvent, ConversationService
+from personal_assistant.credential_store import (
+    CredentialStoreError,
+    RecoveryCredentialStore,
+)
 from personal_assistant.memory_analyzer import (
     ModelMemorySuggestionAnalyzer,
     PostResponseMemoryWorker,
@@ -26,6 +40,7 @@ from personal_assistant.model import (
 from personal_assistant.portable_security import (
     PortableSecurityManager,
     PortableSecuritySettings,
+    RecoveryUnlockError,
     SecuritySetupError,
 )
 
@@ -42,8 +57,13 @@ class ApplicationOpenError(ApplicationServiceError):
     pass
 
 
+class ApplicationRecoveryRequired(ApplicationOpenError):
+    """Automatic unlock was unavailable, so trusted recovery entry is needed."""
+
+
 class ApplicationLaunchState(StrEnum):
     SETUP_REQUIRED = "setup_required"
+    AUTOMATIC_UNLOCK = "automatic_unlock"
     UNLOCK_REQUIRED = "unlock_required"
     SESSION_ONLY = "session_only"
 
@@ -121,10 +141,21 @@ class AssistantApplicationService:
 class AssistantApplicationFactory:
     """Perform setup and compose sessions behind fixed safe UI outcomes."""
 
-    def __init__(self, settings: AppSettings) -> None:
+    def __init__(
+        self,
+        settings: AppSettings,
+        *,
+        recovery_store: RecoveryCredentialStore | None = None,
+    ) -> None:
         if not isinstance(settings, AppSettings):
             raise TypeError("Application factory requires validated settings.")
+        if recovery_store is not None and not isinstance(
+            recovery_store,
+            RecoveryCredentialStore,
+        ):
+            raise TypeError("Application factory requires a recovery credential store.")
         self._settings = settings
+        self._recovery_store = recovery_store
 
     def launch_state(self) -> ApplicationLaunchState:
         if not self._settings.memory.enabled:
@@ -148,6 +179,8 @@ class AssistantApplicationFactory:
                     "The encrypted memory database is missing or unsafe. Startup "
                     "was blocked to prevent creating a blank replacement."
                 )
+            if self._recovery_store is not None:
+                return ApplicationLaunchState.AUTOMATIC_UNLOCK
             return ApplicationLaunchState.UNLOCK_REQUIRED
         if manifest.exists() or manifest.is_symlink():
             raise ApplicationOpenError(
@@ -215,17 +248,39 @@ class AssistantApplicationFactory:
     ) -> AssistantApplicationService:
         runtime: MemoryRuntime | None = None
         notices: list[str] = []
+        automatic_unlock = recovery_passphrase is None
         try:
             if not session_only and self._settings.memory.enabled:
-                if self.launch_state() is not ApplicationLaunchState.UNLOCK_REQUIRED:
+                if self.launch_state() not in {
+                    ApplicationLaunchState.AUTOMATIC_UNLOCK,
+                    ApplicationLaunchState.UNLOCK_REQUIRED,
+                }:
                     raise ApplicationOpenError("Persistent memory is not configured.")
                 if recovery_passphrase is None:
-                    raise ApplicationOpenError("A recovery passphrase is required.")
-                runtime = MemoryRuntime.open(
-                    self._settings.memory,
-                    recovery_passphrase,
-                    audit_sink=self._audit_sink(),
-                )
+                    recovery_passphrase = self._automatic_recovery()
+                try:
+                    runtime = MemoryRuntime.open(
+                        self._settings.memory,
+                        recovery_passphrase,
+                        audit_sink=self._audit_sink(),
+                    )
+                except RecoveryUnlockError as error:
+                    if automatic_unlock:
+                        self._discard_automatic_recovery()
+                        raise ApplicationRecoveryRequired(
+                            "Enter your recovery passphrase to restore automatic "
+                            "unlock."
+                        ) from error
+                    raise
+                if not automatic_unlock and self._recovery_store is not None:
+                    try:
+                        self._store_automatic_recovery(recovery_passphrase)
+                    except CredentialStoreError:
+                        notices.append(
+                            "Automatic unlock could not be enabled. Your encrypted "
+                            "memory is open, but the recovery passphrase will be "
+                            "required next time."
+                        )
                 if runtime.backup_manager is not None:
                     try:
                         runtime.create_daily_backup(uuid4())
@@ -278,6 +333,124 @@ class AssistantApplicationFactory:
             raise ApplicationOpenError(self._safe_open_message(error)) from error
         finally:
             recovery_passphrase = None
+
+    def _automatic_recovery(self) -> str:
+        if self._recovery_store is None:
+            raise ApplicationRecoveryRequired("A recovery passphrase is required.")
+        correlation_id = uuid4()
+        self._audit_credential_access(
+            correlation_id,
+            "automatic_unlock_read",
+            AuditOutcome.STARTED,
+            AuditReasonCode.NORMAL,
+        )
+        try:
+            recovery = self._recovery_store.read_recovery()
+        except CredentialStoreError as error:
+            self._audit_credential_access(
+                correlation_id,
+                "automatic_unlock_read",
+                AuditOutcome.FAILED,
+                AuditReasonCode.KEY_UNAVAILABLE,
+            )
+            raise ApplicationRecoveryRequired(
+                "Enter your recovery passphrase to restore automatic unlock."
+            ) from error
+        if recovery is None:
+            self._audit_credential_access(
+                correlation_id,
+                "automatic_unlock_read",
+                AuditOutcome.SKIPPED,
+                AuditReasonCode.KEY_UNAVAILABLE,
+            )
+            raise ApplicationRecoveryRequired(
+                "Enter your recovery passphrase once to enable automatic unlock."
+            )
+        self._audit_credential_access(
+            correlation_id,
+            "automatic_unlock_read",
+            AuditOutcome.SUCCEEDED,
+            AuditReasonCode.NORMAL,
+        )
+        return recovery
+
+    def _store_automatic_recovery(self, recovery_passphrase: str) -> None:
+        if self._recovery_store is None:
+            return
+        correlation_id = uuid4()
+        self._audit_credential_access(
+            correlation_id,
+            "automatic_unlock_write",
+            AuditOutcome.STARTED,
+            AuditReasonCode.NORMAL,
+        )
+        try:
+            self._recovery_store.write_recovery(recovery_passphrase)
+        except CredentialStoreError:
+            self._audit_credential_access(
+                correlation_id,
+                "automatic_unlock_write",
+                AuditOutcome.FAILED,
+                AuditReasonCode.KEY_UNAVAILABLE,
+            )
+            raise
+        try:
+            self._audit_credential_access(
+                correlation_id,
+                "automatic_unlock_write",
+                AuditOutcome.SUCCEEDED,
+                AuditReasonCode.NORMAL,
+            )
+        except AuditError:
+            try:
+                self._recovery_store.delete_recovery()
+            except CredentialStoreError:
+                pass
+            raise
+
+    def _discard_automatic_recovery(self) -> None:
+        if self._recovery_store is None:
+            return
+        correlation_id = uuid4()
+        try:
+            self._audit_credential_access(
+                correlation_id,
+                "automatic_unlock_delete",
+                AuditOutcome.STARTED,
+                AuditReasonCode.NORMAL,
+            )
+            self._recovery_store.delete_recovery()
+            self._audit_credential_access(
+                correlation_id,
+                "automatic_unlock_delete",
+                AuditOutcome.SUCCEEDED,
+                AuditReasonCode.NORMAL,
+            )
+        except (AuditError, CredentialStoreError):
+            pass
+
+    def _audit_credential_access(
+        self,
+        correlation_id: UUID,
+        action_kind: str,
+        outcome: AuditOutcome,
+        reason_code: AuditReasonCode,
+    ) -> None:
+        self._audit_sink().write(
+            AuditEvent(
+                correlation_id=correlation_id,
+                component=AuditComponent.APPLICATION,
+                operation=AuditOperation.CREDENTIAL_ACCESS,
+                outcome=outcome,
+                reason_code=reason_code,
+                metadata=(
+                    AuditMetadataItem(
+                        AuditMetadataKey.ACTION_KIND,
+                        action_kind,
+                    ),
+                ),
+            )
+        )
 
     @property
     def _manifest_path(self) -> Path:

@@ -33,17 +33,22 @@ review questions in [Security Principles](security-principles.md).
 ## Information flow
 
 Current native or recovery-CLI chat flow after trusted Module 1 setup and
-recovery unlock:
+recovery or operating-system-assisted unlock:
 
 Native widgets or recovery CLI → narrow application/conversation service →
 bounded encrypted retrieval → untrusted-data system envelope → token-bounded
 structured messages → model adapter → local Ollama model → sanitized streamed
 display events
 
-The default command-line startup supplies the adapter only when a safe portable
-security manifest exists and the hidden recovery prompt unlocks it. A new or
-disabled installation follows the Module 0 session-only path. Explicit remember
-instructions are intercepted before model submission. After the visible answer,
+The native app can retrieve the previously verified recovery secret through a
+narrow operating-system credential-store adapter. The adapter is bound to the
+configured data location, accepts only reviewed protected backends, and falls
+back to trusted recovery entry when unavailable or stale. The default
+command-line startup remains the explicit recovery path. Both supply the memory
+adapter only when a safe portable manifest and existing encrypted database
+unlock successfully. A new or disabled installation follows the Module 0
+session-only path. Explicit remember instructions are intercepted before model
+submission. After the visible answer,
 a bounded worker may ask the model for tentative suggestions. Deterministic code
 may promote only an exact low-risk quote found in the user's current message and
 stores that quote with trusted-interface provenance. Model-authored paraphrases,

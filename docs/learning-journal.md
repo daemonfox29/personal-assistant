@@ -24,6 +24,15 @@ chat content, accidental commands, or someone casually opening the assistant;
 operating-system account security, disk encryption, updates, and physical control
 remain separate defenses.
 
+Automatic unlock adds a third piece: the operating system's credential store
+can retain the verified recovery secret for routine native-app launches. This
+does not remove encryption or replace the recovery passphrase; it moves routine
+unlock trust to the logged-in operating-system account. The convenience tradeoff
+is that someone already using that unlocked account may open ordinary assistant
+memory without re-entering the recovery phrase. The separate high-risk passcode
+still gates consequential operations, while an owner-held recovery copy remains
+necessary for a new computer or a lost credential-store entry.
+
 Automatic memory analysis now happens after the visible answer, so it does not
 delay the response path. Its output is treated as an untrusted proposal and can
 only enter a quarantined candidate inbox. Confirming or rejecting those proposals
