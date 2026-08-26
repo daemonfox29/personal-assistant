@@ -7,6 +7,7 @@ from uuid import uuid4
 
 from personal_assistant.audit import InMemoryAuditSink
 from personal_assistant.config import MemorySettings
+from personal_assistant.migration import MigrationApplyError
 from personal_assistant.memory_runtime import MemoryRuntime
 from personal_assistant.memory_capture import AutomaticMemorySuggestion
 from personal_assistant.memory_repository import RetrievalRequest
@@ -29,6 +30,32 @@ PASSCODE = "synthetic-runtime-passcode"
 
 
 class MemoryRuntimeTests(unittest.TestCase):
+    def test_normal_open_never_creates_a_missing_database(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            data = Path(temporary_directory) / "data"
+            audit = InMemoryAuditSink()
+            security = PortableSecurityManager(
+                PortableSecuritySettings(data / "security.json"),
+                audit_sink=audit,
+            )
+            security.setup(
+                RECOVERY,
+                RECOVERY,
+                PASSCODE,
+                PASSCODE,
+                uuid4(),
+            )
+            database = data / "memory.db"
+
+            with self.assertRaises(MigrationApplyError):
+                MemoryRuntime.open(
+                    MemorySettings(data_directory=data),
+                    RECOVERY,
+                    audit_sink=audit,
+                )
+
+            self.assertFalse(database.exists())
+
     def test_setup_runtime_remember_restart_recall_backup_and_restore(self) -> None:
         with TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
@@ -53,7 +80,12 @@ class MemoryRuntimeTests(unittest.TestCase):
                 automatic_suggestions=False,
             )
 
-            first = MemoryRuntime.open(settings, RECOVERY, audit_sink=audit)
+            first = MemoryRuntime.open(
+                settings,
+                RECOVERY,
+                audit_sink=audit,
+                create_database=True,
+            )
             outcome = first.remember("Luna likes synthetic rope toys", uuid4())
             snapshot = first.create_daily_backup(uuid4())
             first.close()
@@ -90,6 +122,7 @@ class MemoryRuntimeTests(unittest.TestCase):
                 MemorySettings(data_directory=data, automatic_suggestions=False),
                 RECOVERY,
                 audit_sink=audit,
+                create_database=True,
             )
 
             sensitive = runtime.remember("My childhood trauma detail", uuid4())
@@ -124,6 +157,7 @@ class MemoryRuntimeTests(unittest.TestCase):
                 MemorySettings(data_directory=data),
                 RECOVERY,
                 audit_sink=audit,
+                create_database=True,
             )
             normal = runtime.capture.suggest_automatically(
                 self._suggestion(

@@ -107,6 +107,28 @@ class ApplicationServiceTests(unittest.TestCase):
 
             model_type.assert_not_called()
 
+    def test_missing_database_fails_closed_without_creating_a_replacement(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            settings = AppSettings(
+                memory=MemorySettings(
+                    data_directory=Path(temporary_directory) / "private"
+                )
+            )
+            factory = AssistantApplicationFactory(settings)
+            factory.setup(RECOVERY, RECOVERY, PASSCODE, PASSCODE)
+            database = settings.memory.data_directory / "memory.db"
+            database.unlink()
+
+            with patch(
+                "personal_assistant.application_service.OllamaModel"
+            ) as model_type:
+                with self.assertRaises(ApplicationOpenError) as raised:
+                    factory.open(RECOVERY)
+
+            self.assertIn("database is missing or unsafe", str(raised.exception))
+            self.assertFalse(database.exists())
+            model_type.assert_not_called()
+
     def test_session_only_service_exposes_no_authority_objects(self) -> None:
         with TemporaryDirectory() as temporary_directory:
             settings = AppSettings(

@@ -75,6 +75,14 @@ The high-risk passcode authorizes one exact sensitive operation at a time; it
 cannot override a prohibited action. Failed attempts are audited and the
 lockout survives command restarts.
 
+By default, persistent files use one stable local directory:
+`~/.personal-assistant/`. The encrypted database is always
+`~/.personal-assistant/memory.db`; security metadata and the redacted audit log
+sit beside it. Ordinary startup must reopen that existing database and refuses
+to create a replacement if it is missing. Database creation is enabled only
+inside the explicit first-run setup transaction. Set an absolute
+`PERSONAL_ASSISTANT_DATA_DIR` before first setup to choose another location.
+
 After setup, start chat normally and enter the recovery passphrase at its hidden
 prompt. Use `/remember <information>` or `remember that <information>` for an
 explicit ordinary memory. Automatic analysis runs after the visible answer and

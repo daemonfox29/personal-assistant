@@ -76,11 +76,14 @@ class MemoryRuntime:
         recovery_passphrase: str,
         *,
         audit_sink: AuditSink | None = None,
+        create_database: bool = False,
     ) -> "MemoryRuntime":
         """Unlock, migrate, expire candidates, and compose runtime adapters."""
 
         if not isinstance(settings, MemorySettings) or not settings.enabled:
             raise ValueError("Persistent memory runtime is not enabled.")
+        if not isinstance(create_database, bool):
+            raise ValueError("Database creation policy must be explicit.")
         sink = audit_sink or JsonLinesAuditSink(
             AuditFileSettings(settings.data_directory / "audit.jsonl")
         )
@@ -92,7 +95,11 @@ class MemoryRuntime:
         try:
             database_path = settings.data_directory / "memory.db"
             database = EncryptedDatabase(
-                EncryptedDatabaseSettings(database_path, "primary-memory-key"),
+                EncryptedDatabaseSettings(
+                    database_path,
+                    "primary-memory-key",
+                    require_existing=not create_database,
+                ),
                 key_provider=key_provider,
                 audit_sink=sink,
             )

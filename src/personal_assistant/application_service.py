@@ -138,6 +138,16 @@ class AssistantApplicationFactory:
                 "Persistent-memory security configuration is unavailable."
             ) from error
         if configured:
+            database = self._database_path
+            if (
+                not database.exists()
+                or database.is_symlink()
+                or not database.is_file()
+            ):
+                raise ApplicationOpenError(
+                    "The encrypted memory database is missing or unsafe. Startup "
+                    "was blocked to prevent creating a blank replacement."
+                )
             return ApplicationLaunchState.UNLOCK_REQUIRED
         if manifest.exists() or manifest.is_symlink():
             raise ApplicationOpenError(
@@ -176,6 +186,7 @@ class AssistantApplicationFactory:
                 self._settings.memory,
                 recovery_passphrase,
                 audit_sink=self._audit_sink(),
+                create_database=True,
             )
             runtime.close()
             completed = True

@@ -90,6 +90,12 @@ This document is the handoff point between coding sessions. At the end of each s
   migrations. Exact SHA-256 history is stored in the database; missing,
   duplicate, reordered, changed, unknown, or untracked history fails closed.
   The entire pending migration batch commits atomically or rolls back.
+- Persistent memory uses one configured `memory.db`. Normal unlock requires that
+  exact regular file to exist and cannot silently create a blank replacement;
+  database creation is permitted only by explicit first-run setup. Missing or
+  unsafe storage fails before model loading. A separate missing-live-database
+  recovery design remains necessary because current restore intentionally
+  expects a live deletion ledger and pre-restore snapshot.
 
 ## Outstanding actions
 
@@ -159,7 +165,7 @@ Completed:
 - Pinned the minimal Qt Essentials dependency through the existing `uv` lock.
   No browser runtime, UI server, telemetry, tool access, or new network service
   was introduced.
-- Verified 246 tests locally; the opt-in 100,000-record retrieval benchmark is
+- Verified 248 tests locally; the opt-in 100,000-record retrieval benchmark is
   the only normal-suite skip. Its separate run passed at 13.56 ms median and
   13.93 ms p95 over 30 queries.
 
@@ -177,6 +183,10 @@ Follow-up:
   safe correction with a generic message. Setup now displays only five explicitly
   whitelisted corrections for confirmation, minimum length, or distinct-secret
   failures; all other details remain hidden behind the generic safe failure.
+- Verified the live default data directory contained no manifest or database
+  after the rejected setup. Hardened both the application factory and shared
+  memory runtime so normal startup cannot create a missing database; only the
+  explicit setup workflow may create it.
 
 ### 2026-08-25 — Module 1 final security and privacy review
 
