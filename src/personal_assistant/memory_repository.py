@@ -196,6 +196,7 @@ class RetrievalRequest:
     mode: RetrievalMode = RetrievalMode.ORDINARY
     max_records: int = MAX_RETRIEVAL_RECORDS
     token_limit: int = MAX_RETRIEVAL_TOKENS
+    include_tentative_observations: bool = False
 
     def __post_init__(self) -> None:
         if not isinstance(self.query, str):
@@ -247,6 +248,10 @@ class RetrievalRequest:
             or not 1 <= self.token_limit <= MAX_RETRIEVAL_TOKENS
         ):
             raise MemoryValidationError("Retrieval token limit is invalid.")
+        if not isinstance(self.include_tentative_observations, bool):
+            raise MemoryValidationError(
+                "Tentative-observation retrieval setting is invalid."
+            )
         object.__setattr__(self, "query", query)
 
 
@@ -657,7 +662,11 @@ class MemoryRepository:
                     tokens_returned += token_count
 
         rules = (
-            "confirmed_only",
+            (
+                "confirmed_and_labeled_tentative_observations"
+                if request.include_tentative_observations
+                else "confirmed_only"
+            ),
             "applicable_scope_only",
             "currently_valid_only",
             "restricted_requires_separate_authorization",
@@ -1672,9 +1681,13 @@ class MemoryRepository:
         ]
         if request.mode is RetrievalMode.DIRECT:
             mention_policies.append(MentionPolicy.ONLY_WHEN_DIRECTLY_ASKED.value)
+        statuses = [RecordStatus.CONFIRMED.value]
+        if request.include_tentative_observations:
+            statuses.append(RecordStatus.CANDIDATE.value)
         scope_keys = [f"{scope.type.value}:{scope.id}" for scope in request.scopes]
         kind_values = [kind.value for kind in request.kinds]
         common_parameters = (
+            canonical_json(statuses),
             Sensitivity.RESTRICTED.value,
             canonical_json(mention_policies),
             now.isoformat(),
@@ -1688,7 +1701,8 @@ class MemoryRepository:
             rows = connection.execute(
                 "SELECT r.record_id FROM records r "
                 "WHERE r.primary_entity_id IN (SELECT value FROM json_each(?)) "
-                "AND r.status = 'confirmed' AND r.sensitivity <> ? "
+                "AND r.status IN (SELECT value FROM json_each(?)) "
+                "AND r.sensitivity <> ? "
                 "AND r.mention_policy IN (SELECT value FROM json_each(?)) "
                 "AND (r.valid_from IS NULL OR r.valid_from <= ?) "
                 "AND (r.valid_until IS NULL OR r.valid_until >= ?) "
@@ -1731,7 +1745,8 @@ class MemoryRepository:
                 rows = connection.execute(
                     "SELECT record_id FROM record_search "
                     "WHERE record_search MATCH ? "
-                    "AND status = 'confirmed' AND sensitivity <> ? "
+                    "AND status IN (SELECT value FROM json_each(?)) "
+                    "AND sensitivity <> ? "
                     "AND mention_policy IN (SELECT value FROM json_each(?)) "
                     "AND (valid_from IS NULL OR valid_from <= ?) "
                     "AND (valid_until IS NULL OR valid_until >= ?) "
@@ -1801,7 +1816,23 @@ class MemoryRepository:
         request: RetrievalRequest,
         now: datetime,
     ) -> RetrievalExclusion | None:
-        if record.status is not RecordStatus.CONFIRMED:
+        if record.status is RecordStatus.CANDIDATE:
+            if (
+                not request.include_tentative_observations
+                or not isinstance(record.revision.payload, InsightPayload)
+            ):
+                return RetrievalExclusion.UNCONFIRMED
+            if (
+                record.candidate_expires_at is None
+                or record.candidate_expires_at <= now
+            ):
+                return RetrievalExclusion.NOT_CURRENT
+            if record.sensitivity not in {
+                Sensitivity.NORMAL,
+                Sensitivity.PERSONAL,
+            }:
+                return RetrievalExclusion.SENSITIVITY_RESTRICTED
+        elif record.status is not RecordStatus.CONFIRMED:
             return RetrievalExclusion.UNCONFIRMED
         if record.valid_from is not None and record.valid_from > now:
             return RetrievalExclusion.NOT_CURRENT
@@ -1839,6 +1870,14 @@ class MemoryRepository:
     ) -> tuple[int, tuple[str, ...]]:
         score = 0
         reasons: list[str] = []
+        if record.status is RecordStatus.CONFIRMED:
+            # When tentative observations are requested, canonical records must
+            # consume the bounded result and token budgets first. Observations
+            # can qualify or challenge them in context, never crowd them out.
+            score += 1_000 if request.include_tentative_observations else 15
+            reasons.append("confirmed_status")
+        else:
+            reasons.append("tentative_observation")
         if entity_match and record.primary_entity_id in request.entity_ids:
             score += 100
             reasons.append("resolved_entity_match")

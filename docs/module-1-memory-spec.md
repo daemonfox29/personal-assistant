@@ -153,7 +153,7 @@ sensitivity defaults, retrieval rules, audit events, and focused tests.
 
 Each record has one current status:
 
-- `candidate`: automatically suggested and quarantined from ordinary retrieval;
+- `candidate`: automatically suggested and quarantined from canonical retrieval;
 - `confirmed`: approved by an explicit user instruction or trusted interface;
 - `superseded`: preserved history replaced by a correction or later state;
 - `archived`: excluded from ordinary retrieval but still inspectable;
@@ -164,6 +164,10 @@ Each record has one current status:
 An explicit instruction such as "remember that Luna turned six in July" counts
 as confirmation. Inferred memories remain candidates. Candidates expire from
 the review inbox after 30 days unless confirmed, edited, or retained.
+One narrow exception allows an eligible low-risk candidate `insight` to be
+retrieved only in a separately labeled `tentative_observations` envelope. It
+never becomes a fact, instruction, or source of authority merely by being
+retrieved. Other candidate kinds remain excluded.
 
 ### Sensitivity
 
@@ -237,6 +241,14 @@ The candidate insight records its evidence links, time range, plain-language
 confidence, contradictions considered, model/provider version, and last review
 time. It remains an inference rather than a fact or diagnosis. Uncertainty or
 material contradiction triggers clarification.
+
+A low-risk observation may describe a plausible interpretation of one completed
+turn before enough evidence exists to call it a longitudinal pattern. It is
+phrased to the chat model as potential truth that may be specific to a scenario,
+time, or scope. It may challenge a confirmed default, but cannot silently revise
+it. Trusted explicit confirmation must reconcile the proposal as one of: a
+global correction or replacement, a fact that changed over time, or a narrower
+contextual exception. The revision history preserves the earlier state.
 
 ## Conceptual schema
 
@@ -362,6 +374,14 @@ prompts without changing storage eligibility. Direct-only, never-mention,
 restricted, prohibited, and unconfirmed records retain their stricter policy
 boundaries.
 
+Eligible normal or personal insight candidates may be supplied as labeled,
+expiring tentative observations under standing owner approval. Confirmed records
+always consume bounded retrieval capacity first. Observation text remains inert
+data and may qualify or challenge a confirmed record in the response, but it
+cannot grant authority, authorize an action, diagnose the user, or alter
+canonical memory. Sensitive, restricted, direct-only, never-mention, expired,
+and non-insight candidates remain excluded.
+
 ## Contradictions and revisions
 
 The system never silently overwrites conflicting information. It distinguishes:
@@ -374,6 +394,12 @@ Corrections append a revision. Changes over time preserve validity dates.
 Scoped exceptions coexist according to scope precedence. Material uncertainty
 produces a clarification request. Optimistic concurrency rejects stale writes
 instead of losing another change.
+
+An observation that conflicts with a fact is not itself an overwrite request.
+The trusted reconciliation step must show what would change and record explicit
+confirmation before applying a revision, temporal successor, or scoped
+exception. Native reconciliation controls remain a Module 1.5 owner-control
+deliverable.
 
 ## Retrieval contract
 
@@ -402,7 +428,9 @@ The coordinator:
 3. removes conversational scaffolding and uses indexed full-text search for
    remaining text relevance, trying all meaningful terms before a bounded
    partial-match fallback when the strict search returns nothing;
-4. ranks by specificity, confirmation, relevance, recency, and provenance; and
+4. ranks by confirmation, specificity, relevance, recency, and provenance,
+   preserving confirmed records ahead of tentative observations within bounded
+   capacity; and
 5. returns only the highest-value records that fit both limits below.
 
 These stages should compile into a small number of indexed database operations,

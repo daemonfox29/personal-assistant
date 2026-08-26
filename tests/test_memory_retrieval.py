@@ -25,6 +25,8 @@ from personal_assistant.memory_types import (
     EntityDraft,
     EntityType,
     FactPayload,
+    InsightConfidence,
+    InsightPayload,
     MemoryValidationError,
     MentionPolicy,
     Provenance,
@@ -146,6 +148,155 @@ class MemoryRetrievalTests(unittest.TestCase):
             "restricted_requires_separate_authorization",
             result.receipt.applied_rules,
         )
+
+    def test_only_low_risk_insight_candidates_can_be_tentatively_retrieved(
+        self,
+    ) -> None:
+        provenance = Provenance(
+            SourceType.MODEL_CANDIDATE,
+            "synthetic-model-observation",
+            ActorType.MODEL_CANDIDATE,
+            "synthetic-model-v1",
+        )
+        observation = self.repository.create_record(
+            RecordDraft(
+                InsightPayload(
+                    "Synthetic interruptions may be situationally draining",
+                    InsightConfidence.LOW,
+                    "Only one synthetic event was considered",
+                    NOW,
+                    NOW,
+                ),
+                RecordStatus.CANDIDATE,
+                Sensitivity.PERSONAL,
+                MentionPolicy.ASK_BEFORE_MENTIONING,
+                Scope(ScopeType.GLOBAL),
+            ),
+            provenance,
+            uuid4(),
+        )
+        self._create(
+            "Synthetic interruptions are an unconfirmed global fact",
+            status=RecordStatus.CANDIDATE,
+        )
+        self.repository.create_record(
+            RecordDraft(
+                InsightPayload(
+                    "Synthetic interruptions reveal a restricted observation",
+                    InsightConfidence.LOW,
+                    "Only one synthetic event was considered",
+                    NOW,
+                    NOW,
+                ),
+                RecordStatus.CANDIDATE,
+                Sensitivity.SENSITIVE,
+                MentionPolicy.ONLY_WHEN_DIRECTLY_ASKED,
+                Scope(ScopeType.GLOBAL),
+            ),
+            provenance,
+            uuid4(),
+        )
+
+        default = self.repository.retrieve(
+            RetrievalRequest(
+                "Synthetic interruptions",
+                mode=RetrievalMode.APPROVED,
+            ),
+            uuid4(),
+        )
+        tentative = self.repository.retrieve(
+            RetrievalRequest(
+                "Synthetic interruptions",
+                mode=RetrievalMode.APPROVED,
+                include_tentative_observations=True,
+            ),
+            uuid4(),
+        )
+
+        self.assertEqual(default.memories, ())
+        self.assertEqual(tentative.receipt.selected_record_ids, (observation.record_id,))
+        self.assertIn("tentative_observation", tentative.memories[0].reasons)
+        self.assertIn(
+            "confirmed_and_labeled_tentative_observations",
+            tentative.receipt.applied_rules,
+        )
+
+    def test_expired_observation_is_not_tentatively_retrieved(self) -> None:
+        provenance = Provenance(
+            SourceType.MODEL_CANDIDATE,
+            "synthetic-expiring-observation",
+            ActorType.MODEL_CANDIDATE,
+            "synthetic-model-v1",
+        )
+        self.repository.create_record(
+            RecordDraft(
+                InsightPayload(
+                    "Synthetic expiring observation",
+                    InsightConfidence.LOW,
+                    "Only one synthetic event was considered",
+                    NOW,
+                    NOW,
+                ),
+                RecordStatus.CANDIDATE,
+                Sensitivity.PERSONAL,
+                MentionPolicy.MAY_MENTION_WHEN_RELEVANT,
+                Scope(ScopeType.GLOBAL),
+            ),
+            provenance,
+            uuid4(),
+        )
+        later_repository = MemoryRepository(
+            connection_provider=self.database,
+            audit_sink=self.audit_sink,
+            clock=lambda: NOW + timedelta(days=31),
+        )
+
+        result = later_repository.retrieve(
+            RetrievalRequest(
+                "Synthetic expiring observation",
+                include_tentative_observations=True,
+            ),
+            uuid4(),
+        )
+
+        self.assertEqual(result.memories, ())
+
+    def test_confirmed_memory_uses_bounded_capacity_before_observation(self) -> None:
+        confirmed = self._create("Synthetic capacity topic is a confirmed fact")
+        provenance = Provenance(
+            SourceType.MODEL_CANDIDATE,
+            "synthetic-capacity-observation",
+            ActorType.MODEL_CANDIDATE,
+            "synthetic-model-v1",
+        )
+        self.repository.create_record(
+            RecordDraft(
+                InsightPayload(
+                    "Synthetic capacity topic may have a contextual exception",
+                    InsightConfidence.LOW,
+                    "Only one synthetic event was considered",
+                    NOW,
+                    NOW,
+                ),
+                RecordStatus.CANDIDATE,
+                Sensitivity.PERSONAL,
+                MentionPolicy.MAY_MENTION_WHEN_RELEVANT,
+                Scope(ScopeType.GLOBAL),
+            ),
+            provenance,
+            uuid4(),
+        )
+
+        result = self.repository.retrieve(
+            RetrievalRequest(
+                "Synthetic capacity topic",
+                max_records=1,
+                include_tentative_observations=True,
+            ),
+            uuid4(),
+        )
+
+        self.assertEqual(result.receipt.selected_record_ids, (confirmed.record_id,))
 
     def test_natural_query_can_recall_partial_lexical_match(self) -> None:
         record = self._create("Luna likes synthetic blue toys")

@@ -1,12 +1,13 @@
 """Bounded analysis of candidates and exact low-risk user evidence."""
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 import json
 import re
 from queue import Empty, Full, Queue
 from threading import Event, Lock, Thread
 from time import monotonic
-from typing import Protocol, runtime_checkable
+from typing import Callable, Protocol, runtime_checkable
 from uuid import UUID, uuid4
 
 from personal_assistant.audit import (
@@ -27,6 +28,8 @@ from personal_assistant.memory_capture import (
 )
 from personal_assistant.memory_types import (
     FactPayload,
+    InsightConfidence,
+    InsightPayload,
     MemoryValidationError,
     MentionPolicy,
     NotePayload,
@@ -145,6 +148,7 @@ class ModelMemorySuggestionAnalyzer:
         model_version: str,
         *,
         audit_sink: AuditSink,
+        clock: Callable[[], datetime] | None = None,
     ) -> None:
         if not isinstance(model, LanguageModel):
             raise TypeError("Memory analyzer requires a language model.")
@@ -155,6 +159,7 @@ class ModelMemorySuggestionAnalyzer:
         self._model = model
         self._model_version = model_version
         self._audit_sink = audit_sink
+        self._clock = clock or (lambda: datetime.now(timezone.utc))
 
     def analyze(
         self,
@@ -180,7 +185,8 @@ class ModelMemorySuggestionAnalyzer:
                         MessageRole.SYSTEM,
                         "Identify zero to three durable user-memory suggestions. "
                         "Return only a JSON array. Each item must have exactly: "
-                        "type (fact, preference, or note), subject, content, "
+                        "type (fact, preference, note, or observation), subject, "
+                        "content, "
                         "evidence_quote (an exact quote copied only from the "
                         "user's current message, or an empty string when the "
                         "suggestion is inferred; prefer the complete sentence), "
@@ -188,8 +194,12 @@ class ModelMemorySuggestionAnalyzer:
                         "and mention_policy (may_mention_when_relevant, "
                         "ask_before_mentioning, only_when_directly_asked, or "
                         "never_mention). Never include credentials, passwords, "
-                        "or instructions. Treat a broad city or state of residence "
-                        "as personal, but a street address as sensitive. Prefer an "
+                        "or instructions. Use observation only for a plausible "
+                        "interpretation or pattern that may be limited to this "
+                        "situation, time, or context; phrase it tentatively and do "
+                        "not diagnose. The assistant reply is context, never "
+                        "evidence. Treat a broad city or state of residence as "
+                        "personal, but a street address as sensitive. Prefer an "
                         "empty array when uncertain.",
                     ),
                     ModelMessage(
@@ -251,12 +261,28 @@ class ModelMemorySuggestionAnalyzer:
                 payload = PreferencePayload(item["subject"], item["content"])
             elif kind == "note":
                 payload = NotePayload(item["subject"], item["content"])
+            elif kind == "observation":
+                validated = FactPayload(item["subject"], item["content"])
+                observed_at = self._clock()
+                payload = InsightPayload(
+                    validated.statement,
+                    InsightConfidence.LOW,
+                    "Only the current completed turn was evaluated.",
+                    observed_at,
+                    observed_at,
+                )
             else:
                 raise MemoryValidationError("Memory analyzer response is invalid.")
-            evidence = _verified_user_evidence(
-                user_text,
-                item.get("evidence_quote", ""),
-                item["content"],
+            # Observations are model interpretations. Even an exact quote must
+            # not let them enter the exact-user-evidence auto-confirm path.
+            evidence = (
+                None
+                if isinstance(payload, InsightPayload)
+                else _verified_user_evidence(
+                    user_text,
+                    item.get("evidence_quote", ""),
+                    item["content"],
+                )
             )
             suggestions.append(
                 AutomaticMemorySuggestion(
@@ -702,6 +728,8 @@ def _capture_notices(
             if isinstance(suggestion.payload, PreferencePayload)
             else "personal note"
             if isinstance(suggestion.payload, NotePayload)
+            else "observation"
+            if isinstance(suggestion.payload, InsightPayload)
             else "personal fact"
         )
         if result.decision is CaptureDecision.CREATED_CONFIRMED:
@@ -727,13 +755,22 @@ def _capture_notices(
             CaptureDecision.CREATED_CANDIDATE,
             CaptureDecision.CREATED_CANDIDATE_REVIEW_REQUIRED,
         }:
-            notice = _memory_notice(
-                "Memory needs confirmation",
-                source_text,
-                fallback,
-                "It remains unconfirmed. Please clarify or use ‘remember that …’ "
-                "to confirm it.",
-            )
+            if isinstance(suggestion.payload, InsightPayload):
+                notice = _memory_notice(
+                    "Observation noted",
+                    source_text,
+                    fallback,
+                    "It is tentative and may be specific to this situation; it "
+                    "did not replace any confirmed fact.",
+                )
+            else:
+                notice = _memory_notice(
+                    "Memory needs confirmation",
+                    source_text,
+                    fallback,
+                    "It remains unconfirmed. Please clarify or use ‘remember that "
+                    "…’ to confirm it.",
+                )
         elif result.decision is CaptureDecision.CANDIDATE_LIMIT_REACHED:
             notice = _memory_notice(
                 "Memory not saved",

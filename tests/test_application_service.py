@@ -1,5 +1,6 @@
 """Composition tests for the UI-facing application boundary."""
 
+import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
@@ -38,6 +39,32 @@ class SyntheticModel:
         return ModelResponse("synthetic response")
 
 
+class SyntheticObservationModel(SyntheticModel):
+    def generate(self, request: ModelRequest) -> ModelResponse:
+        self.requests.append(request)
+        if request.messages[0].content.startswith(
+            "Identify zero to three durable user-memory suggestions."
+        ):
+            return ModelResponse(
+                json.dumps(
+                    [
+                        {
+                            "type": "observation",
+                            "subject": "synthetic interruptions",
+                            "content": (
+                                "Synthetic interruptions may be draining in "
+                                "some recent situations"
+                            ),
+                            "evidence_quote": "",
+                            "sensitivity": "personal",
+                            "mention_policy": "ask_before_mentioning",
+                        }
+                    ]
+                )
+            )
+        return ModelResponse("synthetic response")
+
+
 class SyntheticRecoveryStore:
     def __init__(self, recovery: str | None = None) -> None:
         self.recovery = recovery
@@ -57,6 +84,57 @@ class SyntheticRecoveryStore:
 
 
 class ApplicationServiceTests(unittest.TestCase):
+    def test_new_chat_receives_tentative_observation_without_overwriting_fact(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            settings = AppSettings(
+                memory=MemorySettings(
+                    data_directory=Path(temporary_directory) / "private"
+                )
+            )
+            factory = AssistantApplicationFactory(settings)
+            factory.setup(RECOVERY, RECOVERY, PASSCODE, PASSCODE)
+            model = SyntheticObservationModel()
+            with patch(
+                "personal_assistant.application_service.OllamaModel",
+                return_value=model,
+            ):
+                service = factory.open(RECOVERY)
+                tuple(
+                    service.iter_events(
+                        "I usually do not mind synthetic interruptions."
+                    )
+                )
+                service.new_conversation()
+                tuple(
+                    service.iter_events(
+                        "Lately synthetic interruptions have felt draining."
+                    )
+                )
+                service.new_conversation()
+                tuple(
+                    service.iter_events(
+                        "How have synthetic interruptions been affecting me?"
+                    )
+                )
+                service.close()
+
+            ordinary_requests = [
+                request
+                for request in model.requests
+                if not request.messages[0].content.startswith(
+                    "Identify zero to three durable user-memory suggestions."
+                )
+            ]
+            system_context = ordinary_requests[-1].messages[0].content
+            self.assertIn('"memories":[', system_context)
+            self.assertIn("usually do not mind", system_context)
+            self.assertIn('"tentative_observations":[', system_context)
+            self.assertIn("may be draining", system_context)
+            self.assertIn("may be limited to one situation", system_context)
+            self.assertIn("Never silently overwrite", system_context)
+
     def test_reopened_old_chat_receives_newer_global_memory_as_canonical(self) -> None:
         with TemporaryDirectory() as temporary_directory:
             settings = AppSettings(

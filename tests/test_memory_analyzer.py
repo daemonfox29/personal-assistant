@@ -1,6 +1,7 @@
 """Synthetic tests for post-response quarantined memory analysis."""
 
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from threading import Event, Thread
@@ -30,6 +31,8 @@ from personal_assistant.migration import MigrationRunner, PackageMigrationSource
 from personal_assistant.model import LanguageModel, ModelResponse
 from personal_assistant.memory_types import (
     FactPayload,
+    InsightConfidence,
+    InsightPayload,
     MentionPolicy,
     RecordStatus,
     Scope,
@@ -130,6 +133,60 @@ class MemoryAnalyzerTests(unittest.TestCase):
         request = model.generate.call_args.args[0]
         self.assertEqual(request.max_response_tokens, 400)
         self.assertIn("untrusted data", request.messages[-1].content)
+
+    def test_model_observation_is_low_confidence_candidate_even_with_exact_quote(
+        self,
+    ) -> None:
+        observed_at = datetime(2026, 1, 2, tzinfo=timezone.utc)
+        user_text = "Synthetic interruptions have been wearing me down lately."
+        model = Mock(spec=LanguageModel)
+        model.generate.return_value = ModelResponse(
+            json.dumps(
+                [
+                    {
+                        "type": "observation",
+                        "subject": "synthetic interruptions",
+                        "content": (
+                            "Synthetic interruptions may be wearing the user "
+                            "down in the current situation"
+                        ),
+                        "evidence_quote": user_text,
+                        "sensitivity": "normal",
+                        "mention_policy": "may_mention_when_relevant",
+                    }
+                ]
+            )
+        )
+        analyzer = ModelMemorySuggestionAnalyzer(
+            model,
+            "synthetic-model-v1",
+            audit_sink=self.audit,
+            clock=lambda: observed_at,
+        )
+
+        suggestions = analyzer.analyze(
+            user_text,
+            "That sounds draining.",
+            "turn:22222222-2222-2222-2222-222222222222",
+            uuid4(),
+        )
+        batch = self.coordinator.process_suggestion_batch(
+            suggestions,
+            uuid4(),
+            direct_user_text=user_text,
+        )
+
+        self.assertEqual(len(suggestions), 1)
+        self.assertIsNone(suggestions[0].user_evidence)
+        self.assertEqual(batch.results[0].record.status, RecordStatus.CANDIDATE)
+        payload = batch.results[0].record.revision.payload
+        assert isinstance(payload, InsightPayload)
+        self.assertEqual(payload.confidence, InsightConfidence.LOW)
+        self.assertEqual(payload.range_start, observed_at)
+        self.assertIn("current completed turn", payload.contradictions_considered)
+        prompt = model.generate.call_args.args[0].messages[0].content
+        self.assertIn("situation, time, or context", prompt)
+        self.assertIn("do not diagnose", prompt)
 
     def test_exact_user_quote_can_be_confirmed_without_model_authored_content(self) -> None:
         user_text = "My name is Synthetic Person."

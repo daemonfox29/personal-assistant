@@ -83,6 +83,16 @@ quarantined candidate path. Confirmed personal memories have standing owner
 approval for relevant ordinary use, so the assistant does not repeatedly ask
 whether it may check memory. Direct-only, never-mention, restricted, and
 unconfirmed records retain their stronger exclusions.
+The post-response analyzer may also retain a low-risk, expiring **tentative
+observation** when a statement seems useful but may be situational rather than a
+global fact. Relevant observations are sent to the model in a separate labeled
+JSON section after confirmed memories, which always receive bounded capacity
+first. The model must phrase them cautiously: they may suggest that a fact has
+changed or has a contextual exception, but they cannot silently overwrite a
+confirmed memory, authorize an action, or act as a diagnosis. A trusted explicit
+confirmation is required before reconciliation can revise the global fact,
+record a time-bounded change, or add a narrower scoped exception. Native review
+and reconciliation controls remain part of the Module 1.5 owner-controls work.
 When a saved older chat is reopened, its transcript remains historical context:
 newer confirmed global memory is supplied with trusted update timestamps and
 takes precedence over conflicting details in that older dialogue.

@@ -85,6 +85,15 @@ Every returned confirmed entry includes a trusted repository `updated_at`
 timestamp. When retrieved values conflict, the later update is canonical and
 overrides stale details restored from an older conversation transcript. The
 model never invents search terms, timestamps, or UI save receipts.
+Eligible low-risk insight candidates form a separate observation layer. They
+remain expiring candidates but may be retrieved into a labeled
+`tentative_observations` JSON array after confirmed records have received bounded
+capacity. The system contract treats each as a plausible, potentially
+situational interpretation: it may qualify or challenge a confirmed default,
+but cannot replace it, grant authority, authorize action, or diagnose. Only a
+trusted explicit reconciliation may turn it into a global revision, a
+time-bounded successor, or a scoped exception; that owner-control workflow must
+retain the prior revision and is not delegated to the chat model.
 Confirmed personal records receive standing owner approval for relevant ordinary
 retrieval; direct-only, never-mention, restricted, and unconfirmed records do
 not. Natural explicit prior-discussion language triggers bounded transcript

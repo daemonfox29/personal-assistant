@@ -169,6 +169,34 @@ complete; the batched Linux pull-request check is its final platform gate.
 
 ## Session history
 
+### 2026-08-26 — Tentative observation layer
+
+Completed:
+
+- Added low-confidence observation proposals to bounded post-response analysis.
+  They are model-authored insight candidates with no exact-user-evidence
+  auto-confirm path, a 30-day expiry, conservative personal sensitivity, and no
+  authority over confirmed memory.
+- Added opt-in repository retrieval for eligible normal or personal insight
+  candidates only. Candidate facts and preferences, expired observations, and
+  sensitive or restricted content remain quarantined. Confirmed records consume
+  bounded record and token capacity first.
+- Separated observations from canonical `memories` in the inert JSON context.
+  The model is told they may be situational, time-specific, or a potential
+  challenge to a confirmed default, but may not silently overwrite facts,
+  authorize actions, or diagnose.
+- Preserved the explicit-confirmation boundary for future reconciliation as a
+  global revision, time-bounded change, or scoped exception. Native review and
+  reconciliation controls remain unimplemented Module 1.5 owner controls.
+- Verified all 324 local tests; one opt-in performance test remained skipped.
+
+Next:
+
+- Add native candidate/observation review and an explicit reconciliation screen
+  that shows the proposed change before applying it.
+- Exercise observation capture and cross-chat retrieval in the native app with
+  situational wording and a deliberate fact conflict.
+
 ### 2026-08-26 — Deterministic global memory and standing retrieval approval
 
 Completed:
