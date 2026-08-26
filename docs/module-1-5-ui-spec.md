@@ -24,9 +24,11 @@ service methods. They are not passed:
 - raw exceptions, credentials, passphrases, passcodes, or secret-bearing logs.
 
 The model remains downstream of structured request construction. UI text has
-the user role and cannot become system policy. Model output is rendered as
-plain sanitized text: no HTML, JavaScript, remote images, automatic links, or
-active rich content.
+the user role and cannot become system policy. Model output is sanitized and
+inserted through code-owned native character formats. A deliberately small
+Markdown subset may style headings, lists, bold emphasis, and inline code, but
+no model text is interpreted as HTML and it cannot create JavaScript, remote
+images, automatic links, or active rich content.
 
 All sensitive or consequential operations continue through the existing
 deterministic policy, exact-argument approval, repository, and audit layers.
@@ -111,7 +113,8 @@ gate.
 - A failed unlock does not load the model or expose raw errors.
 - The UI cannot access repository, key-provider, receipt-authority, or audit-sink
   attributes through its public service contract.
-- Model output is inserted only as plain sanitized text.
+- Model output is inserted only as sanitized text with code-owned native
+  formatting; model-supplied link syntax remains inert.
 - A second simultaneous request is deterministically refused.
 - Window shutdown closes background work and memory before returning.
 - UI tests run headlessly and cover secret clearing, busy-state enforcement,

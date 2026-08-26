@@ -49,7 +49,10 @@ uv run --locked personal-assistant-ui
 
 The native app guides first-run encrypted-memory setup or recovery unlock, then
 starts Ollama and opens streaming chat. Unlock is attempted before Ollama is
-loaded, and model output is displayed only as inert plain text.
+loaded, and model output is displayed only as inert local text.
+Completed answers receive code-defined native formatting for headings, lists,
+bold emphasis, and inline code. Model content is never interpreted as HTML and
+cannot create active links or remote resources.
 
 The command-line interface remains a developer and recovery fallback:
 

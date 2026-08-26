@@ -1,11 +1,12 @@
 """Lean native PySide6 interface over the bounded application service."""
 
 import os
+import re
 import sys
 from threading import Event
 
 from PySide6.QtCore import QObject, QThread, Qt, Signal, Slot
-from PySide6.QtGui import QCloseEvent, QFont
+from PySide6.QtGui import QColor, QCloseEvent, QFont, QTextCharFormat, QTextCursor
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -38,6 +39,11 @@ from personal_assistant.terminal_output import sanitize_terminal_text
 
 WINDOW_TITLE = "Personal Assistant"
 MAX_VISIBLE_MESSAGE_CHARS = 32_000
+MAX_TRANSCRIPT_BLOCKS = 2_000
+INLINE_MARKUP = re.compile(r"(\*\*[^*\n]+\*\*|`[^`\n]+`)")
+HEADING_MARKUP = re.compile(r"^(#{1,3})\s+(.+)$")
+BULLET_MARKUP = re.compile(r"^\s*[-*]\s+(.+)$")
+NUMBERED_MARKUP = re.compile(r"^\s*(\d{1,3})[.)]\s+(.+)$")
 
 
 class WelcomePage(QWidget):
@@ -183,9 +189,10 @@ class ChatPage(QWidget):
         layout.addLayout(header)
 
         self._transcript = QTextEdit()
+        self._transcript.setObjectName("transcript")
         self._transcript.setReadOnly(True)
         self._transcript.setAcceptRichText(False)
-        self._transcript.document().setMaximumBlockCount(2_000)
+        self._transcript.document().setMaximumBlockCount(MAX_TRANSCRIPT_BLOCKS)
         layout.addWidget(self._transcript, 1)
 
         composer = QHBoxLayout()
@@ -199,6 +206,8 @@ class ChatPage(QWidget):
         composer.addWidget(self._send)
         layout.addLayout(composer)
         self._assistant_open = False
+        self._assistant_start: int | None = None
+        self._assistant_raw: list[str] = []
 
     def configure_session(self, model_name: str, persistent_memory: bool) -> None:
         memory_text = "encrypted memory" if persistent_memory else "session only"
@@ -212,26 +221,32 @@ class ChatPage(QWidget):
             self._input.setFocus()
 
     def append_user(self, text: str) -> None:
-        self._append_plain(f"You\n{sanitize_terminal_text(text)}\n\n")
+        self._append_role("You", "#7aa2ff")
+        self._append_plain(f"{sanitize_terminal_text(text)}\n\n")
 
     def apply_event(self, event: ConversationEvent) -> None:
         if event.kind is ConversationEventKind.ASSISTANT_CHUNK:
             if not self._assistant_open:
-                self._append_plain("Assistant\n")
+                self._append_role("Assistant", "#9ee6b8")
                 self._assistant_open = True
+                self._assistant_raw = []
+                self._transcript.document().setMaximumBlockCount(0)
+                self._assistant_start = self._transcript.textCursor().position()
             self._append_plain(event.text)
+            self._assistant_raw.append(event.text)
         elif event.kind is ConversationEventKind.NOTICE:
             if self._assistant_open:
-                self._append_plain("\n\n")
-                self._assistant_open = False
-            self._append_plain(f"Notice\n{event.text}\n\n")
+                self._finish_assistant()
+            self._append_role("Notice", "#f0bd73")
+            self._append_plain(f"{event.text}\n\n", italic=True)
         elif event.kind is ConversationEventKind.COMPLETED:
             if self._assistant_open:
-                self._append_plain("\n\n")
-                self._assistant_open = False
+                self._finish_assistant()
             if event.limit_reached:
+                self._append_role("Notice", "#f0bd73")
                 self._append_plain(
-                    "Notice\nResponse stopped at its selected token limit.\n\n"
+                    "Response stopped at its selected token limit.\n\n",
+                    italic=True,
                 )
 
     def transcript_text(self) -> str:
@@ -256,12 +271,101 @@ class ChatPage(QWidget):
         self.append_user(text)
         self.message_requested.emit(text, response_limit)
 
-    def _append_plain(self, text: str) -> None:
+    def _append_role(self, label: str, color: str) -> None:
+        role_format = QTextCharFormat()
+        role_format.setForeground(QColor(color))
+        role_format.setFontWeight(QFont.Weight.DemiBold)
+        role_format.setFontPointSize(11)
+        self._append_with_format(f"{label}\n", role_format)
+
+    def _append_plain(self, text: str, *, italic: bool = False) -> None:
+        body_format = self._body_format()
+        body_format.setFontItalic(italic)
+        self._append_with_format(text, body_format)
+
+    def _append_with_format(
+        self,
+        text: str,
+        character_format: QTextCharFormat,
+    ) -> None:
         cursor = self._transcript.textCursor()
         cursor.movePosition(cursor.MoveOperation.End)
-        cursor.insertText(text)
+        cursor.insertText(text, character_format)
         self._transcript.setTextCursor(cursor)
         self._transcript.ensureCursorVisible()
+
+    def _finish_assistant(self) -> None:
+        start = self._assistant_start
+        if start is None:
+            self._assistant_open = False
+            return
+        cursor = QTextCursor(self._transcript.document())
+        cursor.setPosition(start)
+        cursor.setPosition(
+            self._transcript.document().characterCount() - 1,
+            QTextCursor.MoveMode.KeepAnchor,
+        )
+        cursor.removeSelectedText()
+        self._insert_safe_markdown(cursor, "".join(self._assistant_raw))
+        cursor.insertText("\n\n", self._body_format())
+        self._transcript.setTextCursor(cursor)
+        self._transcript.ensureCursorVisible()
+        self._transcript.document().setMaximumBlockCount(MAX_TRANSCRIPT_BLOCKS)
+        self._assistant_open = False
+        self._assistant_start = None
+        self._assistant_raw = []
+
+    def _insert_safe_markdown(self, cursor: QTextCursor, text: str) -> None:
+        """Apply a small inert Markdown subset through native text formats."""
+
+        lines = text.split("\n")
+        for index, line in enumerate(lines):
+            heading = HEADING_MARKUP.fullmatch(line)
+            bullet = BULLET_MARKUP.fullmatch(line)
+            numbered = NUMBERED_MARKUP.fullmatch(line)
+            if heading is not None:
+                heading_format = self._body_format()
+                heading_format.setFontWeight(QFont.Weight.Bold)
+                heading_format.setFontPointSize(19 - (2 * len(heading.group(1))))
+                cursor.insertText(heading.group(2), heading_format)
+            elif bullet is not None:
+                bullet_format = self._body_format()
+                bullet_format.setForeground(QColor("#9ee6b8"))
+                cursor.insertText("• ", bullet_format)
+                self._insert_inline(cursor, bullet.group(1))
+            elif numbered is not None:
+                number_format = self._body_format()
+                number_format.setForeground(QColor("#9ee6b8"))
+                cursor.insertText(f"{numbered.group(1)}. ", number_format)
+                self._insert_inline(cursor, numbered.group(2))
+            else:
+                self._insert_inline(cursor, line)
+            if index < len(lines) - 1:
+                cursor.insertText("\n", self._body_format())
+
+    def _insert_inline(self, cursor: QTextCursor, text: str) -> None:
+        position = 0
+        for match in INLINE_MARKUP.finditer(text):
+            cursor.insertText(text[position : match.start()], self._body_format())
+            token = match.group(0)
+            token_format = self._body_format()
+            if token.startswith("**"):
+                token_format.setFontWeight(QFont.Weight.Bold)
+                cursor.insertText(token[2:-2], token_format)
+            else:
+                token_format.setFontFixedPitch(True)
+                token_format.setBackground(QColor("#292f3a"))
+                token_format.setForeground(QColor("#d8e2ff"))
+                cursor.insertText(token[1:-1], token_format)
+            position = match.end()
+        cursor.insertText(text[position:], self._body_format())
+
+    @staticmethod
+    def _body_format() -> QTextCharFormat:
+        body_format = QTextCharFormat()
+        body_format.setForeground(QColor("#e8eaf0"))
+        body_format.setFontPointSize(14)
+        return body_format
 
 
 class _StartupWorker(QObject):
@@ -527,6 +631,7 @@ class AssistantWindow(QMainWindow):
                 background: #151820; border: 1px solid #394150;
                 border-radius: 8px; padding: 8px; selection-background-color: #526cff;
             }
+            #transcript { padding: 12px; }
             QPushButton { background: #536dfe; border: 0; border-radius: 8px;
                           padding: 9px 14px; font-weight: 600; }
             QPushButton:hover { background: #657cff; }
@@ -545,7 +650,9 @@ def main() -> int:
     app = QApplication(sys.argv)
     app.setApplicationName(WINDOW_TITLE)
     app.setOrganizationName("Personal Assistant")
-    app.setFont(QFont("", 13))
+    application_font = app.font()
+    application_font.setPointSize(13)
+    app.setFont(application_font)
     try:
         factory = AssistantApplicationFactory(load_settings())
     except (ValueError, ApplicationServiceError):

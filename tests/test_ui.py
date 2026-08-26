@@ -5,7 +5,7 @@ import unittest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtGui import QCloseEvent  # noqa: E402
+from PySide6.QtGui import QCloseEvent, QFont  # noqa: E402
 from PySide6.QtWidgets import QApplication, QLineEdit  # noqa: E402
 
 from personal_assistant.application_service import ApplicationLaunchState  # noqa: E402
@@ -57,6 +57,25 @@ class NativeUiTests(unittest.TestCase):
         self.assertIn(r"\u202e", transcript)
         self.assertIn("<script>alert(1)</script>", transcript)
         self.assertFalse(page._transcript.acceptRichText())
+
+    def test_assistant_markdown_gets_inert_native_formatting(self) -> None:
+        page = ChatPage()
+        page.apply_event(
+            ConversationEvent(
+                ConversationEventKind.ASSISTANT_CHUNK,
+                "## Plan\n- **First** use `safe code`.\n"
+                "[Reference](https://example.invalid)",
+            )
+        )
+        page.apply_event(ConversationEvent(ConversationEventKind.COMPLETED))
+
+        transcript = page.transcript_text()
+        self.assertIn("Plan\n• First use safe code.", transcript)
+        self.assertIn("[Reference](https://example.invalid)", transcript)
+        heading = page._transcript.document().find("Plan")
+        link_text = page._transcript.document().find("Reference")
+        self.assertEqual(heading.charFormat().fontWeight(), QFont.Weight.Bold)
+        self.assertFalse(link_text.charFormat().isAnchor())
 
     def test_oversized_ui_message_is_refused_before_signal(self) -> None:
         page = ChatPage()
