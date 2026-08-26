@@ -109,8 +109,20 @@ graceful-shutdown guarantee, but the already-committed user message remains.
 Opening a saved conversation restores only complete user/assistant exchanges to
 the existing token-bounded RAM context. Notices and unanswered prompts remain
 visible but cannot become model roles. Listing other conversations never loads
-their content into RAM or model context. Database reads are bounded; very large
-archives require future pagination even though the full rows remain stored.
+their content into RAM or model context. A distinct owner-triggered recall path
+recognizes explicit history language such as “remember when we talked about.” It
+uses an encrypted FTS index, excludes the active conversation, and supplies at
+most three matching conversations with at most four nearby user/assistant
+messages each in a token-bounded, untrusted-data JSON envelope. Ordinary prompts
+do not search transcripts. Database reads are bounded; very large archives
+require future pagination even though the full rows remain stored.
+
+Confirmed low-risk memories remain global rather than transcript-scoped. When a
+new or saved chat replaces active RAM history, its first persistent-memory
+request waits up to a fixed bound for already accepted post-response analysis
+from the preceding chat. Model paraphrases may locate one unambiguous
+first-person declarative sentence, but only the exact user sentence can be
+confirmed; ambiguous matches and model-authored content remain quarantined.
 
 Private Chat stores no transcript, retrieves no persistent memory, intercepts no
 explicit-memory command, and produces no automatic memory suggestions. It still
@@ -130,8 +142,9 @@ erasure across old snapshots are deferred.
 - Inputs, output accumulation, session history, persistent context, and response
   tokens retain their existing hard bounds.
 - Closing the window stops accepting work, waits for active transcript
-  finalization, cancels future candidate persistence, closes the memory runtime,
-  and releases application-owned key references.
+  finalization and bounded completion of accepted memory analysis, cancels any
+  remaining future candidate persistence, closes the memory runtime, and
+  releases application-owned key references.
 - No hidden retry loop, web server, browser runtime, telemetry, or background
   network service is introduced by the UI.
 
@@ -179,7 +192,12 @@ gate.
   commits before the UI reports completion; a graceful close waits for this
   boundary before releasing database keys.
 - A saved conversation reopens with structured roles and continues through the
-  same bounded context engine. Other sidebar entries consume no model context.
+  same bounded context engine. Other sidebar entries consume no model context
+  unless an explicit owner recall request performs bounded encrypted search.
+- Confirmed low-risk facts cross ordinary saved chats after the bounded memory
+  handoff; ambiguous or inferred suggestions remain quarantined.
+- Explicit prior-chat recall returns only bounded nearby transcript excerpts in
+  an untrusted-data envelope; ordinary prompts and Private Chat cannot use it.
 - Private Chat creates no transcript or memory activity.
 - Permanent deletion removes live transcript rows, audits no content, and warns
   that encrypted backups retain data until snapshot expiry.

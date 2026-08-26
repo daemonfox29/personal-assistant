@@ -33,6 +33,10 @@ from personal_assistant.conversation_history import (
     ConversationSummary,
     StoredConversation,
 )
+from personal_assistant.conversation_recall import (
+    ConversationRecallContextError,
+    ConversationRecallContextProvider,
+)
 from personal_assistant.credential_store import (
     CredentialStoreError,
     RecoveryCredentialStore,
@@ -115,6 +119,11 @@ class AssistantApplicationService:
         self._runtime = runtime
         self._info = info
         self._conversation_history = conversation_history
+        self._conversation_recall = (
+            None
+            if conversation_history is None
+            else ConversationRecallContextProvider(conversation_history)
+        )
         self._active_conversation_id: UUID | None = None
         self._private_chat = conversation_history is None
         self._lock = Lock()
@@ -196,6 +205,21 @@ class AssistantApplicationService:
         assistant_parts: list[str] = []
         responses: list[ConversationResponseMessage] = []
         finalized = False
+        recall_context: str | None = None
+        recall_error = False
+        if (
+            persist
+            and active_id is not None
+            and self._conversation_recall is not None
+        ):
+            try:
+                recall_context = self._conversation_recall.context_for(
+                    user_text,
+                    active_id,
+                    correlation_id,
+                )
+            except ConversationRecallContextError:
+                recall_error = True
 
         def flush_assistant() -> None:
             if assistant_parts:
@@ -207,10 +231,22 @@ class AssistantApplicationService:
                 )
                 assistant_parts.clear()
 
+        if recall_error:
+            notice = ConversationEvent(
+                ConversationEventKind.NOTICE,
+                "Saved conversation search is unavailable for this request; "
+                "continuing without it.",
+            )
+            responses.append(
+                ConversationResponseMessage(ConversationRole.NOTICE, notice.text)
+            )
+            yield notice
+
         for event in self._conversation.events_for(
             user_text,
             max_response_tokens=max_response_tokens,
             allow_persistent_memory=allow_persistent_memory,
+            conversation_recall_context=recall_context,
         ):
             if event.kind is ConversationEventKind.ASSISTANT_CHUNK:
                 assistant_parts.append(event.text)
@@ -294,7 +330,10 @@ class AssistantApplicationService:
             if not private and self._conversation_history is None:
                 private = True
         try:
-            self._conversation.replace_history(())
+            self._conversation.replace_history(
+                (),
+                wait_for_memory=not private,
+            )
         except (RuntimeError, TypeError) as error:
             raise ApplicationOpenError(
                 "A new conversation cannot start while a response is active."
@@ -314,7 +353,10 @@ class AssistantApplicationService:
             )
         try:
             stored = repository.load_conversation(conversation_id, uuid4())
-            self._conversation.replace_history(stored.completed_turns())
+            self._conversation.replace_history(
+                stored.completed_turns(),
+                wait_for_memory=True,
+            )
         except (ConversationHistoryError, RuntimeError, TypeError) as error:
             raise ApplicationOpenError(
                 "The saved conversation could not be opened safely."

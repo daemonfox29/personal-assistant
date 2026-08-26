@@ -37,6 +37,9 @@ class PostResponseWorker(Protocol):
     def submit(self, user_text: str, assistant_text: str) -> bool:
         """Queue one completed turn without blocking visible output."""
 
+    def wait_until_idle(self, timeout_seconds: float = 15.0) -> bool:
+        """Wait boundedly for previously accepted turns to finish."""
+
     def close(self) -> None:
         """Cancel future persistence before runtime secrets are released."""
 
@@ -92,6 +95,7 @@ class ConversationService:
         self._request_lock = Lock()
         self._lifecycle_lock = Lock()
         self._closed = False
+        self._wait_for_memory_before_next_request = False
 
     def events_for(
         self,
@@ -99,6 +103,7 @@ class ConversationService:
         *,
         max_response_tokens: int | None = None,
         allow_persistent_memory: bool = True,
+        conversation_recall_context: str | None = None,
     ) -> Iterator[ConversationEvent]:
         """Yield sanitized events for one request without concurrent generation."""
 
@@ -123,6 +128,17 @@ class ConversationService:
                     "This assistant session is closed.",
                 )
                 return
+            if (
+                allow_persistent_memory
+                and self._wait_for_memory_before_next_request
+            ):
+                self._wait_for_memory_before_next_request = False
+                if not self._wait_for_post_response_memory():
+                    yield ConversationEvent(
+                        ConversationEventKind.NOTICE,
+                        "Recent memory processing is still finishing; the newest "
+                        "facts may not be available yet.",
+                    )
             explicit_result = (
                 self._handle_explicit_memory(user_text)
                 if allow_persistent_memory
@@ -135,6 +151,7 @@ class ConversationService:
                 user_text,
                 max_response_tokens,
                 allow_persistent_memory=allow_persistent_memory,
+                conversation_recall_context=conversation_recall_context,
             )
             if isinstance(prepared, str):
                 if prepared:
@@ -195,11 +212,19 @@ class ConversationService:
                 return
             self._closed = True
         if self._post_response_worker is not None:
+            self._wait_for_post_response_memory()
             self._post_response_worker.close()
 
-    def replace_history(self, turns: tuple[ConversationTurn, ...]) -> None:
+    def replace_history(
+        self,
+        turns: tuple[ConversationTurn, ...],
+        *,
+        wait_for_memory: bool = False,
+    ) -> None:
         """Load bounded complete turns while no request is in progress."""
 
+        if not isinstance(wait_for_memory, bool):
+            raise TypeError("Memory handoff setting must be a boolean.")
         if not self._request_lock.acquire(blocking=False):
             raise RuntimeError("Conversation history cannot change during a request.")
         try:
@@ -207,8 +232,21 @@ class ConversationService:
                 if self._closed:
                     raise RuntimeError("This conversation service is closed.")
             self._memory.replace_turns(turns)
+            self._wait_for_memory_before_next_request = wait_for_memory
         finally:
             self._request_lock.release()
+
+    def _wait_for_post_response_memory(self) -> bool:
+        worker = self._post_response_worker
+        if worker is None:
+            return True
+        waiter = getattr(worker, "wait_until_idle", None)
+        if not callable(waiter):
+            return True
+        try:
+            return bool(waiter(15.0))
+        except Exception:
+            return False
 
     def _handle_explicit_memory(self, prompt: str) -> str | None:
         if self._explicit_memory_handler is None:
@@ -232,10 +270,16 @@ class ConversationService:
         requested_response_tokens: int | None,
         *,
         allow_persistent_memory: bool = True,
+        conversation_recall_context: str | None = None,
     ) -> _PreparedTurn | str:
         stripped = user_text.strip()
         if not stripped:
             return ""
+        if conversation_recall_context is not None and (
+            not isinstance(conversation_recall_context, str)
+            or len(conversation_recall_context) > 8_192
+        ):
+            return "Saved conversation context is invalid."
         try:
             response_limit = (
                 self._default_response_tokens
@@ -264,7 +308,11 @@ class ConversationService:
                     "Persistent memory is unavailable for this request; "
                     "continuing without it."
                 )
-        system_text = base_system_text + (persistent_context or "")
+        system_text = (
+            base_system_text
+            + (persistent_context or "")
+            + (conversation_recall_context or "")
+        )
         try:
             messages = self._memory.messages_for_request(
                 system_text=system_text,
@@ -275,7 +323,9 @@ class ConversationService:
             if persistent_context is not None:
                 try:
                     messages = self._memory.messages_for_request(
-                        system_text=base_system_text,
+                        system_text=(
+                            base_system_text + (conversation_recall_context or "")
+                        ),
                         user_text=user_text,
                         input_token_limit=input_token_limit,
                     )
@@ -285,6 +335,25 @@ class ConversationService:
                     notices.append(
                         "Relevant persistent memory did not fit this request; "
                         "continuing without it."
+                    )
+                    return _PreparedTurn(
+                        ModelRequest(messages, response_limit),
+                        user_text,
+                        tuple(notices),
+                    )
+            if conversation_recall_context is not None:
+                try:
+                    messages = self._memory.messages_for_request(
+                        system_text=base_system_text,
+                        user_text=user_text,
+                        input_token_limit=input_token_limit,
+                    )
+                except MessageTooLargeError:
+                    pass
+                else:
+                    notices.append(
+                        "Saved conversation excerpts did not fit this request; "
+                        "continuing without them."
                     )
                     return _PreparedTurn(
                         ModelRequest(messages, response_limit),

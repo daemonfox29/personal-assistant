@@ -133,6 +133,7 @@ class MigrationTests(unittest.TestCase):
                         "deletion_ledger",
                         "conversations",
                         "conversation_messages",
+                        "conversation_search",
                     }.issubset(tables)
                 )
                 history = connection.execute(
@@ -232,7 +233,7 @@ class MigrationTests(unittest.TestCase):
 
             self.assertEqual(
                 result.applied_versions,
-                (14, 15, 16, 17, 18, 19, 20),
+                (14, 15, 16, 17, 18, 19, 20, 21, 22),
             )
             with database.connect(uuid4()) as connection:
                 tables = {
@@ -302,13 +303,60 @@ class MigrationTests(unittest.TestCase):
             current_runner, _ = self._runner(database)
             result = current_runner.migrate(uuid4())
 
-            self.assertEqual(result.applied_versions, (16, 17, 18, 19, 20))
+            self.assertEqual(
+                result.applied_versions,
+                (16, 17, 18, 19, 20, 21, 22),
+            )
             with database.connect(uuid4()) as connection:
                 rows = connection.execute(
                     "SELECT record_id FROM record_search "
                     "WHERE record_search MATCH 'backfilled'"
                 ).fetchall()
             self.assertEqual(rows, [(str(record_id),)])
+
+    def test_conversation_search_migration_backfills_existing_transcripts(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            database = self._database(Path(temporary_directory) / "memory.db")
+            migrations = PackageMigrationSource().load()
+            prior_runner, _ = self._runner(database, migrations=migrations[:20])
+            prior_runner.migrate(uuid4())
+            conversation_id = uuid4()
+            message_id = uuid4()
+            timestamp = "2026-01-01T12:00:00+00:00"
+            with database.connect(uuid4()) as connection:
+                connection.execute(
+                    "INSERT INTO conversations (conversation_id, title, "
+                    "created_at, updated_at, archived) VALUES (?, ?, ?, ?, 0)",
+                    (
+                        str(conversation_id),
+                        "Synthetic prior chat",
+                        timestamp,
+                        timestamp,
+                    ),
+                )
+                connection.execute(
+                    "INSERT INTO conversation_messages (message_id, "
+                    "conversation_id, sequence, role, content, created_at) "
+                    "VALUES (?, ?, 1, 'user', ?, ?)",
+                    (
+                        str(message_id),
+                        str(conversation_id),
+                        "backfilled cobalt transcript needle",
+                        timestamp,
+                    ),
+                )
+                connection.commit()
+
+            current_runner, _ = self._runner(database)
+            result = current_runner.migrate(uuid4())
+
+            self.assertEqual(result.applied_versions, (21, 22))
+            with database.connect(uuid4()) as connection:
+                rows = connection.execute(
+                    "SELECT conversation_id FROM conversation_search "
+                    "WHERE conversation_search MATCH 'cobalt'"
+                ).fetchall()
+            self.assertEqual(rows, [(str(conversation_id),)])
 
     def test_missing_duplicate_and_reordered_sources_are_rejected_before_open(self) -> None:
         migrations = PackageMigrationSource().load()

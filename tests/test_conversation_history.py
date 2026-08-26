@@ -119,7 +119,53 @@ class ConversationHistoryTests(unittest.TestCase):
             count = connection.execute(
                 "SELECT count(*) FROM conversation_messages"
             ).fetchone()[0]
+            search_count = connection.execute(
+                "SELECT count(*) FROM conversation_search"
+            ).fetchone()[0]
         self.assertEqual(count, 0)
+        self.assertEqual(search_count, 0)
+
+    def test_explicit_search_returns_bounded_prior_conversation_neighborhood(self) -> None:
+        prior_id = self.repository.begin_turn(
+            None,
+            "We planned the synthetic cobalt garden launch",
+            uuid4(),
+        )
+        self.repository.finish_turn(
+            prior_id,
+            (
+                ConversationResponseMessage(
+                    ConversationRole.ASSISTANT,
+                    "The synthetic launch should begin with cobalt flowers.",
+                ),
+            ),
+            uuid4(),
+        )
+        current_id = self.repository.begin_turn(
+            None,
+            "Remember when we discussed the cobalt garden?",
+            uuid4(),
+        )
+
+        matches = self.repository.search_conversations(
+            "Remember when we discussed the cobalt garden?",
+            uuid4(),
+            exclude_conversation_id=current_id,
+        )
+
+        self.assertEqual(len(matches), 1)
+        self.assertEqual(matches[0].summary.conversation_id, prior_id)
+        self.assertEqual(
+            tuple(message.role for message in matches[0].messages),
+            (ConversationRole.USER, ConversationRole.ASSISTANT),
+        )
+        self.assertTrue(
+            all(
+                message.content
+                != "Remember when we discussed the cobalt garden?"
+                for message in matches[0].messages
+            )
+        )
 
     def test_audit_failure_prevents_a_write(self) -> None:
         repository = ConversationHistoryRepository(

@@ -64,10 +64,12 @@ submission. After the visible answer,
 a bounded worker may ask the model for tentative suggestions. Deterministic code
 may promote only a complete low-risk declarative sentence found exactly in the
 user's current message and stores that sentence with trusted-interface
-provenance. A model-selected exact fragment may locate the sentence but cannot
-author its persisted content. Model-authored paraphrases,
-inferences, sensitive material, and conflicts enter only the quarantined
-candidate inbox until trusted review confirms them.
+provenance. A model-selected exact fragment or an unambiguous lexical paraphrase
+may locate the sentence but cannot author its persisted content. Ambiguous
+matches, inferences, sensitive material, and conflicts enter only the
+quarantined candidate inbox until trusted review confirms them. Replacing active
+chat history sets a one-request handoff barrier so the next persistent-memory
+request waits boundedly for preceding accepted analysis before retrieval.
 
 Future action flow:
 
@@ -109,11 +111,15 @@ remain responsible for preventing actions.
 
 Closing the process drops the active RAM-context references. Module 1.5 can also
 retain full structured transcripts in dedicated encrypted tables. These rows are
-separate from selected memory and are loaded only for the conversation the owner
-opens. Private Chat bypasses transcript storage, persistent retrieval, explicit
-memory capture, and suggestion analysis. Neither mode guarantees physical
-erasure from Python, native libraries, Ollama, the operating system, swap,
-backups, or crash diagnostics.
+separate from selected memory and are loaded when the owner opens that
+conversation. An explicit owner request to recall an earlier discussion can
+search an encrypted FTS transcript index and inject a small neighborhood from at
+most three other chats as a clearly labeled untrusted-data envelope. Ordinary
+prompts do not search transcripts, the active conversation is excluded, and
+Private Chat bypasses transcript storage, transcript recall, persistent
+retrieval, explicit memory capture, and suggestion analysis. Neither mode
+guarantees physical erasure from Python, native libraries, Ollama, the operating
+system, swap, backups, or crash diagnostics.
 
 Future versions may add bounded worker agents. Worker agents will receive limited tasks and permissions from the coordinator rather than unrestricted access.
 

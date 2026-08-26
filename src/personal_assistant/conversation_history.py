@@ -3,6 +3,7 @@
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import StrEnum
+import re
 from time import monotonic
 from typing import Any, Callable
 from uuid import UUID, uuid4
@@ -26,6 +27,61 @@ MAX_HISTORY_MESSAGE_CHARS = 262_144
 MAX_HISTORY_NOTICES_PER_TURN = 16
 MAX_HISTORY_LIST_ITEMS = 200
 MAX_HISTORY_LOAD_MESSAGES = 2_000
+MAX_RECALL_QUERY_CHARS = 8_192
+MAX_RECALL_CONVERSATIONS = 3
+MAX_RECALL_MESSAGES_PER_CONVERSATION = 4
+MAX_RECALL_MESSAGE_CHARS = 2_000
+MAX_RECALL_SCAN_HITS = 96
+_RECALL_TERM = re.compile(r"[\w'-]+", re.UNICODE)
+_RECALL_STOP_WORDS = {
+    "about",
+    "ago",
+    "and",
+    "can",
+    "chat",
+    "conversation",
+    "continue",
+    "could",
+    "did",
+    "discuss",
+    "discussed",
+    "do",
+    "from",
+    "here",
+    "in",
+    "is",
+    "it",
+    "last",
+    "left",
+    "let's",
+    "me",
+    "month",
+    "my",
+    "off",
+    "of",
+    "on",
+    "our",
+    "past",
+    "pick",
+    "please",
+    "previous",
+    "remember",
+    "talk",
+    "talked",
+    "that",
+    "the",
+    "then",
+    "this",
+    "to",
+    "up",
+    "was",
+    "we",
+    "week",
+    "when",
+    "where",
+    "with",
+    "you",
+}
 
 
 class ConversationHistoryError(RuntimeError):
@@ -90,6 +146,14 @@ class StoredConversation:
         return tuple(turns)
 
 
+@dataclass(frozen=True)
+class ConversationRecallMatch:
+    """One bounded transcript neighborhood returned by encrypted search."""
+
+    summary: ConversationSummary
+    messages: tuple[StoredConversationMessage, ...]
+
+
 class ConversationHistoryRepository:
     """Store full transcripts without exposing connections to the UI or model."""
 
@@ -141,12 +205,25 @@ class ConversationHistoryRepository:
                     else:
                         self._require_active(connection, active_id)
                     sequence = self._next_sequence(connection, active_id)
+                    message_id = str(self._new_id())
                     connection.execute(
                         "INSERT INTO conversation_messages (message_id, "
                         "conversation_id, sequence, role, content, created_at) "
                         "VALUES (?, ?, ?, 'user', ?, ?)",
                         (
-                            str(self._new_id()),
+                            message_id,
+                            str(active_id),
+                            sequence,
+                            content,
+                            timestamp,
+                        ),
+                    )
+                    connection.execute(
+                        "INSERT INTO conversation_search (message_id, "
+                        "conversation_id, sequence, role, content, created_at) "
+                        "VALUES (?, ?, ?, 'user', ?, ?)",
+                        (
+                            message_id,
                             str(active_id),
                             sequence,
                             content,
@@ -219,17 +296,19 @@ class ConversationHistoryRepository:
                     self._require_active(connection, conversation_id)
                     sequence = self._next_sequence(connection, conversation_id)
                     values: list[tuple[str, str, int, str, str, str]] = []
+                    search_values: list[tuple[str, str, int, str, str, str]] = []
                     for response in safe_responses:
-                        values.append(
-                            (
-                                str(self._new_id()),
-                                str(conversation_id),
-                                sequence,
-                                response.role.value,
-                                response.content,
-                                timestamp,
-                            )
+                        value = (
+                            str(self._new_id()),
+                            str(conversation_id),
+                            sequence,
+                            response.role.value,
+                            response.content,
+                            timestamp,
                         )
+                        values.append(value)
+                        if response.role is ConversationRole.ASSISTANT:
+                            search_values.append(value)
                         sequence += 1
                     connection.executemany(
                         "INSERT INTO conversation_messages (message_id, "
@@ -237,6 +316,13 @@ class ConversationHistoryRepository:
                         "VALUES (?, ?, ?, ?, ?, ?)",
                         values,
                     )
+                    if search_values:
+                        connection.executemany(
+                            "INSERT INTO conversation_search (message_id, "
+                            "conversation_id, sequence, role, content, created_at) "
+                            "VALUES (?, ?, ?, ?, ?, ?)",
+                            search_values,
+                        )
                     connection.execute(
                         "UPDATE conversations SET updated_at = ? "
                         "WHERE conversation_id = ?",
@@ -295,6 +381,67 @@ class ConversationHistoryRepository:
             self._failed_audit(correlation_id, "conversation_list", started)
             raise ConversationHistoryError(
                 "Conversation history could not be read safely."
+            ) from error
+
+    def search_conversations(
+        self,
+        query: str,
+        correlation_id: UUID,
+        *,
+        exclude_conversation_id: UUID | None = None,
+        limit: int = MAX_RECALL_CONVERSATIONS,
+    ) -> tuple[ConversationRecallMatch, ...]:
+        """Return bounded neighborhoods from explicitly requested prior chats."""
+
+        if (
+            not isinstance(query, str)
+            or not query.strip()
+            or len(query) > MAX_RECALL_QUERY_CHARS
+        ):
+            raise ConversationHistoryError("Conversation search query is invalid.")
+        self._require_uuid(correlation_id)
+        if exclude_conversation_id is not None:
+            self._require_uuid(exclude_conversation_id)
+        if isinstance(limit, bool) or not 1 <= limit <= MAX_RECALL_CONVERSATIONS:
+            raise ValueError("Conversation search limit is invalid.")
+        terms = self._search_terms(query)
+        started = self._start_audit(correlation_id, "conversation_search")
+        try:
+            with self._connections.connect(correlation_id) as connection:
+                hits = self._search_hits(
+                    connection,
+                    terms,
+                    exclude_conversation_id,
+                )
+                selected: list[tuple[str, int]] = []
+                seen: set[str] = set()
+                for conversation_id, sequence in hits:
+                    if conversation_id in seen:
+                        continue
+                    seen.add(conversation_id)
+                    selected.append((conversation_id, int(sequence)))
+                    if len(selected) >= limit:
+                        break
+                results = tuple(
+                    self._load_recall_match(connection, conversation_id, sequence)
+                    for conversation_id, sequence in selected
+                )
+            self._finish_audit(
+                correlation_id,
+                "conversation_search",
+                AuditOutcome.SUCCEEDED,
+                AuditReasonCode.NORMAL,
+                started,
+                len(results),
+            )
+            return results
+        except ConversationHistoryError:
+            self._failed_audit(correlation_id, "conversation_search", started)
+            raise
+        except Exception as error:
+            self._failed_audit(correlation_id, "conversation_search", started)
+            raise ConversationHistoryError(
+                "Conversation history could not be searched safely."
             ) from error
 
     def load_conversation(
@@ -356,6 +503,11 @@ class ConversationHistoryRepository:
             with self._connections.connect(correlation_id) as connection:
                 connection.execute("BEGIN IMMEDIATE")
                 try:
+                    connection.execute(
+                        "DELETE FROM conversation_search "
+                        "WHERE conversation_id = ?",
+                        (str(conversation_id),),
+                    )
                     result = connection.execute(
                         "DELETE FROM conversations WHERE conversation_id = ?",
                         (str(conversation_id),),
@@ -432,7 +584,11 @@ class ConversationHistoryRepository:
                 component=AuditComponent.APPLICATION,
                 operation=(
                     AuditOperation.REPOSITORY_READ
-                    if action in {"conversation_list", "conversation_load"}
+                    if action in {
+                        "conversation_list",
+                        "conversation_load",
+                        "conversation_search",
+                    }
                     else AuditOperation.REPOSITORY_WRITE
                 ),
                 outcome=outcome,
@@ -493,6 +649,99 @@ class ConversationHistoryRepository:
         ).fetchone()
         if row is None:
             raise ConversationNotFoundError("Conversation was not found.")
+
+    @staticmethod
+    def _search_terms(query: str) -> tuple[str, ...]:
+        return tuple(
+            dict.fromkeys(
+                term
+                for term in _RECALL_TERM.findall(query.casefold())
+                if len(term) >= 2 and term not in _RECALL_STOP_WORDS
+            )
+        )[:12]
+
+    @staticmethod
+    def _search_hits(
+        connection: Any,
+        terms: tuple[str, ...],
+        excluded_id: UUID | None,
+    ) -> tuple[tuple[Any, ...], ...]:
+        exclusion = None if excluded_id is None else str(excluded_id)
+        if not terms:
+            return tuple(
+                connection.execute(
+                    "SELECT c.conversation_id, COALESCE(MAX(m.sequence), 1) "
+                    "FROM conversations c JOIN conversation_messages m "
+                    "ON m.conversation_id = c.conversation_id "
+                    "WHERE c.archived = 0 AND (? IS NULL OR c.conversation_id <> ?) "
+                    "GROUP BY c.conversation_id, c.updated_at "
+                    "ORDER BY c.updated_at DESC LIMIT ?",
+                    (exclusion, exclusion, MAX_RECALL_CONVERSATIONS),
+                ).fetchall()
+            )
+        expressions = [" AND ".join(f'"{term}"*' for term in terms)]
+        if len(terms) > 1:
+            expressions.append(" OR ".join(f'"{term}"*' for term in terms))
+        for expression in expressions:
+            rows = tuple(
+                connection.execute(
+                    "SELECT conversation_search.conversation_id, "
+                    "conversation_search.sequence FROM conversation_search "
+                    "JOIN conversations c ON c.conversation_id = "
+                    "conversation_search.conversation_id "
+                    "WHERE conversation_search MATCH ? AND c.archived = 0 "
+                    "AND (? IS NULL OR c.conversation_id <> ?) "
+                    "ORDER BY bm25(conversation_search), c.updated_at DESC "
+                    "LIMIT ?",
+                    (
+                        expression,
+                        exclusion,
+                        exclusion,
+                        MAX_RECALL_SCAN_HITS,
+                    ),
+                ).fetchall()
+            )
+            if rows:
+                return rows
+        return ()
+
+    @staticmethod
+    def _load_recall_match(
+        connection: Any,
+        conversation_id: str,
+        hit_sequence: int,
+    ) -> ConversationRecallMatch:
+        row = connection.execute(
+            "SELECT conversation_id, title, updated_at FROM conversations "
+            "WHERE conversation_id = ? AND archived = 0",
+            (conversation_id,),
+        ).fetchone()
+        if row is None:
+            raise ConversationHistoryError("Conversation search result is invalid.")
+        message_rows = connection.execute(
+            "SELECT role, substr(content, 1, ?), sequence "
+            "FROM conversation_messages WHERE conversation_id = ? "
+            "AND role IN ('user', 'assistant') "
+            "ORDER BY abs(sequence - ?), sequence LIMIT ?",
+            (
+                MAX_RECALL_MESSAGE_CHARS,
+                conversation_id,
+                hit_sequence,
+                MAX_RECALL_MESSAGES_PER_CONVERSATION,
+            ),
+        ).fetchall()
+        messages = tuple(
+            StoredConversationMessage(
+                ConversationRole(message_row[0]),
+                message_row[1],
+                int(message_row[2]),
+            )
+            for message_row in sorted(message_rows, key=lambda item: int(item[2]))
+        )
+        return ConversationRecallMatch(
+            ConversationHistoryRepository._summary_from_row(row),
+            messages,
+        )
 
     @staticmethod
     def _summary_from_row(row: tuple[Any, ...]) -> ConversationSummary:

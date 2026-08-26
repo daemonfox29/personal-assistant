@@ -38,6 +38,21 @@ class SyntheticModel:
         return ModelResponse("synthetic response")
 
 
+class CrossChatMemoryModel(SyntheticModel):
+    def generate(self, request: ModelRequest) -> ModelResponse:
+        self.requests.append(request)
+        if request.messages[0].content.startswith(
+            "Identify zero to three durable user-memory suggestions."
+        ):
+            return ModelResponse(
+                '[{"type":"fact","subject":"model pet","content":'
+                '"The user has a dog called Synthetic Scooby",'
+                '"evidence_quote":"","sensitivity":"normal",'
+                '"mention_policy":"may_mention_when_relevant"}]'
+            )
+        return ModelResponse("synthetic response")
+
+
 class SyntheticRecoveryStore:
     def __init__(self, recovery: str | None = None) -> None:
         self.recovery = recovery
@@ -57,6 +72,125 @@ class SyntheticRecoveryStore:
 
 
 class ApplicationServiceTests(unittest.TestCase):
+    def test_explicit_recall_search_supplies_prior_chat_to_new_chat(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            settings = AppSettings(
+                memory=MemorySettings(
+                    data_directory=Path(temporary_directory) / "private"
+                )
+            )
+            factory = AssistantApplicationFactory(settings)
+            factory.setup(RECOVERY, RECOVERY, PASSCODE, PASSCODE)
+            model = SyntheticModel()
+            with patch(
+                "personal_assistant.application_service.OllamaModel",
+                return_value=model,
+            ):
+                service = factory.open(RECOVERY)
+                tuple(
+                    service.iter_events(
+                        "We planned the synthetic cobalt garden launch."
+                    )
+                )
+                service.new_conversation()
+                tuple(
+                    service.iter_events(
+                        "Remember when we talked about the cobalt garden? "
+                        "Let's continue that here."
+                    )
+                )
+                service.new_conversation()
+                tuple(service.iter_events("Continue where we left off."))
+                service.close()
+
+            ordinary_requests = [
+                request
+                for request in model.requests
+                if not request.messages[0].content.startswith(
+                    "Identify zero to three durable user-memory suggestions."
+                )
+            ]
+            system_text = ordinary_requests[1].messages[0].content
+            self.assertIn("conversation_matches", system_text)
+            self.assertIn(
+                "We planned the synthetic cobalt garden launch.",
+                system_text,
+            )
+            self.assertIn("untrusted data", system_text)
+            latest_system_text = ordinary_requests[2].messages[0].content
+            self.assertIn(
+                "Remember when we talked about the cobalt garden?",
+                latest_system_text,
+            )
+
+    def test_ordinary_new_chat_does_not_search_prior_transcripts(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            settings = AppSettings(
+                memory=MemorySettings(
+                    data_directory=Path(temporary_directory) / "private"
+                )
+            )
+            factory = AssistantApplicationFactory(settings)
+            factory.setup(RECOVERY, RECOVERY, PASSCODE, PASSCODE)
+            model = SyntheticModel()
+            with patch(
+                "personal_assistant.application_service.OllamaModel",
+                return_value=model,
+            ):
+                service = factory.open(RECOVERY)
+                tuple(service.iter_events("Synthetic private transcript marker."))
+                service.new_conversation()
+                tuple(service.iter_events("What should I do today?"))
+                service.close()
+
+            ordinary_requests = [
+                request
+                for request in model.requests
+                if not request.messages[0].content.startswith(
+                    "Identify zero to three durable user-memory suggestions."
+                )
+            ]
+            self.assertNotIn(
+                "Synthetic private transcript marker.",
+                ordinary_requests[1].messages[0].content,
+            )
+    def test_new_chat_receives_confirmed_memory_from_preceding_chat(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            settings = AppSettings(
+                memory=MemorySettings(
+                    data_directory=Path(temporary_directory) / "private"
+                )
+            )
+            factory = AssistantApplicationFactory(settings)
+            factory.setup(RECOVERY, RECOVERY, PASSCODE, PASSCODE)
+            model = CrossChatMemoryModel()
+            with patch(
+                "personal_assistant.application_service.OllamaModel",
+                return_value=model,
+            ):
+                service = factory.open(RECOVERY)
+                tuple(service.iter_events("My dog is named Synthetic Scooby."))
+                service.new_conversation()
+                tuple(service.iter_events("What is my dog's name?"))
+                service.close()
+
+            ordinary_requests = [
+                request
+                for request in model.requests
+                if not request.messages[0].content.startswith(
+                    "Identify zero to three durable user-memory suggestions."
+                )
+            ]
+            second_contents = tuple(
+                message.content for message in ordinary_requests[1].messages
+            )
+            self.assertTrue(
+                any(
+                    "My dog is named Synthetic Scooby." in content
+                    for content in second_contents
+                )
+            )
+
     def test_saved_conversation_reopens_and_continues_with_bounded_roles(self) -> None:
         with TemporaryDirectory() as temporary_directory:
             settings = AppSettings(

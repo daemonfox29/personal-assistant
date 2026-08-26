@@ -64,6 +64,16 @@ conversation can continue. **Private chat** creates no transcript, retrieves no
 persistent memory, accepts no explicit memory command, and creates no automatic
 memory suggestions.
 
+Confirmed low-risk personal facts are global across ordinary saved chats. A new
+chat waits boundedly for the preceding completed turn's accepted memory analysis
+before its first model request, so a fact stated in one chat can be retrieved in
+the next. Saved transcripts remain separate from canonical memory: they are not
+searched for ordinary prompts. An explicit request such as “Remember when we
+talked about the cobalt garden? Let's continue that here” performs bounded
+full-text search inside the encrypted database and supplies only a few nearby
+user/assistant excerpts as untrusted data. The current chat and Private Chat are
+excluded from this recall path.
+
 The command-line interface remains a developer and recovery fallback:
 
 ```bash

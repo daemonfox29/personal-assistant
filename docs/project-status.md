@@ -47,7 +47,10 @@ This document is the handoff point between coding sessions. At the end of each s
   explicit backup-retention warning. Private Chat bypasses transcript storage,
   persistent retrieval, explicit memory capture, and suggestion analysis.
   Graceful window shutdown waits for an active response to finish its synchronous
-  transcript commit before releasing database keys.
+  transcript commit and bounded accepted memory analysis before releasing
+  database keys. Confirmed low-risk facts cross saved chats after a one-request
+  handoff barrier. Explicit prior-chat recall uses a bounded encrypted FTS index;
+  ordinary prompts still do not load other transcripts.
 - The local permission policy is implemented and covered by automated tests.
 - GitHub Actions is configured to test pull requests targeting `main` before
   merge. The public repository has an active ruleset requiring the `test`
@@ -163,6 +166,36 @@ complete; the batched Linux pull-request check is its final platform gate.
 - [ ] Add a web/search tool only behind the tool registry and approval layer.
 
 ## Session history
+
+### 2026-08-26 — Cross-chat memory handoff and explicit transcript recall
+
+Completed:
+
+- Diagnosed a real cross-chat miss without reading personal content. The first
+  response had committed, but asynchronous memory analysis finished about four
+  seconds later and the model's paraphrase lacked a verified exact evidence
+  quote, so the result correctly remained an unconfirmed candidate excluded from
+  the next chat.
+- Added an idle-tracked post-response handoff. The first persistent request after
+  new/open waits boundedly for accepted preceding analysis, and graceful shutdown
+  waits before cancelling any remaining work.
+- Added conservative lexical evidence binding. A unique model paraphrase may
+  select an exact first-person declarative sentence, but only that original user
+  sentence is confirmed. Ambiguous selections remain quarantined.
+- Added forward-only encrypted transcript-search migrations with backfill for
+  existing saved chats. Explicit history requests search at most three chats and
+  four nearby messages each, exclude the active chat, and place excerpts in a
+  token-bounded untrusted JSON envelope. Ordinary prompts and Private Chat do not
+  search transcripts.
+- Verified 300 tests locally with the normal performance test skipped. The
+  separate 100,000-record encrypted retrieval benchmark passed at 14.42 ms
+  median and 14.53 ms p95 over 30 queries.
+
+Next:
+
+- Exercise a real first-chat fact handoff and an explicit “remember when” query
+  in the native app after restart.
+- Continue with native candidate review and backup/restore controls.
 
 ### 2026-08-26 — Appearance and encrypted conversation sidebar
 

@@ -191,6 +191,86 @@ class MemoryAnalyzerTests(unittest.TestCase):
         assert isinstance(payload, FactPayload)
         self.assertEqual(payload.statement, "Scooby is my dog.")
 
+    def test_model_paraphrases_select_exact_location_and_pet_sentences(self) -> None:
+        user_text = (
+            "I live in Synthetic Denver. My dog is named Synthetic Scooby."
+        )
+        model = Mock(spec=LanguageModel)
+        model.generate.return_value = ModelResponse(
+            json.dumps(
+                [
+                    {
+                        "type": "fact",
+                        "subject": "model-authored residence",
+                        "content": "The user resides in Synthetic Denver",
+                        "evidence_quote": "",
+                        "sensitivity": "personal",
+                        "mention_policy": "may_mention_when_relevant",
+                    },
+                    {
+                        "type": "fact",
+                        "subject": "model-authored pet",
+                        "content": "The user's dog is Synthetic Scooby",
+                        "evidence_quote": "",
+                        "sensitivity": "normal",
+                        "mention_policy": "may_mention_when_relevant",
+                    },
+                ]
+            )
+        )
+        analyzer = ModelMemorySuggestionAnalyzer(
+            model,
+            "synthetic-model-v1",
+            audit_sink=self.audit,
+        )
+
+        suggestions = analyzer.analyze(
+            user_text,
+            "Thanks for telling me.",
+            "turn:66666666-6666-6666-6666-666666666666",
+            uuid4(),
+        )
+
+        self.assertEqual(
+            tuple(item.user_evidence for item in suggestions),
+            (
+                "I live in Synthetic Denver.",
+                "My dog is named Synthetic Scooby.",
+            ),
+        )
+
+    def test_ambiguous_paraphrase_remains_unconfirmed(self) -> None:
+        user_text = "My dog Luna likes naps. My dog Scooby likes walks."
+        model = Mock(spec=LanguageModel)
+        model.generate.return_value = ModelResponse(
+            json.dumps(
+                [
+                    {
+                        "type": "fact",
+                        "subject": "model-authored dog",
+                        "content": "The user's dog likes playing",
+                        "evidence_quote": "",
+                        "sensitivity": "normal",
+                        "mention_policy": "may_mention_when_relevant",
+                    }
+                ]
+            )
+        )
+        analyzer = ModelMemorySuggestionAnalyzer(
+            model,
+            "synthetic-model-v1",
+            audit_sink=self.audit,
+        )
+
+        suggestions = analyzer.analyze(
+            user_text,
+            "assistant reply",
+            "turn:77777777-7777-7777-7777-777777777777",
+            uuid4(),
+        )
+
+        self.assertIsNone(suggestions[0].user_evidence)
+
     def test_exact_content_skips_question_and_finds_later_assertion(self) -> None:
         user_text = "Is Scooby my dog? Scooby is my dog."
         model = Mock(spec=LanguageModel)
@@ -326,6 +406,29 @@ class MemoryAnalyzerTests(unittest.TestCase):
         self.assertEqual(self.repository.list_candidates(uuid4()), ())
         self.assertFalse(worker.submit("later user", "later assistant"))
         self.assertEqual(self.audit.events[-1].outcome, AuditOutcome.CANCELLED)
+
+    def test_worker_idle_wait_tracks_accepted_turn_to_completion(self) -> None:
+        started = Event()
+        release = Event()
+
+        class BlockingEmptyAnalyzer:
+            def analyze(self, user_text, assistant_text, source_ref, correlation_id):
+                started.set()
+                release.wait(timeout=1)
+                return ()
+
+        worker = PostResponseMemoryWorker(
+            BlockingEmptyAnalyzer(),
+            self.coordinator,
+            audit_sink=self.audit,
+        )
+
+        self.assertTrue(worker.submit("user", "assistant"))
+        self.assertTrue(started.wait(timeout=1))
+        self.assertFalse(worker.wait_until_idle(0))
+        release.set()
+        self.assertTrue(worker.wait_until_idle(1))
+        worker.close()
 
     def test_worker_promotes_only_exact_direct_user_evidence(self) -> None:
         completed = Event()

@@ -4,7 +4,7 @@ from dataclasses import dataclass
 import json
 import re
 from queue import Empty, Full, Queue
-from threading import Event, Thread
+from threading import Event, Lock, Thread
 from time import monotonic
 from typing import Protocol, runtime_checkable
 from uuid import UUID, uuid4
@@ -51,6 +51,33 @@ _DIRECT_ASSERTION = re.compile(
     re.IGNORECASE,
 )
 _USER_SENTENCE = re.compile(r"[^.!?\n]+(?:[.!?]+|$)")
+_EVIDENCE_TERM = re.compile(r"[\w'-]+", re.UNICODE)
+_EVIDENCE_STOP_WORDS = {
+    "about",
+    "and",
+    "are",
+    "for",
+    "from",
+    "has",
+    "have",
+    "her",
+    "his",
+    "its",
+    "mine",
+    "our",
+    "person",
+    "that",
+    "the",
+    "their",
+    "them",
+    "they",
+    "this",
+    "user",
+    "users",
+    "was",
+    "were",
+    "with",
+}
 
 
 @runtime_checkable
@@ -234,22 +261,54 @@ def _verified_user_evidence(
 ) -> str | None:
     """Return only one exact, declarative current-user sentence."""
 
+    sentences = tuple(
+        sentence
+        for match in _USER_SENTENCE.finditer(user_text)
+        if (sentence := match.group(0).strip())
+        and 8 <= len(sentence) <= MAX_DIRECT_EVIDENCE_CHARS
+        and not sentence.endswith("?")
+        and _DIRECT_ASSERTION.search(sentence)
+        and sentence in user_text
+    )
     for selected in (proposed_evidence, proposed_content):
         if not isinstance(selected, str) or not selected or selected not in user_text:
             continue
-        for match in _USER_SENTENCE.finditer(user_text):
-            if selected not in match.group(0):
-                continue
-            sentence = match.group(0).strip()
-            if (
-                not 8 <= len(sentence) <= MAX_DIRECT_EVIDENCE_CHARS
-                or sentence.endswith("?")
-                or not _DIRECT_ASSERTION.search(sentence)
-                or sentence not in user_text
-            ):
-                continue
-            return sentence
-    return None
+        matches = tuple(sentence for sentence in sentences if selected in sentence)
+        if len(matches) == 1:
+            return matches[0]
+    selection_terms = _evidence_terms(proposed_evidence) | _evidence_terms(
+        proposed_content
+    )
+    scored: list[tuple[int, int, str]] = []
+    for sentence in sentences:
+        overlap = selection_terms & _evidence_terms(sentence)
+        if not overlap:
+            continue
+        if len(overlap) < 2 and not any(len(term) >= 5 for term in overlap):
+            continue
+        scored.append(
+            (
+                len(overlap),
+                sum(min(len(term), 12) for term in overlap),
+                sentence,
+            )
+        )
+    scored.sort(reverse=True)
+    if not scored:
+        return None
+    if len(scored) > 1 and scored[0][:2] == scored[1][:2]:
+        return None
+    return scored[0][2]
+
+
+def _evidence_terms(value: object) -> set[str]:
+    if not isinstance(value, str):
+        return set()
+    return {
+        term
+        for term in _EVIDENCE_TERM.findall(value.casefold())
+        if len(term) >= 3 and term not in _EVIDENCE_STOP_WORDS
+    }
 
 
 @dataclass(frozen=True)
@@ -281,6 +340,10 @@ class PostResponseMemoryWorker:
         self._audit_sink = audit_sink
         self._queue: Queue[_CompletedTurn] = Queue(maxsize=1)
         self._cancelled = Event()
+        self._idle = Event()
+        self._idle.set()
+        self._state_lock = Lock()
+        self._pending = 0
         self._thread = Thread(
             target=self._run,
             name="memory-suggestion-worker",
@@ -300,14 +363,17 @@ class PostResponseMemoryWorker:
             )
             return False
         try:
-            self._queue.put_nowait(
-                _CompletedTurn(
-                    user_text,
-                    assistant_text,
-                    f"turn:{turn_id}",
-                    turn_id,
+            with self._state_lock:
+                self._queue.put_nowait(
+                    _CompletedTurn(
+                        user_text,
+                        assistant_text,
+                        f"turn:{turn_id}",
+                        turn_id,
+                    )
                 )
-            )
+                self._pending += 1
+                self._idle.clear()
         except Full:
             self._safe_emit(
                 turn_id,
@@ -317,6 +383,20 @@ class PostResponseMemoryWorker:
             return False
         return True
 
+    def wait_until_idle(self, timeout_seconds: float = 15.0) -> bool:
+        """Wait boundedly for accepted turns to finish persistence."""
+
+        if (
+            isinstance(timeout_seconds, bool)
+            or not isinstance(timeout_seconds, (int, float))
+            or not 0 <= timeout_seconds <= 60
+        ):
+            raise ValueError("Memory wait timeout is invalid.")
+        with self._state_lock:
+            if self._pending == 0:
+                return True
+        return self._idle.wait(float(timeout_seconds))
+
     def close(self) -> None:
         """Cancel future persistence; an in-flight model request may finish silently."""
 
@@ -324,6 +404,7 @@ class PostResponseMemoryWorker:
         try:
             while True:
                 self._queue.get_nowait()
+                self._mark_completed()
         except Empty:
             pass
         self._thread.join(timeout=0.25)
@@ -355,7 +436,15 @@ class PostResponseMemoryWorker:
                     AuditOutcome.FAILED,
                     AuditReasonCode.SAFE_INTERNAL_FAILURE,
                 )
-                continue
+            finally:
+                self._mark_completed()
+
+    def _mark_completed(self) -> None:
+        with self._state_lock:
+            if self._pending > 0:
+                self._pending -= 1
+            if self._pending == 0:
+                self._idle.set()
 
     def _safe_emit(
         self,

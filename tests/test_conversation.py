@@ -69,13 +69,34 @@ class RecordingContextProvider:
 class RecordingPostResponseWorker:
     def __init__(self) -> None:
         self.calls = 0
+        self.wait_calls = 0
 
     def submit(self, user_text: str, assistant_text: str) -> bool:
         self.calls += 1
         return True
 
+    def wait_until_idle(self, timeout_seconds: float = 15.0) -> bool:
+        self.wait_calls += 1
+        return True
+
     def close(self) -> None:
         pass
+
+
+class BlockingHandoffMemoryWorker(RecordingPostResponseWorker):
+    def __init__(self) -> None:
+        super().__init__()
+        self.wait_started = Event()
+        self.release = Event()
+        self.closed = False
+
+    def wait_until_idle(self, timeout_seconds: float = 15.0) -> bool:
+        self.wait_calls += 1
+        self.wait_started.set()
+        return self.release.wait(timeout=timeout_seconds)
+
+    def close(self) -> None:
+        self.closed = True
 
 
 class ConversationServiceTests(unittest.TestCase):
@@ -160,6 +181,45 @@ class ConversationServiceTests(unittest.TestCase):
         first.join(timeout=1)
         self.assertFalse(first.is_alive())
         self.assertTrue(first_events)
+
+    def test_replaced_chat_waits_for_prior_memory_before_model_request(self) -> None:
+        model = SyntheticStreamingModel()
+        worker = BlockingHandoffMemoryWorker()
+        service = ConversationService(model, post_response_worker=worker)
+        service.replace_history((), wait_for_memory=True)
+        events: list[object] = []
+
+        request = Thread(
+            target=lambda: events.extend(service.events_for("new chat question")),
+            daemon=True,
+        )
+        request.start()
+
+        self.assertTrue(worker.wait_started.wait(timeout=1))
+        self.assertEqual(model.requests, [])
+        worker.release.set()
+        request.join(timeout=1)
+        self.assertFalse(request.is_alive())
+        self.assertEqual(worker.wait_calls, 1)
+        self.assertTrue(events)
+        self.assertEqual(len(model.requests), 1)
+
+    def test_close_waits_for_accepted_memory_before_worker_shutdown(self) -> None:
+        worker = BlockingHandoffMemoryWorker()
+        service = ConversationService(
+            SyntheticStreamingModel(),
+            post_response_worker=worker,
+        )
+        closer = Thread(target=service.close, daemon=True)
+
+        closer.start()
+
+        self.assertTrue(worker.wait_started.wait(timeout=1))
+        self.assertFalse(worker.closed)
+        worker.release.set()
+        closer.join(timeout=1)
+        self.assertFalse(closer.is_alive())
+        self.assertTrue(worker.closed)
 
     def test_closed_session_rejects_new_work(self) -> None:
         service = ConversationService(SyntheticStreamingModel())
