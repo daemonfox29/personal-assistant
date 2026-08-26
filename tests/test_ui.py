@@ -137,6 +137,29 @@ class NativeUiTests(unittest.TestCase):
         self.assertEqual(sent, [("first line\nsecond line", 400)])
         self.assertEqual(page._input.toPlainText(), "")
 
+    def test_thinking_indicator_animates_then_yields_to_memory_stage_direction(self) -> None:
+        page = ChatPage()
+        page.configure_session("synthetic", False, 400, 1_200, 2_000)
+        page._input.setPlainText("Synthetic prompt")
+
+        page._submit()
+
+        self.assertIn("Thinking.", page.transcript_text())
+        page._advance_thinking()
+        self.assertIn("Thinking..", page.transcript_text())
+        page.apply_event(
+            ConversationEvent(
+                ConversationEventKind.NOTICE,
+                "Memory updated: pet.",
+            )
+        )
+        transcript = page.transcript_text()
+        self.assertNotIn("Thinking", transcript)
+        self.assertIn("Memory updated: pet.", transcript)
+        self.assertNotIn("Notice\nMemory updated", transcript)
+        memory_text = page._transcript.document().find("Memory updated")
+        self.assertTrue(memory_text.charFormat().fontItalic())
+
     def test_settings_page_emits_validated_bounded_values(self) -> None:
         page = SettingsPage()
         page.set_preferences(

@@ -1,6 +1,7 @@
 """Explicit, bounded recall of encrypted prior-conversation excerpts."""
 
 from dataclasses import dataclass
+import re
 from uuid import UUID
 
 from personal_assistant.conversation_history import ConversationHistoryRepository
@@ -24,7 +25,21 @@ _RECALL_PHRASES = (
     "continue our conversation",
     "continue where we left off",
     "pick up where we left off",
+    "resume where we left off",
+    "what did we talk about",
+    "what were we talking about",
+    "where did we leave off",
 )
+_HISTORY_NOUNS = {"chat", "conversation", "session"}
+_HISTORY_MARKERS = {
+    "another",
+    "earlier",
+    "last",
+    "old",
+    "past",
+    "previous",
+    "prior",
+}
 
 
 class ConversationRecallContextError(RuntimeError):
@@ -61,7 +76,7 @@ class ConversationRecallContextProvider:
         if not isinstance(correlation_id, UUID):
             raise ValueError("Conversation recall correlation ID is invalid.")
         normalized = " ".join(user_text.casefold().split())
-        if not any(phrase in normalized for phrase in _RECALL_PHRASES):
+        if not _is_explicit_recall_request(normalized):
             return None
         try:
             matches = self.repository.search_conversations(
@@ -117,3 +132,10 @@ class ConversationRecallContextProvider:
             "remember one.\n"
             f"{document}\nEnd of saved conversation search results."
         )
+
+
+def _is_explicit_recall_request(normalized: str) -> bool:
+    if any(phrase in normalized for phrase in _RECALL_PHRASES):
+        return True
+    words = set(re.findall(r"[\w']+", normalized, re.UNICODE))
+    return bool(words & _HISTORY_NOUNS) and bool(words & _HISTORY_MARKERS)

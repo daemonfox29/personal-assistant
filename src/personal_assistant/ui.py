@@ -6,7 +6,7 @@ import sys
 from threading import Event
 from uuid import UUID
 
-from PySide6.QtCore import QObject, QThread, Qt, Signal, Slot
+from PySide6.QtCore import QObject, QThread, QTimer, Qt, Signal, Slot
 from PySide6.QtGui import (
     QColor,
     QCloseEvent,
@@ -90,6 +90,26 @@ INLINE_MARKUP = re.compile(r"(\*\*[^*\n]+\*\*|`[^`\n]+`)")
 HEADING_MARKUP = re.compile(r"^(#{1,3})\s+(.+)$")
 BULLET_MARKUP = re.compile(r"^\s*[-*]\s+(.+)$")
 NUMBERED_MARKUP = re.compile(r"^\s*(\d{1,3})[.)]\s+(.+)$")
+THINKING_PHRASES = (
+    "Thinking",
+    "Thinking",
+    "Pondering",
+    "Connecting the dots",
+    "Thinking",
+)
+
+
+def _is_memory_stage_direction(text: str) -> bool:
+    return text.startswith(
+        (
+            "Memory updated:",
+            "Memory confirmed:",
+            "Memory unchanged:",
+            "Memory needs clarification:",
+            "Memory needs confirmation:",
+            "Memory not saved:",
+        )
+    )
 
 
 class WelcomePage(QWidget):
@@ -458,6 +478,13 @@ class ChatPage(QWidget):
         self._assistant_open = False
         self._assistant_start: int | None = None
         self._assistant_raw: list[str] = []
+        self._thinking_start: int | None = None
+        self._thinking_frame = 0
+        self._thinking_request_count = 0
+        self._thinking_phrase = THINKING_PHRASES[0]
+        self._thinking_timer = QTimer(self)
+        self._thinking_timer.setInterval(450)
+        self._thinking_timer.timeout.connect(self._advance_thinking)
         self._display_messages: list[tuple[ConversationRole, str]] = []
         self._base_status = "Local session"
         self._font_family = UI_FONT_FAMILY
@@ -524,6 +551,7 @@ class ChatPage(QWidget):
             self._record_display_message(ConversationRole.USER, text)
 
     def apply_event(self, event: ConversationEvent, *, record: bool = True) -> None:
+        self._stop_thinking()
         if event.kind is ConversationEventKind.ASSISTANT_CHUNK:
             if not self._assistant_open:
                 self._append_role("Assistant")
@@ -536,7 +564,8 @@ class ChatPage(QWidget):
         elif event.kind is ConversationEventKind.NOTICE:
             if self._assistant_open:
                 self._finish_assistant(record=record)
-            self._append_role("Notice")
+            if not _is_memory_stage_direction(event.text):
+                self._append_role("Notice")
             self._append_plain(f"{event.text}\n\n", italic=True)
             if record:
                 self._record_display_message(ConversationRole.NOTICE, event.text)
@@ -634,6 +663,7 @@ class ChatPage(QWidget):
         self._rerender_transcript()
 
     def _reset_transcript(self) -> None:
+        self._stop_thinking()
         self._transcript.clear()
         self._transcript.document().setMaximumBlockCount(MAX_TRANSCRIPT_BLOCKS)
         self._assistant_open = False
@@ -707,7 +737,59 @@ class ChatPage(QWidget):
         response_limit = int(self._limit.currentData())
         self._input.clear()
         self.append_user(text)
+        self._start_thinking()
         self.message_requested.emit(text, response_limit)
+
+    def _start_thinking(self) -> None:
+        self._stop_thinking()
+        self._thinking_phrase = THINKING_PHRASES[
+            self._thinking_request_count % len(THINKING_PHRASES)
+        ]
+        self._thinking_request_count += 1
+        self._thinking_frame = 0
+        self._thinking_start = self._transcript.textCursor().position()
+        self._render_thinking()
+        self._thinking_timer.start()
+
+    @Slot()
+    def _advance_thinking(self) -> None:
+        if self._thinking_start is None:
+            return
+        self._thinking_frame = (self._thinking_frame + 1) % 3
+        self._render_thinking()
+
+    def _render_thinking(self) -> None:
+        start = self._thinking_start
+        if start is None:
+            return
+        cursor = QTextCursor(self._transcript.document())
+        cursor.setPosition(start)
+        cursor.setPosition(
+            self._transcript.document().characterCount() - 1,
+            QTextCursor.MoveMode.KeepAnchor,
+        )
+        cursor.removeSelectedText()
+        dots = "." * (self._thinking_frame + 1)
+        body_format = self._body_format()
+        body_format.setFontItalic(True)
+        cursor.insertText(f"{self._thinking_phrase}{dots}\n\n", body_format)
+        self._transcript.setTextCursor(cursor)
+        self._transcript.ensureCursorVisible()
+
+    def _stop_thinking(self) -> None:
+        self._thinking_timer.stop()
+        start = self._thinking_start
+        if start is None:
+            return
+        cursor = QTextCursor(self._transcript.document())
+        cursor.setPosition(start)
+        cursor.setPosition(
+            self._transcript.document().characterCount() - 1,
+            QTextCursor.MoveMode.KeepAnchor,
+        )
+        cursor.removeSelectedText()
+        self._transcript.setTextCursor(cursor)
+        self._thinking_start = None
 
     def _append_role(self, label: str) -> None:
         role_format = QTextCharFormat()

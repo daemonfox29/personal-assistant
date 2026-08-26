@@ -95,6 +95,12 @@ class ApplicationServiceTests(unittest.TestCase):
                 service.new_conversation()
                 tuple(
                     service.iter_events(
+                        "What did we talk about the last time I had this app open?"
+                    )
+                )
+                service.new_conversation()
+                tuple(
+                    service.iter_events(
                         "Remember when we talked about the cobalt garden? "
                         "Let's continue that here."
                     )
@@ -117,7 +123,12 @@ class ApplicationServiceTests(unittest.TestCase):
                 system_text,
             )
             self.assertIn("untrusted data", system_text)
-            latest_system_text = ordinary_requests[2].messages[0].content
+            topical_system_text = ordinary_requests[2].messages[0].content
+            self.assertIn(
+                "We planned the synthetic cobalt garden launch.",
+                topical_system_text,
+            )
+            latest_system_text = ordinary_requests[3].messages[0].content
             self.assertIn(
                 "Remember when we talked about the cobalt garden?",
                 latest_system_text,
@@ -154,6 +165,7 @@ class ApplicationServiceTests(unittest.TestCase):
                 "Synthetic private transcript marker.",
                 ordinary_requests[1].messages[0].content,
             )
+
     def test_new_chat_receives_confirmed_memory_from_preceding_chat(self) -> None:
         with TemporaryDirectory() as temporary_directory:
             settings = AppSettings(
@@ -171,7 +183,7 @@ class ApplicationServiceTests(unittest.TestCase):
                 service = factory.open(RECOVERY)
                 tuple(service.iter_events("My dog is named Synthetic Scooby."))
                 service.new_conversation()
-                tuple(service.iter_events("What is my dog's name?"))
+                tuple(service.iter_events("What was the fact I just told you?"))
                 service.close()
 
             ordinary_requests = [
@@ -219,13 +231,27 @@ class ApplicationServiceTests(unittest.TestCase):
                 second.close()
 
             self.assertEqual(reopened.messages[0].content, "My dog is Scooby")
+            second_chat_requests = [
+                request
+                for request in second_model.requests
+                if not request.messages[0].content.startswith(
+                    "Identify zero to three durable user-memory suggestions."
+                )
+            ]
             request_contents = [
-                message.content for message in second_model.requests[0].messages
+                message.content for message in second_chat_requests[0].messages
             ]
             self.assertIn("My dog is Scooby", request_contents)
             self.assertIn("synthetic response", request_contents)
+            first_chat_requests = [
+                request
+                for request in first_model.requests
+                if not request.messages[0].content.startswith(
+                    "Identify zero to three durable user-memory suggestions."
+                )
+            ]
             self.assertEqual(
-                first_model.requests[0].messages[-1].content,
+                first_chat_requests[0].messages[-1].content,
                 "My dog is Scooby",
             )
 

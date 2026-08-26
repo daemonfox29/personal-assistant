@@ -26,6 +26,7 @@ from personal_assistant.memory_capture import (
 )
 from personal_assistant.memory_context import RepositoryMemoryContextProvider
 from personal_assistant.memory_repository import MemoryRepository
+from personal_assistant.retrieval_language import safe_topic_labels
 from personal_assistant.memory_types import (
     ActorType,
     FactPayload,
@@ -178,19 +179,29 @@ class MemoryRuntime:
         except MemoryValidationError:
             return "That information cannot be stored under the memory safety rules."
 
+        labels = safe_topic_labels(normalized, fallback="personal fact")
+        topics = (
+            labels[0]
+            if len(labels) == 1
+            else f"{', '.join(labels[:-1])} and {labels[-1]}"
+        )
         return {
-            CaptureDecision.CREATED_CONFIRMED: "I saved that as confirmed memory.",
-            CaptureDecision.DUPLICATE: "That is already in confirmed memory.",
+            CaptureDecision.CREATED_CONFIRMED: f"Memory updated: {topics}.",
+            CaptureDecision.DUPLICATE: (
+                f"Memory unchanged: {topics}. That information is already "
+                "confirmed."
+            ),
             CaptureDecision.CONFIRMED_EXISTING_CANDIDATE: (
-                "I confirmed the matching memory suggestion."
+                f"Memory confirmed: {topics}."
             ),
             CaptureDecision.CLARIFICATION_REQUIRED: (
-                "I found related memory and need clarification before changing it."
+                f"Memory needs clarification: {topics}. Related saved information "
+                "may conflict, so I did not overwrite it."
             ),
             CaptureDecision.EXPLICIT_HIGHER_RISK_REVIEW_REQUIRED: (
-                "That memory needs higher-risk review and was not saved."
+                f"Memory not saved: {topics}. Higher-risk review is required."
             ),
-        }.get(result.decision, "The memory request was not saved.")
+        }.get(result.decision, f"Memory not saved: {topics}.")
 
     def create_daily_backup(self, correlation_id: UUID) -> BackupSnapshot | None:
         if self.backup_manager is None:

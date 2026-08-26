@@ -60,8 +60,13 @@ startup remains the explicit recovery path. Both supply the memory
 adapter only when a safe portable manifest and existing encrypted database
 unlock successfully. A new or disabled installation follows the Module 0
 session-only path. Explicit remember instructions are intercepted before model
-submission. After the visible answer,
-a bounded worker may ask the model for tentative suggestions. Deterministic code
+submission. A deterministic phrase gate routes clear durable-looking
+first-person statements through bounded analysis before the main model request;
+an eligible exact low-risk sentence commits synchronously and produces a fixed,
+generic-topic UI receipt. Uncertain, contradictory, inferred, or higher-risk
+material cannot use that promotion path and produces an immediate fixed review
+or clarification receipt. Other completed turns use a bounded post-response
+worker for tentative suggestions. Deterministic code
 may promote only a complete low-risk declarative sentence found exactly in the
 user's current message and stores that sentence with trusted-interface
 provenance. A model-selected exact fragment or an unambiguous lexical paraphrase
@@ -69,7 +74,13 @@ may locate the sentence but cannot author its persisted content. Ambiguous
 matches, inferences, sensitive material, and conflicts enter only the
 quarantined candidate inbox until trusted review confirms them. Replacing active
 chat history sets a one-request handoff barrier so the next persistent-memory
-request waits boundedly for preceding accepted analysis before retrieval.
+request waits boundedly for preceding accepted analysis before retrieval. A
+referential first request may reuse only the immediately preceding accepted user
+statement as a search hint; it is not inserted as a new model role. Retrieval
+shares small deterministic singular/plural normalization across memory,
+transcript recall, and evidence binding. Direct owner recall may also expand a
+small reviewed topic table; ordinary prompts do not receive that wider fallback.
+The model never invents search terms or UI save receipts.
 
 Future action flow:
 

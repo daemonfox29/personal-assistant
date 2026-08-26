@@ -21,7 +21,9 @@ from personal_assistant.audit import (
 )
 from personal_assistant.memory_capture import (
     AutomaticMemorySuggestion,
+    CaptureDecision,
     MemoryCaptureCoordinator,
+    SuggestionBatchResult,
 )
 from personal_assistant.memory_types import (
     FactPayload,
@@ -40,6 +42,7 @@ from personal_assistant.model import (
     ModelMessage,
     ModelRequest,
 )
+from personal_assistant.retrieval_language import normalized_terms, safe_topic_labels
 
 
 MAX_ANALYZER_RESPONSE_CHARS = 16_384
@@ -50,8 +53,29 @@ _DIRECT_ASSERTION = re.compile(
     r"\b(?:i|i['’]m|my|mine|we|our)\b",
     re.IGNORECASE,
 )
+_CLEAR_MEMORY_ASSERTION = re.compile(
+    r"\b(?:"
+    r"i\s+(?:live|prefer|like|love|dislike|avoid|work|grew|was\s+born|"
+    r"cannot|can['’]t)\b|"
+    r"i(?:\s+am|['’]m)\s+(?:from|based|located|allergic|sensitive|a\b|an\b)|"
+    r"i\s+have\s+(?:a\s+|an\s+)?(?:[\w'-]+\s+){0,5}"
+    r"(?:allerg\w*|sensitiv\w*|intoleran\w*|"
+    r"condition|dog|cat|pet|child|sibling|partner|spouse)|"
+    r"i\s+(?:do\s+not|don['’]t)\s+have\s+(?:a\s+|an\s+)?"
+    r"(?:[\w'-]+\s+){0,5}(?:allerg\w*|sensitiv\w*|intoleran\w*|"
+    r"condition|dog|cat|pet|child|sibling|partner|spouse)|"
+    r"my\s+(?:name|dog|cat|pet|favorite|preference|allerg\w*|sensitiv\w*|"
+    r"home|job|career|profession|pronouns?)\b|"
+    r"is\s+my\s+(?:dog|cat|pet|partner|spouse)\b"
+    r")",
+    re.IGNORECASE,
+)
+_UNCERTAIN_ASSERTION = re.compile(
+    r"\b(?:maybe|might|possibly|probably|i\s+(?:think|guess|suspect)|"
+    r"i['’]m\s+not\s+sure|i\s+am\s+not\s+sure)\b",
+    re.IGNORECASE,
+)
 _USER_SENTENCE = re.compile(r"[^.!?\n]+(?:[.!?]+|$)")
-_EVIDENCE_TERM = re.compile(r"[\w'-]+", re.UNICODE)
 _EVIDENCE_STOP_WORDS = {
     "about",
     "and",
@@ -268,6 +292,7 @@ def _verified_user_evidence(
         and 8 <= len(sentence) <= MAX_DIRECT_EVIDENCE_CHARS
         and not sentence.endswith("?")
         and _DIRECT_ASSERTION.search(sentence)
+        and not _UNCERTAIN_ASSERTION.search(sentence)
         and sentence in user_text
     )
     for selected in (proposed_evidence, proposed_content):
@@ -304,11 +329,28 @@ def _verified_user_evidence(
 def _evidence_terms(value: object) -> set[str]:
     if not isinstance(value, str):
         return set()
-    return {
-        term
-        for term in _EVIDENCE_TERM.findall(value.casefold())
-        if len(term) >= 3 and term not in _EVIDENCE_STOP_WORDS
-    }
+    return set(
+        normalized_terms(
+            value,
+            stop_words=_EVIDENCE_STOP_WORDS,
+            minimum_length=3,
+            maximum_terms=64,
+        )
+    )
+
+
+def has_clear_direct_memory_statement(user_text: str) -> bool:
+    """Select only bounded declarative phrases for pre-response analysis."""
+
+    if not isinstance(user_text, str):
+        return False
+    return any(
+        8 <= len(sentence) <= MAX_DIRECT_EVIDENCE_CHARS
+        and not sentence.endswith("?")
+        and _CLEAR_MEMORY_ASSERTION.search(sentence)
+        for match in _USER_SENTENCE.finditer(user_text)
+        if (sentence := match.group(0).strip())
+    )
 
 
 @dataclass(frozen=True)
@@ -382,6 +424,60 @@ class PostResponseMemoryWorker:
             )
             return False
         return True
+
+    def capture_before_response(self, user_text: str) -> tuple[str, ...] | None:
+        """Synchronously commit clear direct facts and return trusted UI notices.
+
+        ``None`` means the deterministic gate did not select this message, so the
+        ordinary post-response worker should still analyze the completed turn.
+        """
+
+        if self._cancelled.is_set() or not has_clear_direct_memory_statement(
+            user_text
+        ):
+            return None
+        if not self.wait_until_idle(15.0):
+            return (
+                _memory_notice(
+                    "Memory not saved",
+                    user_text,
+                    "personal information",
+                    "Memory processing is still busy. Please try again or use "
+                    "‘remember that …’.",
+                ),
+            )
+        correlation_id = uuid4()
+        source_ref = f"turn:{correlation_id}"
+        try:
+            suggestions = self._analyzer.analyze(
+                user_text,
+                "",
+                source_ref,
+                correlation_id,
+            )
+            if self._cancelled.is_set():
+                return None
+            result = self._coordinator.process_suggestion_batch(
+                suggestions,
+                correlation_id,
+                is_cancelled=self._cancelled.is_set,
+                direct_user_text=user_text,
+            )
+        except Exception:
+            self._safe_emit(
+                correlation_id,
+                AuditOutcome.FAILED,
+                AuditReasonCode.SAFE_INTERNAL_FAILURE,
+            )
+            return (
+                _memory_notice(
+                    "Memory not saved",
+                    user_text,
+                    "personal information",
+                    "Memory processing was unavailable.",
+                ),
+            )
+        return _capture_notices(suggestions, result, user_text)
 
     def wait_until_idle(self, timeout_seconds: float = 15.0) -> bool:
         """Wait boundedly for accepted turns to finish persistence."""
@@ -480,3 +576,95 @@ class PostResponseMemoryWorker:
                 ),
             )
         )
+
+
+def _capture_notices(
+    suggestions: tuple[AutomaticMemorySuggestion, ...],
+    batch: SuggestionBatchResult,
+    user_text: str,
+) -> tuple[str, ...]:
+    if batch.cancelled:
+        return ()
+    if not suggestions:
+        return (
+            _memory_notice(
+                "Memory not saved",
+                user_text,
+                "personal information",
+                "I could not identify a lasting fact confidently. Please clarify "
+                "or use ‘remember that …’ to confirm it.",
+            ),
+        )
+    notices: list[str] = []
+    for index, result in enumerate(batch.results):
+        suggestion = suggestions[index]
+        source_text = suggestion.user_evidence or user_text
+        fallback = (
+            "preference"
+            if isinstance(suggestion.payload, PreferencePayload)
+            else "personal note"
+            if isinstance(suggestion.payload, NotePayload)
+            else "personal fact"
+        )
+        if result.decision is CaptureDecision.CREATED_CONFIRMED:
+            notice = _memory_notice("Memory updated", source_text, fallback)
+        elif result.decision is CaptureDecision.CONFIRMED_EXISTING_CANDIDATE:
+            notice = _memory_notice("Memory confirmed", source_text, fallback)
+        elif result.decision is CaptureDecision.DUPLICATE:
+            notice = _memory_notice(
+                "Memory unchanged",
+                source_text,
+                fallback,
+                "That information is already confirmed.",
+            )
+        elif result.decision is CaptureDecision.CLARIFICATION_REQUIRED:
+            notice = _memory_notice(
+                "Memory needs clarification",
+                source_text,
+                fallback,
+                "Related saved information may conflict, so I did not overwrite "
+                "it. Please tell me which version is current.",
+            )
+        elif result.decision in {
+            CaptureDecision.CREATED_CANDIDATE,
+            CaptureDecision.CREATED_CANDIDATE_REVIEW_REQUIRED,
+        }:
+            notice = _memory_notice(
+                "Memory needs confirmation",
+                source_text,
+                fallback,
+                "It remains unconfirmed. Please clarify or use ‘remember that …’ "
+                "to confirm it.",
+            )
+        elif result.decision is CaptureDecision.CANDIDATE_LIMIT_REACHED:
+            notice = _memory_notice(
+                "Memory not saved",
+                source_text,
+                fallback,
+                "The unconfirmed-memory review queue is full.",
+            )
+        else:
+            notice = _memory_notice(
+                "Memory not saved",
+                source_text,
+                fallback,
+                "Higher-risk review is required.",
+            )
+        if notice not in notices:
+            notices.append(notice)
+    return tuple(notices)
+
+
+def _memory_notice(
+    action: str,
+    source_text: str,
+    fallback: str,
+    explanation: str = "",
+) -> str:
+    labels = safe_topic_labels(source_text, fallback=fallback)
+    if len(labels) == 1:
+        topics = labels[0]
+    else:
+        topics = f"{', '.join(labels[:-1])} and {labels[-1]}"
+    suffix = f" {explanation}" if explanation else ""
+    return f"{action}: {topics}.{suffix}"

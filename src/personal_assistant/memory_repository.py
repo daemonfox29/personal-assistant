@@ -62,6 +62,10 @@ from personal_assistant.memory_types import (
     payload_from_data,
     payload_to_data,
 )
+from personal_assistant.retrieval_language import (
+    connected_topic_terms,
+    normalized_terms,
+)
 
 
 PAYLOAD_VERSION = 1
@@ -117,15 +121,7 @@ _RETRIEVAL_STOP_WORDS = {
 
 
 def _normalized_retrieval_terms(query: str) -> tuple[str, ...]:
-    terms: list[str] = []
-    for term in _RETRIEVAL_TERM.findall(query.casefold()):
-        if term in _RETRIEVAL_STOP_WORDS:
-            continue
-        if term not in terms:
-            terms.append(term)
-        if len(terms) == 16:
-            break
-    return tuple(terms)
+    return normalized_terms(query, stop_words=_RETRIEVAL_STOP_WORDS)
 
 
 class MemoryRepositoryError(RuntimeError):
@@ -621,6 +617,8 @@ class MemoryRepository:
                 exclusions = {reason: 0 for reason in RetrievalExclusion}
                 ranked: list[tuple[int, float, str, MemoryRecord, tuple[str, ...]]] = []
                 query_terms = self._retrieval_terms(request.query)
+                if request.mode is RetrievalMode.DIRECT:
+                    query_terms = connected_topic_terms(query_terms)
                 for record_id, text_match, entity_match in candidates:
                     record = self._load_record(connection, record_id)
                     exclusion = self._retrieval_exclusion(record, request, now)
@@ -1719,8 +1717,15 @@ class MemoryRepository:
         if terms and len(found) < MAX_RETRIEVAL_CANDIDATES:
             strict_expression = " AND ".join(f'"{term}"*' for term in terms)
             expressions = [strict_expression]
-            if len(terms) > 1:
-                expressions.append(" OR ".join(f'"{term}"*' for term in terms))
+            fallback_terms = (
+                connected_topic_terms(terms)
+                if request.mode is RetrievalMode.DIRECT
+                else terms
+            )
+            if len(fallback_terms) > 1:
+                expressions.append(
+                    " OR ".join(f'"{term}"*' for term in fallback_terms)
+                )
             rows = ()
             for expression in expressions:
                 rows = connection.execute(
@@ -1765,7 +1770,11 @@ class MemoryRepository:
 
     @staticmethod
     def _capture_terms(payload: MemoryPayload) -> tuple[str, ...]:
-        if isinstance(
+        if isinstance(payload, FactPayload) and payload.subject.startswith(
+            "direct-statement:"
+        ):
+            text = payload.statement
+        elif isinstance(
             payload,
             (FactPayload, PreferencePayload, PolicyPreferencePayload),
         ):

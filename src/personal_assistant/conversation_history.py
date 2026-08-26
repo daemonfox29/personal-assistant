@@ -3,7 +3,6 @@
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import StrEnum
-import re
 from time import monotonic
 from typing import Any, Callable
 from uuid import UUID, uuid4
@@ -20,6 +19,10 @@ from personal_assistant.audit import (
 )
 from personal_assistant.encrypted_database import EncryptedConnectionProvider
 from personal_assistant.session_memory import ConversationTurn
+from personal_assistant.retrieval_language import (
+    connected_topic_terms,
+    normalized_terms,
+)
 
 
 MAX_CONVERSATION_TITLE_CHARS = 160
@@ -32,11 +35,14 @@ MAX_RECALL_CONVERSATIONS = 3
 MAX_RECALL_MESSAGES_PER_CONVERSATION = 4
 MAX_RECALL_MESSAGE_CHARS = 2_000
 MAX_RECALL_SCAN_HITS = 96
-_RECALL_TERM = re.compile(r"[\w'-]+", re.UNICODE)
 _RECALL_STOP_WORDS = {
     "about",
     "ago",
     "and",
+    "another",
+    "app",
+    "back",
+    "before",
     "can",
     "chat",
     "conversation",
@@ -48,6 +54,9 @@ _RECALL_STOP_WORDS = {
     "do",
     "from",
     "here",
+    "had",
+    "have",
+    "i",
     "in",
     "is",
     "it",
@@ -57,29 +66,38 @@ _RECALL_STOP_WORDS = {
     "me",
     "month",
     "my",
+    "old",
     "off",
     "of",
     "on",
+    "open",
+    "opened",
     "our",
     "past",
     "pick",
     "please",
     "previous",
+    "prior",
     "remember",
     "talk",
     "talked",
+    "talking",
+    "tell",
     "that",
     "the",
     "then",
     "this",
+    "time",
     "to",
     "up",
     "was",
     "we",
+    "were",
     "week",
     "when",
     "where",
     "with",
+    "what",
     "you",
 }
 
@@ -652,13 +670,12 @@ class ConversationHistoryRepository:
 
     @staticmethod
     def _search_terms(query: str) -> tuple[str, ...]:
-        return tuple(
-            dict.fromkeys(
-                term
-                for term in _RECALL_TERM.findall(query.casefold())
-                if len(term) >= 2 and term not in _RECALL_STOP_WORDS
-            )
-        )[:12]
+        return normalized_terms(
+            query,
+            stop_words=_RECALL_STOP_WORDS,
+            minimum_length=2,
+            maximum_terms=12,
+        )
 
     @staticmethod
     def _search_hits(
@@ -679,9 +696,12 @@ class ConversationHistoryRepository:
                     (exclusion, exclusion, MAX_RECALL_CONVERSATIONS),
                 ).fetchall()
             )
+        connected_terms = connected_topic_terms(terms, maximum_terms=12)
         expressions = [" AND ".join(f'"{term}"*' for term in terms)]
-        if len(terms) > 1:
-            expressions.append(" OR ".join(f'"{term}"*' for term in terms))
+        if len(connected_terms) > 1:
+            expressions.append(
+                " OR ".join(f'"{term}"*' for term in connected_terms)
+            )
         for expression in expressions:
             rows = tuple(
                 connection.execute(

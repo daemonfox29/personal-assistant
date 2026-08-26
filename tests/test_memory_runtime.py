@@ -148,7 +148,7 @@ class MemoryRuntimeTests(unittest.TestCase):
             snapshot = first.create_daily_backup(uuid4())
             first.close()
 
-            self.assertEqual(outcome, "I saved that as confirmed memory.")
+            self.assertEqual(outcome, "Memory updated: personal fact.")
             self.assertIsNotNone(snapshot)
             second = MemoryRuntime.open(settings, RECOVERY, audit_sink=audit)
             context = second.context_provider.context_for(
@@ -189,7 +189,7 @@ class MemoryRuntimeTests(unittest.TestCase):
 
             self.assertEqual(
                 sensitive,
-                "That memory needs higher-risk review and was not saved.",
+                "Memory not saved: personal fact. Higher-risk review is required.",
             )
             self.assertEqual(
                 prohibited,

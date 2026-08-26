@@ -123,6 +123,21 @@ request waits up to a fixed bound for already accepted post-response analysis
 from the preceding chat. Model paraphrases may locate one unambiguous
 first-person declarative sentence, but only the exact user sentence can be
 confirmed; ambiguous matches and model-authored content remain quarantined.
+Clear durable-looking first-person statements are analyzed synchronously before
+the main response so an eligible low-risk exact sentence is committed before
+the UI reports `Memory updated: <generic topic>`. The receipt is produced from
+the repository decision and reviewed local topic labels, never model prose.
+Uncertainty, conflicts, and higher-risk classifications instead produce an
+immediate clarification or review receipt and do not overwrite confirmed data.
+Prompts outside the deterministic gate retain asynchronous post-response
+analysis to avoid adding latency to every request.
+The first request may use the immediately preceding accepted user statement as
+a retrieval-only hint when the new prompt explicitly refers to “that fact” or
+“what I just told you.” Direct self-questions and conservative singular/plural
+normalization plus reviewed topic connections prevent simple wording changes
+from silently hiding an eligible record. Wider topic expansion applies only to
+direct memory questions and explicit transcript recall, not ordinary prompts.
+The hint never becomes a transcript role or bypasses mention policy.
 
 Private Chat stores no transcript, retrieves no persistent memory, intercepts no
 explicit-memory command, and produces no automatic memory suggestions. It still
@@ -138,6 +153,9 @@ erasure across old snapshots are deferred.
 ## Resource and responsiveness rules
 
 - Model loading and generation run outside the UI thread.
+- A transient code-owned thinking animation starts immediately after submit and
+  stops on the first real event. It uses no tokens, persists no message, records
+  no hidden reasoning, and never intentionally delays a fast response.
 - Only one chat generation may run per application session.
 - Inputs, output accumulation, session history, persistent context, and response
   tokens retain their existing hard bounds.
@@ -196,6 +214,11 @@ gate.
   unless an explicit owner recall request performs bounded encrypted search.
 - Confirmed low-risk facts cross ordinary saved chats after the bounded memory
   handoff; ambiguous or inferred suggestions remain quarantined.
+- A clear eligible first-person fact commits before the main response and emits
+  a persisted italic generic-topic receipt; uncertainty or conflict emits an
+  immediate clarification receipt without overwriting confirmed memory.
+- Direct and referential recall tolerates bounded singular/plural differences
+  while preserving deterministic policy filtering.
 - Explicit prior-chat recall returns only bounded nearby transcript excerpts in
   an untrusted-data envelope; ordinary prompts and Private Chat cannot use it.
 - Private Chat creates no transcript or memory activity.
@@ -210,7 +233,7 @@ gate.
 ## Deferred release gates
 
 - Native memory-management and backup panels.
-- Packaged `.app` creation, code signing, click-to-launch installation, and
+- Signed, self-contained `.app` packaging, code signing, installation, and
   direct `SecAccessControl` user-presence protection on the Keychain item.
 - Windows packaging and runtime verification, including its native credential
   backend and recovery fallback.

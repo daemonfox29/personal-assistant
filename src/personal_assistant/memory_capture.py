@@ -47,6 +47,7 @@ from personal_assistant.memory_types import (
     canonical_json,
     payload_to_data,
 )
+from personal_assistant.retrieval_language import safe_topic_key
 
 
 DEFAULT_CANDIDATES_PER_SOURCE = 3
@@ -747,6 +748,10 @@ def _classify_neighbors(
 
 def _payload_topic(payload: MemoryPayload) -> str | None:
     value: str | None = None
+    if isinstance(payload, FactPayload) and payload.subject.startswith(
+        "direct-statement:"
+    ):
+        return safe_topic_key(payload.statement)
     if isinstance(payload, (FactPayload, PreferencePayload, PolicyPreferencePayload)):
         value = payload.subject
     elif isinstance(payload, NotePayload):

@@ -17,10 +17,15 @@ from personal_assistant.key_provider import DatabaseKey
 from personal_assistant.memory_analyzer import (
     ModelMemorySuggestionAnalyzer,
     PostResponseMemoryWorker,
+    has_clear_direct_memory_statement,
 )
 from personal_assistant.memory_capture import MemoryCaptureCoordinator
 from personal_assistant.memory_capture import AutomaticMemorySuggestion
-from personal_assistant.memory_repository import MemoryRepository, RetrievalRequest
+from personal_assistant.memory_repository import (
+    MemoryRepository,
+    RetrievalMode,
+    RetrievalRequest,
+)
 from personal_assistant.migration import MigrationRunner, PackageMigrationSource
 from personal_assistant.model import LanguageModel, ModelResponse
 from personal_assistant.memory_types import (
@@ -66,6 +71,20 @@ class MemoryAnalyzerTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.temporary_directory.cleanup()
+
+    def test_pre_response_gate_selects_clear_durable_statements_not_questions(self) -> None:
+        self.assertTrue(
+            has_clear_direct_memory_statement(
+                "I have a synthetic gluten sensitivity."
+            )
+        )
+        self.assertTrue(
+            has_clear_direct_memory_statement("Synthetic Scooby is my dog.")
+        )
+        self.assertFalse(
+            has_clear_direct_memory_statement("Do I have any gut sensitivities?")
+        )
+        self.assertFalse(has_clear_direct_memory_statement("I have a question."))
 
     def test_model_json_becomes_candidate_never_ordinary_memory(self) -> None:
         model = Mock(spec=LanguageModel)
@@ -341,6 +360,45 @@ class MemoryAnalyzerTests(unittest.TestCase):
         assert result.results[0].record is not None
         self.assertEqual(result.results[0].record.status, RecordStatus.CANDIDATE)
 
+    def test_uncertain_first_person_statement_cannot_be_auto_confirmed(self) -> None:
+        user_text = "I think I have a synthetic gluten sensitivity."
+        model = Mock(spec=LanguageModel)
+        model.generate.return_value = ModelResponse(
+            json.dumps(
+                [
+                    {
+                        "type": "fact",
+                        "subject": "model-authored sensitivity",
+                        "content": "model-authored paraphrase",
+                        "evidence_quote": user_text,
+                        "sensitivity": "personal",
+                        "mention_policy": "ask_before_mentioning",
+                    }
+                ]
+            )
+        )
+        analyzer = ModelMemorySuggestionAnalyzer(
+            model,
+            "synthetic-model-v1",
+            audit_sink=self.audit,
+        )
+
+        suggestions = analyzer.analyze(
+            user_text,
+            "assistant reply",
+            "turn:99999999-9999-9999-9999-999999999999",
+            uuid4(),
+        )
+        result = self.coordinator.process_suggestion_batch(
+            suggestions,
+            uuid4(),
+            direct_user_text=user_text,
+        )
+
+        self.assertIsNone(suggestions[0].user_evidence)
+        assert result.results[0].record is not None
+        self.assertEqual(result.results[0].record.status, RecordStatus.CANDIDATE)
+
     def test_malformed_or_credential_proposal_is_discarded_and_audited(self) -> None:
         model = Mock(spec=LanguageModel)
         model.generate.return_value = ModelResponse(
@@ -471,6 +529,102 @@ class MemoryAnalyzerTests(unittest.TestCase):
         payload = recalled.memories[0].record.revision.payload
         assert isinstance(payload, FactPayload)
         self.assertEqual(payload.statement, user_text)
+
+    def test_clear_statement_is_committed_before_response_with_topic_notice(self) -> None:
+        user_text = "I have a synthetic gluten sensitivity."
+
+        class EvidenceAnalyzer:
+            def analyze(self, user_text, assistant_text, source_ref, correlation_id):
+                self.assistant_text = assistant_text
+                return (
+                    AutomaticMemorySuggestion(
+                        FactPayload("model subject", "model paraphrase"),
+                        Sensitivity.PERSONAL,
+                        MentionPolicy.ASK_BEFORE_MENTIONING,
+                        Scope(ScopeType.GLOBAL),
+                        source_ref,
+                        "synthetic-model-v1",
+                        user_text,
+                    ),
+                )
+
+        analyzer = EvidenceAnalyzer()
+        worker = PostResponseMemoryWorker(
+            analyzer,
+            self.coordinator,
+            audit_sink=self.audit,
+        )
+
+        notices = worker.capture_before_response(user_text)
+        recalled = self.repository.retrieve(
+            RetrievalRequest(
+                "Do I have gut sensitivities?",
+                mode=RetrievalMode.DIRECT,
+            ),
+            uuid4(),
+        )
+        worker.close()
+
+        self.assertEqual(analyzer.assistant_text, "")
+        self.assertEqual(
+            notices,
+            ("Memory updated: digestive health and sensitivity or allergy.",),
+        )
+        self.assertEqual(len(recalled.memories), 1)
+
+    def test_clear_statement_gets_immediate_not_saved_notice_when_uncertain(self) -> None:
+        class EmptyAnalyzer:
+            @staticmethod
+            def analyze(user_text, assistant_text, source_ref, correlation_id):
+                return ()
+
+        worker = PostResponseMemoryWorker(
+            EmptyAnalyzer(),
+            self.coordinator,
+            audit_sink=self.audit,
+        )
+
+        notices = worker.capture_before_response("My name is Synthetic Person.")
+        worker.close()
+
+        assert notices is not None
+        self.assertIn("Memory not saved: personal information.", notices[0])
+        self.assertIn("Please clarify", notices[0])
+
+    def test_contradictory_clear_statement_asks_before_overwriting(self) -> None:
+        class ExactEvidenceAnalyzer:
+            @staticmethod
+            def analyze(user_text, assistant_text, source_ref, correlation_id):
+                return (
+                    AutomaticMemorySuggestion(
+                        FactPayload("model subject", "model paraphrase"),
+                        Sensitivity.PERSONAL,
+                        MentionPolicy.ASK_BEFORE_MENTIONING,
+                        Scope(ScopeType.GLOBAL),
+                        source_ref,
+                        "synthetic-model-v1",
+                        user_text,
+                    ),
+                )
+
+        worker = PostResponseMemoryWorker(
+            ExactEvidenceAnalyzer(),
+            self.coordinator,
+            audit_sink=self.audit,
+        )
+        first = worker.capture_before_response(
+            "I have a synthetic gluten sensitivity."
+        )
+
+        second = worker.capture_before_response(
+            "I do not have a synthetic gluten sensitivity."
+        )
+        worker.close()
+
+        assert first is not None and second is not None
+        self.assertIn("Memory updated:", first[0])
+        self.assertIn("Memory needs clarification:", second[0])
+        self.assertIn("did not overwrite", second[0])
 
 
 if __name__ == "__main__":

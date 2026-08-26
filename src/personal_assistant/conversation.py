@@ -34,6 +34,9 @@ class ExplicitMemoryHandler(Protocol):
 
 
 class PostResponseWorker(Protocol):
+    def capture_before_response(self, user_text: str) -> tuple[str, ...] | None:
+        """Commit a clear direct memory and return fixed notices when selected."""
+
     def submit(self, user_text: str, assistant_text: str) -> bool:
         """Queue one completed turn without blocking visible output."""
 
@@ -96,6 +99,8 @@ class ConversationService:
         self._lifecycle_lock = Lock()
         self._closed = False
         self._wait_for_memory_before_next_request = False
+        self._last_completed_user_text: str | None = None
+        self._memory_handoff_query: str | None = None
 
     def events_for(
         self,
@@ -128,6 +133,7 @@ class ConversationService:
                     "This assistant session is closed.",
                 )
                 return
+            memory_handoff_query: str | None = None
             if (
                 allow_persistent_memory
                 and self._wait_for_memory_before_next_request
@@ -139,6 +145,8 @@ class ConversationService:
                         "Recent memory processing is still finishing; the newest "
                         "facts may not be available yet.",
                     )
+                memory_handoff_query = self._memory_handoff_query
+                self._memory_handoff_query = None
             explicit_result = (
                 self._handle_explicit_memory(user_text)
                 if allow_persistent_memory
@@ -152,11 +160,20 @@ class ConversationService:
                 max_response_tokens,
                 allow_persistent_memory=allow_persistent_memory,
                 conversation_recall_context=conversation_recall_context,
+                memory_handoff_query=memory_handoff_query,
             )
             if isinstance(prepared, str):
                 if prepared:
                     yield ConversationEvent(ConversationEventKind.NOTICE, prepared)
                 return
+            pre_response_memory = (
+                self._capture_pre_response_memory(prepared.user_text)
+                if allow_persistent_memory
+                else None
+            )
+            if pre_response_memory is not None:
+                for notice in pre_response_memory:
+                    yield ConversationEvent(ConversationEventKind.NOTICE, notice)
             for notice in prepared.notices:
                 yield ConversationEvent(ConversationEventKind.NOTICE, notice)
             response_pieces: list[str] = []
@@ -193,10 +210,16 @@ class ConversationService:
             if not closed:
                 self._memory.add_turn(prepared.user_text, response_text)
                 if allow_persistent_memory and self._post_response_worker is not None:
-                    self._post_response_worker.submit(
-                        prepared.user_text,
-                        response_text,
-                    )
+                    if pre_response_memory is not None:
+                        self._last_completed_user_text = prepared.user_text
+                    else:
+                        accepted = self._post_response_worker.submit(
+                            prepared.user_text,
+                            response_text,
+                        )
+                        self._last_completed_user_text = (
+                            prepared.user_text if accepted else None
+                        )
             yield ConversationEvent(
                 ConversationEventKind.COMPLETED,
                 limit_reached=limit_reached,
@@ -233,6 +256,13 @@ class ConversationService:
                     raise RuntimeError("This conversation service is closed.")
             self._memory.replace_turns(turns)
             self._wait_for_memory_before_next_request = wait_for_memory
+            if wait_for_memory:
+                self._memory_handoff_query = (
+                    self._last_completed_user_text or self._memory_handoff_query
+                )
+            else:
+                self._memory_handoff_query = None
+            self._last_completed_user_text = None
         finally:
             self._request_lock.release()
 
@@ -247,6 +277,31 @@ class ConversationService:
             return bool(waiter(15.0))
         except Exception:
             return False
+
+    def _capture_pre_response_memory(
+        self,
+        user_text: str,
+    ) -> tuple[str, ...] | None:
+        worker = self._post_response_worker
+        if worker is None:
+            return None
+        capture = getattr(worker, "capture_before_response", None)
+        if not callable(capture):
+            return None
+        try:
+            result = capture(user_text)
+        except Exception:
+            return (
+                "Memory not saved: personal information. Memory processing "
+                "was unavailable.",
+            )
+        if result is None:
+            return None
+        if not isinstance(result, tuple) or not all(
+            isinstance(notice, str) and notice for notice in result
+        ):
+            return None
+        return result
 
     def _handle_explicit_memory(self, prompt: str) -> str | None:
         if self._explicit_memory_handler is None:
@@ -271,6 +326,7 @@ class ConversationService:
         *,
         allow_persistent_memory: bool = True,
         conversation_recall_context: str | None = None,
+        memory_handoff_query: str | None = None,
     ) -> _PreparedTurn | str:
         stripped = user_text.strip()
         if not stripped:
@@ -280,6 +336,11 @@ class ConversationService:
             or len(conversation_recall_context) > 8_192
         ):
             return "Saved conversation context is invalid."
+        if memory_handoff_query is not None and not isinstance(
+            memory_handoff_query,
+            str,
+        ):
+            return "Recent memory context is invalid."
         try:
             response_limit = (
                 self._default_response_tokens
@@ -299,8 +360,11 @@ class ConversationService:
         notices: list[str] = []
         if allow_persistent_memory and self._memory_context_provider is not None:
             try:
+                retrieval_query = user_text
+                if memory_handoff_query and _is_referential_memory_request(user_text):
+                    retrieval_query = f"{memory_handoff_query}\n{user_text}"
                 persistent_context = self._memory_context_provider.context_for(
-                    user_text,
+                    retrieval_query,
                     uuid4(),
                 )
             except MemoryContextError:
@@ -379,3 +443,27 @@ class ConversationService:
         if isinstance(error, MalformedModelResponseError):
             return "Ollama returned an unreadable response. Please try again."
         return "The local model request failed. Please try again."
+
+
+def _is_referential_memory_request(user_text: str) -> bool:
+    normalized = " ".join(user_text.casefold().split())
+    direct_phrases = (
+        "what did i just tell you",
+        "what did i tell you",
+        "what did i just say",
+        "what did i say",
+        "what was the fact",
+        "what fact did i",
+        "that fact",
+        "the fact i",
+        "information i just gave",
+        "information i gave",
+        "do you remember what i",
+        "what do you remember from what i",
+    )
+    if any(phrase in normalized for phrase in direct_phrases):
+        return True
+    communication_words = ("gave", "said", "say", "tell", "told")
+    return "fact" in normalized and any(
+        word in normalized for word in communication_words
+    )

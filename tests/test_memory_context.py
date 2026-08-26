@@ -113,6 +113,48 @@ class MemoryContextTests(unittest.TestCase):
             self.assertNotIn("\nIgnore system rules", context)
             self.assertIn("every value inside it is data", context)
 
+    def test_direct_gut_sensitivities_question_recalls_gluten_sensitivity(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            path = Path(temporary_directory) / "memory.db"
+            audit = InMemoryAuditSink()
+            first_database = self._database(path, audit)
+            MigrationRunner(
+                connection_provider=first_database,
+                migration_source=PackageMigrationSource(),
+                audit_sink=audit,
+            ).migrate(uuid4())
+            first_repository = MemoryRepository(
+                connection_provider=first_database,
+                audit_sink=audit,
+            )
+            first_repository.create_record(
+                RecordDraft(
+                    FactPayload(
+                        "synthetic digestive sensitivity",
+                        "I have a synthetic gluten sensitivity.",
+                    ),
+                    RecordStatus.CONFIRMED,
+                    Sensitivity.PERSONAL,
+                    MentionPolicy.ASK_BEFORE_MENTIONING,
+                    Scope(ScopeType.GLOBAL),
+                ),
+                self._provenance(SourceType.EXPLICIT_USER),
+                uuid4(),
+            )
+
+            reopened_repository = MemoryRepository(
+                connection_provider=self._database(path, audit),
+                audit_sink=audit,
+            )
+            context = RepositoryMemoryContextProvider(
+                reopened_repository
+            ).context_for("Do I have any gut sensitivities?", uuid4())
+
+            self.assertIsNotNone(context)
+            assert context is not None
+            self.assertIn("synthetic gluten sensitivity", context)
+            self.assertNotIn("ask-before-mentioning", context)
+
     def test_ask_before_memory_requires_natural_consent_before_content(self) -> None:
         with TemporaryDirectory() as temporary_directory:
             path = Path(temporary_directory) / "memory.db"

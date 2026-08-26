@@ -70,6 +70,12 @@ class RecordingPostResponseWorker:
     def __init__(self) -> None:
         self.calls = 0
         self.wait_calls = 0
+        self.capture_calls: list[str] = []
+        self.capture_result: tuple[str, ...] | None = None
+
+    def capture_before_response(self, user_text: str) -> tuple[str, ...] | None:
+        self.capture_calls.append(user_text)
+        return self.capture_result
 
     def submit(self, user_text: str, assistant_text: str) -> bool:
         self.calls += 1
@@ -100,6 +106,20 @@ class BlockingHandoffMemoryWorker(RecordingPostResponseWorker):
 
 
 class ConversationServiceTests(unittest.TestCase):
+    def test_pre_response_memory_notice_precedes_model_and_skips_duplicate_queue(self) -> None:
+        model = SyntheticStreamingModel()
+        worker = RecordingPostResponseWorker()
+        worker.capture_result = ("Memory updated: pet.",)
+        service = ConversationService(model, post_response_worker=worker)
+
+        events = tuple(service.events_for("Synthetic Scooby is my dog."))
+
+        self.assertEqual(events[0].kind, ConversationEventKind.NOTICE)
+        self.assertEqual(events[0].text, "Memory updated: pet.")
+        self.assertEqual(events[1].kind, ConversationEventKind.ASSISTANT_CHUNK)
+        self.assertEqual(worker.capture_calls, ["Synthetic Scooby is my dog."])
+        self.assertEqual(worker.calls, 0)
+
     def test_private_request_uses_no_persistent_memory_or_suggestions(self) -> None:
         model = SyntheticStreamingModel()
         memory = RecordingMemoryHandler()

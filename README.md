@@ -48,6 +48,12 @@ From the project folder:
 uv run --locked personal-assistant-ui
 ```
 
+On macOS, the lightweight development launcher at
+`launchers/Personal Assistant.app` can be copied to `~/Applications`. It opens
+the same live `uv` checkout without Terminal, so Spotlight can launch
+**Personal Assistant** and the app can be pinned to the Dock. This is a
+development convenience, not the future signed and self-contained package.
+
 The native app guides first-run encrypted-memory setup or recovery unlock, then
 starts Ollama and opens streaming chat. After one verified recovery entry, later
 native launches use the operating system's protected credential store and do
@@ -67,12 +73,25 @@ memory suggestions.
 Confirmed low-risk personal facts are global across ordinary saved chats. A new
 chat waits boundedly for the preceding completed turn's accepted memory analysis
 before its first model request, so a fact stated in one chat can be retrieved in
-the next. Saved transcripts remain separate from canonical memory: they are not
+the next. Clear durable first-person statements use bounded analysis before the
+main response and commit an eligible exact low-risk sentence immediately. A
+trusted italic stage direction then reports a generic topic such as `pet` or
+`digestive health`; conflicts and uncertainty request clarification without
+overwriting confirmed data. Other turns retain the asynchronous candidate path.
+Direct questions use conservative singular/plural normalization plus a small
+reviewed set of deterministic topic connections, and
+referential questions such as “What was the fact I just told you?” reuse only
+the immediately preceding accepted user statement as a retrieval hint. Saved
+transcripts remain separate from canonical memory: they are not
 searched for ordinary prompts. An explicit request such as “Remember when we
 talked about the cobalt garden? Let's continue that here” performs bounded
 full-text search inside the encrypted database and supplies only a few nearby
 user/assistant excerpts as untrusted data. The current chat and Private Chat are
 excluded from this recall path.
+
+While a request is active, the native UI displays a transient local animation
+such as *Thinking...* or *Pondering...*. It is removed on the first real event,
+is not persisted, makes no additional model call, and is not a reasoning log.
 
 The command-line interface remains a developer and recovery fallback:
 
