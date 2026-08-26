@@ -26,6 +26,7 @@ from personal_assistant.model import (
 from personal_assistant.portable_security import (
     PortableSecurityManager,
     PortableSecuritySettings,
+    SecuritySetupError,
 )
 
 
@@ -178,6 +179,8 @@ class AssistantApplicationFactory:
             )
             runtime.close()
             completed = True
+        except SecuritySetupError as error:
+            raise ApplicationSetupError(self._safe_setup_message(error)) from error
         except Exception as error:
             raise ApplicationSetupError(
                 "Persistent-memory setup failed safely; no setup was completed."
@@ -295,6 +298,30 @@ class AssistantApplicationFactory:
         if isinstance(error, ModelError):
             return "The local model request failed. Please try again."
         return "The assistant could not start safely. Check local configuration."
+
+    @staticmethod
+    def _safe_setup_message(error: SecuritySetupError) -> str:
+        messages = {
+            "Recovery passphrase confirmation does not match.": (
+                "The recovery passphrase entries do not match. Re-enter both."
+            ),
+            "Recovery passphrase length is invalid.": (
+                "The recovery passphrase must contain at least 12 characters."
+            ),
+            "High-risk passcode confirmation does not match.": (
+                "The high-risk passcode entries do not match. Re-enter both."
+            ),
+            "High-risk passcode length is invalid.": (
+                "The high-risk passcode must contain at least 8 characters."
+            ),
+            "Recovery passphrase and high-risk passcode must be different.": (
+                "The recovery passphrase and high-risk passcode must be different."
+            ),
+        }
+        return messages.get(
+            str(error),
+            "Persistent-memory setup failed safely; no setup was completed.",
+        )
 
     @staticmethod
     def _unlink_new_file(path: Path) -> None:

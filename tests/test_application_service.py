@@ -28,6 +28,44 @@ class SyntheticModel:
 
 
 class ApplicationServiceTests(unittest.TestCase):
+    def test_setup_reports_only_whitelisted_actionable_input_errors(self) -> None:
+        cases = (
+            (
+                (RECOVERY, "different recovery", PASSCODE, PASSCODE),
+                "The recovery passphrase entries do not match. Re-enter both.",
+            ),
+            (
+                ("too short", "too short", PASSCODE, PASSCODE),
+                "The recovery passphrase must contain at least 12 characters.",
+            ),
+            (
+                (RECOVERY, RECOVERY, "short", "short"),
+                "The high-risk passcode must contain at least 8 characters.",
+            ),
+            (
+                (RECOVERY, RECOVERY, PASSCODE, "different passcode"),
+                "The high-risk passcode entries do not match. Re-enter both.",
+            ),
+            (
+                (RECOVERY, RECOVERY, RECOVERY, RECOVERY),
+                (
+                    "The recovery passphrase and high-risk passcode must be "
+                    "different."
+                ),
+            ),
+        )
+        for secrets, expected in cases:
+            with self.subTest(expected=expected), TemporaryDirectory() as directory:
+                settings = AppSettings(
+                    memory=MemorySettings(data_directory=Path(directory) / "private")
+                )
+                factory = AssistantApplicationFactory(settings)
+
+                with self.assertRaises(ApplicationSetupError) as raised:
+                    factory.setup(*secrets)
+
+                self.assertEqual(str(raised.exception), expected)
+
     def test_failed_setup_removes_new_security_and_database_files(self) -> None:
         with TemporaryDirectory() as temporary_directory:
             data_directory = Path(temporary_directory) / "private"

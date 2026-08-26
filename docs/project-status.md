@@ -159,7 +159,7 @@ Completed:
 - Pinned the minimal Qt Essentials dependency through the existing `uv` lock.
   No browser runtime, UI server, telemetry, tool access, or new network service
   was introduced.
-- Verified 245 tests locally; the opt-in 100,000-record retrieval benchmark is
+- Verified 246 tests locally; the opt-in 100,000-record retrieval benchmark is
   the only normal-suite skip. Its separate run passed at 13.56 ms median and
   13.93 ms p95 over 30 queries.
 
@@ -168,6 +168,15 @@ Next:
 - Commit this visually reviewed local milestone without pushing until a batched
   GitHub Actions run is desired. Then add native owner-control panels through
   the same narrow service boundary.
+
+Follow-up:
+
+- Diagnosed a first-run setup rejection through the content-free audit trail.
+  The deterministic validator correctly rejected invalid secret shape while
+  cleanup left no manifest or database, but the UI-facing service replaced its
+  safe correction with a generic message. Setup now displays only five explicitly
+  whitelisted corrections for confirmation, minimum length, or distinct-secret
+  failures; all other details remain hidden behind the generic safe failure.
 
 ### 2026-08-25 — Module 1 final security and privacy review
 
