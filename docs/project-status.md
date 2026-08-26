@@ -165,7 +165,7 @@ Completed:
 - Pinned the minimal Qt Essentials dependency through the existing `uv` lock.
   No browser runtime, UI server, telemetry, tool access, or new network service
   was introduced.
-- Verified 249 tests locally; the opt-in 100,000-record retrieval benchmark is
+- Verified 254 tests locally; the opt-in 100,000-record retrieval benchmark is
   the only normal-suite skip. Its separate run passed at 13.56 ms median and
   13.93 ms p95 over 30 queries.
 
@@ -191,6 +191,14 @@ Follow-up:
   added inert native formatting for assistant headings, lists, bold emphasis,
   and inline code. Streaming stays immediate; formatting is applied on completion
   without enabling HTML, active links, or remote resources.
+- Diagnosed cross-session recall through content-free audit events: the encrypted
+  database reopened correctly and automatic analysis persisted candidates, but
+  ordinary retrieval correctly excluded their unconfirmed status while the UI
+  offered no review path. Exact low-risk evidence copied from the current user
+  message can now become confirmed automatically. Only the exact quote is stored;
+  model-authored subjects and paraphrases are discarded. Inferences, mismatches,
+  sensitive evidence, and conflicts remain quarantined. An encrypted close/open
+  test verifies recall in a new runtime.
 
 ### 2026-08-25 — Module 1 final security and privacy review
 

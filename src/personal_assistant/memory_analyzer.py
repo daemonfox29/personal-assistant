@@ -1,4 +1,4 @@
-"""Bounded post-response analysis that can create only quarantined candidates."""
+"""Bounded analysis of candidates and exact low-risk user evidence."""
 
 from dataclasses import dataclass
 import json
@@ -59,7 +59,7 @@ class MemorySuggestionAnalyzer(Protocol):
 
 
 class ModelMemorySuggestionAnalyzer:
-    """Ask a replaceable model for JSON proposals, then distrust and validate it."""
+    """Ask for JSON proposals while treating every generated field as untrusted."""
 
     def __init__(
         self,
@@ -103,6 +103,9 @@ class ModelMemorySuggestionAnalyzer:
                         "Identify zero to three durable user-memory suggestions. "
                         "Return only a JSON array. Each item must have exactly: "
                         "type (fact, preference, or note), subject, content, "
+                        "evidence_quote (an exact quote copied only from the "
+                        "user's current message, or an empty string when the "
+                        "suggestion is inferred), "
                         "sensitivity (normal, personal, sensitive, restricted), "
                         "and mention_policy (may_mention_when_relevant, "
                         "ask_before_mentioning, only_when_directly_asked, or "
@@ -118,7 +121,7 @@ class ModelMemorySuggestionAnalyzer:
                 max_response_tokens=ANALYZER_RESPONSE_TOKENS,
             )
             response = self._model.generate(request)
-            suggestions = self._parse(response.text, source_ref)
+            suggestions = self._parse(response.text, source_ref, user_text)
         except Exception:
             self._emit(
                 correlation_id,
@@ -140,6 +143,7 @@ class ModelMemorySuggestionAnalyzer:
         self,
         text: str,
         source_ref: str,
+        user_text: str,
     ) -> tuple[AutomaticMemorySuggestion, ...]:
         if not isinstance(text, str) or len(text) > MAX_ANALYZER_RESPONSE_CHARS:
             raise MemoryValidationError("Memory analyzer response is invalid.")
@@ -148,12 +152,16 @@ class ModelMemorySuggestionAnalyzer:
             raise MemoryValidationError("Memory analyzer response is invalid.")
         suggestions = []
         for item in document:
-            if not isinstance(item, dict) or set(item) != {
+            required_keys = {
                 "type",
                 "subject",
                 "content",
                 "sensitivity",
                 "mention_policy",
+            }
+            if not isinstance(item, dict) or set(item) not in {
+                frozenset(required_keys),
+                frozenset(required_keys | {"evidence_quote"}),
             }:
                 raise MemoryValidationError("Memory analyzer response is invalid.")
             kind = item["type"]
@@ -165,6 +173,13 @@ class ModelMemorySuggestionAnalyzer:
                 payload = NotePayload(item["subject"], item["content"])
             else:
                 raise MemoryValidationError("Memory analyzer response is invalid.")
+            evidence = item.get("evidence_quote", "")
+            if (
+                not isinstance(evidence, str)
+                or not evidence
+                or evidence not in user_text
+            ):
+                evidence = None
             suggestions.append(
                 AutomaticMemorySuggestion(
                     payload,
@@ -173,6 +188,7 @@ class ModelMemorySuggestionAnalyzer:
                     Scope(ScopeType.GLOBAL),
                     source_ref,
                     self._model_version,
+                    evidence,
                 )
             )
         return tuple(suggestions)
@@ -299,6 +315,7 @@ class PostResponseMemoryWorker:
                     suggestions,
                     turn.correlation_id,
                     is_cancelled=self._cancelled.is_set,
+                    direct_user_text=turn.user_text,
                 )
             except Exception:
                 self._safe_emit(

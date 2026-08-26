@@ -50,6 +50,8 @@ must be replaceable behind narrow interfaces.
 - typed records, append-only revisions, provenance, and optimistic concurrency;
 - stable entities, aliases, links, scopes, sensitivity, and mention policies;
 - explicit remember, inspect, correct, supersede, delete, and purge operations;
+- deterministic confirmation of exact low-risk quotes from the user's current
+  message without storing model-authored wording;
 - automatic creation of quarantined, unconfirmed memory suggestions;
 - bounded deterministic retrieval of confirmed records;
 - assembled entity profiles, such as a profile for Luna, without duplicating a
@@ -320,7 +322,11 @@ Migrations are packaged numeric, forward-only SQL files. The runner must:
    and ambiguous entities.
 4. Ambiguity is clarified rather than guessed.
 5. Explicit user remember instructions may create confirmed low-risk records.
-   Inferred information creates a quarantined candidate.
+   A post-response proposal may also create confirmed memory only when its
+   evidence is an exact low-risk substring of the user's current message. The
+   stored payload is that quote under deterministic trusted-interface provenance,
+   never the model's subject or paraphrase. Inferred, mismatched, sensitive, or
+   conflicting information creates a quarantined candidate.
 6. The repository writes the record and first revision in one transaction using
    an expected version.
 7. A sanitized audit event records operation, outcome, IDs, reason codes, and
@@ -535,6 +541,8 @@ history.
 
 - Writes are parameterized and typed; model-created SQL is impossible.
 - Explicit remember creates a confirmed low-risk record and revision.
+- Exact low-risk current-message evidence may create a confirmed record without
+  storing model-authored content; mismatched or sensitive evidence cannot.
 - Inference creates a quarantined candidate excluded from ordinary retrieval.
 - Candidate expiry, confirmation, rejection, correction, supersession,
   archival, deletion, and purge follow the defined state transitions.

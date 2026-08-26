@@ -35,6 +35,8 @@ from personal_assistant.memory_types import (
     Scope,
     ScopeType,
     Sensitivity,
+    canonical_json,
+    payload_to_data,
 )
 from personal_assistant.migration import MigrationRunner, PackageMigrationSource
 
@@ -107,6 +109,7 @@ class MemoryCaptureTests(unittest.TestCase):
         mention_policy: MentionPolicy = MentionPolicy.MAY_MENTION_WHEN_RELEVANT,
         source_ref: str = "synthetic-model-turn",
         model_version: str = "synthetic-model-v1",
+        user_evidence: str | None = None,
     ) -> AutomaticMemorySuggestion:
         return AutomaticMemorySuggestion(
             payload or FactPayload("synthetic subject", "synthetic statement"),
@@ -115,7 +118,72 @@ class MemoryCaptureTests(unittest.TestCase):
             Scope(ScopeType.GLOBAL),
             source_ref,
             model_version,
+            user_evidence,
         )
+
+    def test_exact_low_risk_user_evidence_becomes_confirmed_without_model_text(self) -> None:
+        user_text = "My name is Synthetic Person."
+        result = self.coordinator.process_suggestion_batch(
+            (
+                self._suggestion(
+                    FactPayload("invented subject", "invented model content"),
+                    user_evidence=user_text,
+                ),
+            ),
+            uuid4(),
+            direct_user_text=user_text,
+        )
+
+        captured = result.results[0]
+        self.assertEqual(captured.decision, CaptureDecision.CREATED_CONFIRMED)
+        assert captured.record is not None
+        self.assertEqual(captured.record.status, RecordStatus.CONFIRMED)
+        self.assertIsInstance(captured.record.revision.payload, FactPayload)
+        assert isinstance(captured.record.revision.payload, FactPayload)
+        self.assertEqual(captured.record.revision.payload.statement, user_text)
+        self.assertNotIn(
+            "invented model content",
+            canonical_json(payload_to_data(captured.record.revision.payload)),
+        )
+        self.assertNotIn(user_text, repr(self.audit_sink.events))
+        self.assertNotIn("invented model content", repr(self.audit_sink.events))
+        recalled = self.repository.retrieve(RetrievalRequest("my name"), uuid4())
+        self.assertEqual(
+            recalled.memories[0].record.record_id,
+            captured.record.record_id,
+        )
+
+    def test_mismatched_or_sensitive_evidence_stays_quarantined(self) -> None:
+        mismatched = self.coordinator.process_suggestion_batch(
+            (
+                self._suggestion(
+                    user_evidence="A quote that the user did not provide",
+                ),
+            ),
+            uuid4(),
+            direct_user_text="A different user message",
+        ).results[0]
+        sensitive_text = "My home address is a synthetic private location."
+        sensitive = self.coordinator.process_suggestion_batch(
+            (
+                self._suggestion(
+                    FactPayload(
+                        "synthetic sensitive subject",
+                        "synthetic sensitive candidate",
+                    ),
+                    user_evidence=sensitive_text,
+                    source_ref="synthetic-sensitive-turn",
+                ),
+            ),
+            uuid4(),
+            direct_user_text=sensitive_text,
+        ).results[0]
+
+        self.assertEqual(mismatched.decision, CaptureDecision.CREATED_CANDIDATE)
+        self.assertEqual(sensitive.decision, CaptureDecision.CREATED_CANDIDATE)
+        assert mismatched.record is not None and sensitive.record is not None
+        self.assertEqual(mismatched.record.status, RecordStatus.CANDIDATE)
+        self.assertEqual(sensitive.record.status, RecordStatus.CANDIDATE)
 
     def test_explicit_instruction_creates_confirmed_revisioned_memory(self) -> None:
         result = self.coordinator.remember_explicitly(self._explicit(), uuid4())

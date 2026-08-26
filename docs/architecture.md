@@ -44,8 +44,11 @@ The default command-line startup supplies the adapter only when a safe portable
 security manifest exists and the hidden recovery prompt unlocks it. A new or
 disabled installation follows the Module 0 session-only path. Explicit remember
 instructions are intercepted before model submission. After the visible answer,
-a bounded worker may ask the model for tentative suggestions, but those enter
-only the quarantined candidate inbox until trusted review confirms them.
+a bounded worker may ask the model for tentative suggestions. Deterministic code
+may promote only an exact low-risk quote found in the user's current message and
+stores that quote with trusted-interface provenance. Model-authored paraphrases,
+inferences, sensitive material, and conflicts enter only the quarantined
+candidate inbox until trusted review confirms them.
 
 Future action flow:
 

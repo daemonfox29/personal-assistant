@@ -4,6 +4,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
+from hashlib import sha256
 import re
 from threading import Lock
 from time import monotonic
@@ -32,6 +33,7 @@ from personal_assistant.memory_types import (
     InsightPayload,
     MemoryPayload,
     MemoryValidationError,
+    MAX_SUMMARY_CHARS,
     MentionPolicy,
     NotePayload,
     PolicyPreferencePayload,
@@ -103,6 +105,7 @@ class AutomaticMemorySuggestion:
     scope: Scope
     source_ref: str
     model_version: str
+    user_evidence: str | None = None
     resolved_primary_entity_id: UUID | None = None
     valid_from: datetime | None = None
     valid_until: datetime | None = None
@@ -114,6 +117,11 @@ class AutomaticMemorySuggestion:
             ActorType.MODEL_CANDIDATE,
             self.model_version,
         )
+        if self.user_evidence is not None and (
+            not isinstance(self.user_evidence, str)
+            or not 1 <= len(self.user_evidence) <= MAX_SUMMARY_CHARS
+        ):
+            raise MemoryValidationError("Direct user evidence is invalid.")
         self.to_draft()
 
     def to_draft(self) -> RecordDraft:
@@ -336,6 +344,7 @@ class MemoryCaptureCoordinator:
         correlation_id: UUID,
         *,
         is_cancelled: Callable[[], bool] = lambda: False,
+        direct_user_text: str | None = None,
     ) -> SuggestionBatchResult:
         """Process a small post-response batch that a session may cancel safely."""
 
@@ -352,14 +361,145 @@ class MemoryCaptureCoordinator:
             )
         if not callable(is_cancelled):
             raise MemoryValidationError("Suggestion cancellation check is invalid.")
+        if direct_user_text is not None and not isinstance(direct_user_text, str):
+            raise MemoryValidationError("Direct user text is invalid.")
         results: list[CaptureResult] = []
         for suggestion in suggestions:
             if is_cancelled():
                 return SuggestionBatchResult(tuple(results), True)
+            direct_result = self._capture_supported_direct_statement(
+                suggestion,
+                direct_user_text,
+                correlation_id,
+            )
             results.append(
-                self.suggest_automatically(suggestion, correlation_id)
+                direct_result
+                if direct_result is not None
+                else self.suggest_automatically(suggestion, correlation_id)
             )
         return SuggestionBatchResult(tuple(results), False)
+
+    def _capture_supported_direct_statement(
+        self,
+        suggestion: AutomaticMemorySuggestion,
+        user_text: str | None,
+        correlation_id: UUID,
+    ) -> CaptureResult | None:
+        """Confirm only exact, low-risk user text selected by an untrusted model."""
+
+        evidence = suggestion.user_evidence
+        if evidence is None or user_text is None or evidence not in user_text:
+            return None
+        digest = sha256(evidence.encode("utf-8")).hexdigest()[:24]
+        try:
+            payload = FactPayload(f"direct-statement:{digest}", evidence)
+            sensitivity = _automatic_sensitivity(
+                payload,
+                suggestion.proposed_sensitivity,
+            )
+            mention_policy = _automatic_mention_policy(
+                sensitivity,
+                suggestion.proposed_mention_policy,
+            )
+        except MemoryValidationError:
+            return None
+        if sensitivity not in {Sensitivity.NORMAL, Sensitivity.PERSONAL}:
+            return None
+
+        started = monotonic()
+        self._emit(
+            correlation_id,
+            "direct_user_statement",
+            AuditOutcome.STARTED,
+            AuditReasonCode.NORMAL,
+            started,
+        )
+        try:
+            result = self._remember_supported_direct_statement(
+                RecordDraft(
+                    payload,
+                    RecordStatus.CONFIRMED,
+                    sensitivity,
+                    mention_policy,
+                    suggestion.scope,
+                    valid_from=suggestion.valid_from,
+                    valid_until=suggestion.valid_until,
+                ),
+                suggestion.source_ref,
+                correlation_id,
+            )
+        except Exception:
+            self._emit(
+                correlation_id,
+                "direct_user_statement",
+                AuditOutcome.FAILED,
+                AuditReasonCode.SAFE_INTERNAL_FAILURE,
+                started,
+            )
+            raise
+        self._emit_result(
+            correlation_id,
+            "direct_user_statement",
+            result,
+            started,
+        )
+        return result
+
+    def _remember_supported_direct_statement(
+        self,
+        draft: RecordDraft,
+        source_ref: str,
+        correlation_id: UUID,
+    ) -> CaptureResult:
+        provenance = Provenance(
+            SourceType.TRUSTED_INTERFACE,
+            source_ref,
+            ActorType.SYSTEM,
+        )
+        with self._lock:
+            neighbors = self._repository.find_capture_neighbors(
+                draft,
+                correlation_id,
+            )
+            if len(neighbors) > MAX_CAPTURE_NEIGHBORS:
+                return self._clarification(neighbors)
+            exact, topical = _classify_neighbors(draft.payload, neighbors)
+            confirmed = tuple(
+                record for record in exact if record.status is RecordStatus.CONFIRMED
+            )
+            if confirmed:
+                return CaptureResult(
+                    CaptureDecision.DUPLICATE,
+                    related_record_ids=tuple(
+                        record.record_id for record in confirmed
+                    ),
+                )
+            candidates = tuple(
+                record for record in exact if record.status is RecordStatus.CANDIDATE
+            )
+            if len(candidates) == 1:
+                existing = candidates[0]
+                record = self._repository.confirm_candidate(
+                    existing.record_id,
+                    existing.row_version,
+                    provenance,
+                    correlation_id,
+                )
+                return CaptureResult(
+                    CaptureDecision.CONFIRMED_EXISTING_CANDIDATE,
+                    record,
+                    (existing.record_id,),
+                )
+            if len(candidates) > 1 or any(
+                record.status is RecordStatus.CONFIRMED for record in topical
+            ):
+                return self._clarification(candidates + topical)
+            record = self._repository.create_record(
+                draft,
+                provenance,
+                correlation_id,
+            )
+            return CaptureResult(CaptureDecision.CREATED_CONFIRMED, record)
 
     def _suggest_automatically(
         self,

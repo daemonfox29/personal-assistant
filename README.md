@@ -88,9 +88,12 @@ inside the explicit first-run setup transaction. Set an absolute
 
 After setup, start chat normally and enter the recovery passphrase at its hidden
 prompt. Use `/remember <information>` or `remember that <information>` for an
-explicit ordinary memory. Automatic analysis runs after the visible answer and
-can create only unconfirmed, expiring candidates. Review them through the
-trusted commands:
+explicit ordinary memory. Automatic analysis runs after the visible answer. An
+exact low-risk quote copied from your current message may become confirmed
+memory, but deterministic code stores only that quote—not the model's subject or
+paraphrase. Mismatched, inferred, sensitive, conflicting, or credential-like
+material remains rejected or enters the expiring candidate inbox. Review
+candidates through the trusted commands:
 
 ```bash
 uv run --locked python -m personal_assistant.memory_admin candidates
