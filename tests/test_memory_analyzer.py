@@ -79,6 +79,11 @@ class MemoryAnalyzerTests(unittest.TestCase):
             )
         )
         self.assertTrue(
+            has_clear_direct_memory_statement(
+                "I am synthetically gluten sensitive."
+            )
+        )
+        self.assertTrue(
             has_clear_direct_memory_statement("Synthetic Scooby is my dog.")
         )
         self.assertFalse(
@@ -162,7 +167,10 @@ class MemoryAnalyzerTests(unittest.TestCase):
         )
 
         self.assertEqual(result.results[0].record.status, RecordStatus.CONFIRMED)
-        recalled = self.repository.retrieve(RetrievalRequest("my name"), uuid4())
+        recalled = self.repository.retrieve(
+            RetrievalRequest("my name", mode=RetrievalMode.APPROVED),
+            uuid4(),
+        )
         self.assertEqual(len(recalled.memories), 1)
         payload = recalled.memories[0].record.revision.payload
         assert isinstance(payload, FactPayload)
@@ -488,6 +496,37 @@ class MemoryAnalyzerTests(unittest.TestCase):
         self.assertTrue(worker.wait_until_idle(1))
         worker.close()
 
+    def test_clear_capture_does_not_wait_for_background_model_analysis(self) -> None:
+        started = Event()
+        release = Event()
+
+        class BlockingEmptyAnalyzer:
+            @staticmethod
+            def analyze(user_text, assistant_text, source_ref, correlation_id):
+                started.set()
+                release.wait(timeout=1)
+                return ()
+
+        worker = PostResponseMemoryWorker(
+            BlockingEmptyAnalyzer(),
+            self.coordinator,
+            audit_sink=self.audit,
+        )
+        self.assertTrue(worker.submit("background turn", "assistant response"))
+        self.assertTrue(started.wait(timeout=1))
+
+        notices = worker.capture_before_response("My name is Synthetic Person.")
+        recalled = self.repository.retrieve(
+            RetrievalRequest("my name", mode=RetrievalMode.APPROVED),
+            uuid4(),
+        )
+        release.set()
+        worker.close()
+
+        assert notices is not None
+        self.assertIn("Memory updated:", notices[0])
+        self.assertEqual(len(recalled.memories), 1)
+
     def test_worker_promotes_only_exact_direct_user_evidence(self) -> None:
         completed = Event()
         user_text = "My name is Synthetic Worker Person."
@@ -524,7 +563,10 @@ class MemoryAnalyzerTests(unittest.TestCase):
         self.assertTrue(completed.wait(timeout=1))
         worker.close()
 
-        recalled = self.repository.retrieve(RetrievalRequest("my name"), uuid4())
+        recalled = self.repository.retrieve(
+            RetrievalRequest("my name", mode=RetrievalMode.APPROVED),
+            uuid4(),
+        )
         self.assertEqual(len(recalled.memories), 1)
         payload = recalled.memories[0].record.revision.payload
         assert isinstance(payload, FactPayload)
@@ -534,8 +576,10 @@ class MemoryAnalyzerTests(unittest.TestCase):
         user_text = "I have a synthetic gluten sensitivity."
 
         class EvidenceAnalyzer:
+            calls = 0
+
             def analyze(self, user_text, assistant_text, source_ref, correlation_id):
-                self.assistant_text = assistant_text
+                self.calls += 1
                 return (
                     AutomaticMemorySuggestion(
                         FactPayload("model subject", "model paraphrase"),
@@ -565,21 +609,21 @@ class MemoryAnalyzerTests(unittest.TestCase):
         )
         worker.close()
 
-        self.assertEqual(analyzer.assistant_text, "")
+        self.assertEqual(analyzer.calls, 0)
         self.assertEqual(
             notices,
             ("Memory updated: digestive health and sensitivity or allergy.",),
         )
         self.assertEqual(len(recalled.memories), 1)
 
-    def test_clear_statement_gets_immediate_not_saved_notice_when_uncertain(self) -> None:
-        class EmptyAnalyzer:
+    def test_clear_statement_does_not_depend_on_analyzer_output(self) -> None:
+        class FailingAnalyzer:
             @staticmethod
             def analyze(user_text, assistant_text, source_ref, correlation_id):
-                return ()
+                raise AssertionError("clear exact capture must not call the model")
 
         worker = PostResponseMemoryWorker(
-            EmptyAnalyzer(),
+            FailingAnalyzer(),
             self.coordinator,
             audit_sink=self.audit,
         )
@@ -588,8 +632,43 @@ class MemoryAnalyzerTests(unittest.TestCase):
         worker.close()
 
         assert notices is not None
-        self.assertIn("Memory not saved: personal information.", notices[0])
-        self.assertIn("Please clarify", notices[0])
+        self.assertIn("Memory updated: personal fact.", notices[0])
+        recalled = self.repository.retrieve(
+            RetrievalRequest("my name", mode=RetrievalMode.APPROVED),
+            uuid4(),
+        )
+        self.assertEqual(len(recalled.memories), 1)
+
+    def test_uncertain_statement_gets_immediate_clarification_without_save(self) -> None:
+        class FailingAnalyzer:
+            @staticmethod
+            def analyze(user_text, assistant_text, source_ref, correlation_id):
+                raise AssertionError("uncertain text must not call the model")
+
+        worker = PostResponseMemoryWorker(
+            FailingAnalyzer(),
+            self.coordinator,
+            audit_sink=self.audit,
+        )
+
+        notices = worker.capture_before_response(
+            "I think I have a synthetic gluten sensitivity."
+        )
+        worker.close()
+
+        assert notices is not None
+        self.assertIn("Memory needs clarification:", notices[0])
+        self.assertIn("sounded uncertain", notices[0])
+        self.assertEqual(
+            self.repository.retrieve(
+                RetrievalRequest(
+                    "Do I have gut sensitivities?",
+                    mode=RetrievalMode.DIRECT,
+                ),
+                uuid4(),
+            ).memories,
+            (),
+        )
 
     def test_contradictory_clear_statement_asks_before_overwriting(self) -> None:
         class ExactEvidenceAnalyzer:

@@ -60,10 +60,11 @@ startup remains the explicit recovery path. Both supply the memory
 adapter only when a safe portable manifest and existing encrypted database
 unlock successfully. A new or disabled installation follows the Module 0
 session-only path. Explicit remember instructions are intercepted before model
-submission. A deterministic phrase gate routes clear durable-looking
-first-person statements through bounded analysis before the main model request;
-an eligible exact low-risk sentence commits synchronously and produces a fixed,
-generic-topic UI receipt. Uncertain, contradictory, inferred, or higher-risk
+submission. A deterministic phrase gate selects reviewed clear durable-looking
+first-person statements before the main model request; an eligible exact
+low-risk sentence commits synchronously without a model-analysis dependency and
+produces a fixed, generic-topic UI receipt. Uncertain, contradictory, inferred,
+or higher-risk
 material cannot use that promotion path and produces an immediate fixed review
 or clarification receipt. Other completed turns use a bounded post-response
 worker for tentative suggestions. Deterministic code
@@ -84,6 +85,10 @@ Every returned confirmed entry includes a trusted repository `updated_at`
 timestamp. When retrieved values conflict, the later update is canonical and
 overrides stale details restored from an older conversation transcript. The
 model never invents search terms, timestamps, or UI save receipts.
+Confirmed personal records receive standing owner approval for relevant ordinary
+retrieval; direct-only, never-mention, restricted, and unconfirmed records do
+not. Natural explicit prior-discussion language triggers bounded transcript
+search immediately rather than asking whether to search.
 
 Future action flow:
 

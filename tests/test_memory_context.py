@@ -213,7 +213,7 @@ class MemoryContextTests(unittest.TestCase):
             self.assertIn("later updated_at", context)
             self.assertIn("overrides conflicting details in earlier chat", context)
 
-    def test_ask_before_memory_requires_natural_consent_before_content(self) -> None:
+    def test_standing_owner_approval_uses_personal_memory_without_prompt(self) -> None:
         with TemporaryDirectory() as temporary_directory:
             path = Path(temporary_directory) / "memory.db"
             audit = InMemoryAuditSink()
@@ -223,10 +223,16 @@ class MemoryContextTests(unittest.TestCase):
                 migration_source=PackageMigrationSource(),
                 audit_sink=audit,
             ).migrate(uuid4())
-            repository = MemoryRepository(connection_provider=database, audit_sink=audit)
+            repository = MemoryRepository(
+                connection_provider=database,
+                audit_sink=audit,
+            )
             repository.create_record(
                 RecordDraft(
-                    FactPayload("Luna synthetic health", "Luna has a synthetic condition"),
+                    FactPayload(
+                        "Luna synthetic health",
+                        "Luna has a synthetic condition",
+                    ),
                     RecordStatus.CONFIRMED,
                     Sensitivity.PERSONAL,
                     MentionPolicy.ASK_BEFORE_MENTIONING,
@@ -240,13 +246,8 @@ class MemoryContextTests(unittest.TestCase):
             first = provider.context_for("Luna health", uuid4())
             self.assertIsNotNone(first)
             assert first is not None
-            self.assertIn("ask-before-mentioning", first)
-            self.assertNotIn("synthetic condition", first)
-
-            approved = provider.context_for("yes please", uuid4())
-            self.assertIsNotNone(approved)
-            assert approved is not None
-            self.assertIn("synthetic condition", approved)
+            self.assertIn("synthetic condition", first)
+            self.assertNotIn("ask-before-mentioning", first)
 
             direct = RepositoryMemoryContextProvider(repository).context_for(
                 "What do you know about Luna health?",
@@ -256,6 +257,49 @@ class MemoryContextTests(unittest.TestCase):
             assert direct is not None
             self.assertIn("synthetic condition", direct)
             self.assertNotIn("ask-before-mentioning", direct)
+
+    def test_standing_approval_does_not_bypass_direct_only_memory(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            path = Path(temporary_directory) / "memory.db"
+            audit = InMemoryAuditSink()
+            database = self._database(path, audit)
+            MigrationRunner(
+                connection_provider=database,
+                migration_source=PackageMigrationSource(),
+                audit_sink=audit,
+            ).migrate(uuid4())
+            repository = MemoryRepository(
+                connection_provider=database,
+                audit_sink=audit,
+            )
+            repository.create_record(
+                RecordDraft(
+                    FactPayload(
+                        "synthetic direct-only subject",
+                        "synthetic direct-only personal detail",
+                    ),
+                    RecordStatus.CONFIRMED,
+                    Sensitivity.SENSITIVE,
+                    MentionPolicy.ONLY_WHEN_DIRECTLY_ASKED,
+                    Scope(ScopeType.GLOBAL),
+                ),
+                self._provenance(SourceType.EXPLICIT_USER),
+                uuid4(),
+            )
+            provider = RepositoryMemoryContextProvider(repository)
+
+            ordinary = provider.context_for(
+                "Use relevant synthetic personal details.",
+                uuid4(),
+            )
+            direct = provider.context_for(
+                "What do you know about the synthetic direct-only subject?",
+                uuid4(),
+            )
+
+            self.assertIsNone(ordinary)
+            assert direct is not None
+            self.assertIn("synthetic direct-only personal detail", direct)
 
     @staticmethod
     def _database(path: Path, audit: InMemoryAuditSink) -> EncryptedDatabase:

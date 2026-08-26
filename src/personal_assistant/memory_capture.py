@@ -98,7 +98,7 @@ class ExplicitMemoryRequest:
 
 @dataclass(frozen=True)
 class AutomaticMemorySuggestion:
-    """One untrusted model proposal after structural parsing and validation."""
+    """One bounded proposal with no authority over capture policy."""
 
     payload: MemoryPayload
     proposed_sensitivity: Sensitivity
@@ -386,7 +386,7 @@ class MemoryCaptureCoordinator:
         user_text: str | None,
         correlation_id: UUID,
     ) -> CaptureResult | None:
-        """Confirm only exact, low-risk user text selected by an untrusted model."""
+        """Confirm only exact low-risk text from the current user message."""
 
         evidence = suggestion.user_evidence
         if evidence is None or user_text is None or evidence not in user_text:
@@ -667,7 +667,7 @@ _RESTRICTED_CONTENT = re.compile(
 _SENSITIVE_CONTENT = re.compile(
     r"\b(?:emotion\w*|anxi\w*|depress\w*|grief|relationship|conflict|"
     r"health|money|financial|location|address|workplace|date\s+of\s+birth|"
-    r"birth\s*date|phone(?:\s+number)?|email(?:\s+address)?)\b",
+    r"birth\s*date|birthday|phone(?:\s+number)?|email(?:\s+address)?)\b",
     re.IGNORECASE,
 )
 _STREET_ADDRESS_CONTENT = re.compile(
@@ -678,8 +678,18 @@ _STREET_ADDRESS_CONTENT = re.compile(
     re.IGNORECASE,
 )
 _PERSONAL_CONTENT = re.compile(
-    r"\b(?:i\s+live\s+in|i\s+am\s+based\s+in|i['’]m\s+based\s+in|"
-    r"my\s+(?:dog|cat|pet))\b",
+    r"\b(?:i\s+live\s+(?:in|near|outside|around)|"
+    r"i\s+am\s+based\s+in|i['’]m\s+based\s+in|"
+    r"i(?:\s+am|['’]m)\s+(?:[\w'-]+\s+){0,4}"
+    r"(?:allergic|sensitive|intolerant)|"
+    r"i\s+(?:prefer|like|love|dislike|avoid|work|want|own)|"
+    r"i\s+(?:have|do\s+not\s+have|don['’]t\s+have)\s+"
+    r"(?:a\s+|an\s+)?(?:[\w'-]+\s+){0,5}"
+    r"(?:allerg\w*|sensitiv\w*|intoleran\w*|dog|cat|pet|child|sibling|"
+    r"partner|spouse)|"
+    r"my\s+(?:name|dog|cat|pet|favorite|preference|allerg\w*|sensitiv\w*|"
+    r"intoleran\w*|age|home|city|state|country|job|career|profession|"
+    r"pronouns?|schedule|goal|values?|hobb(?:y|ies)|diet))\b",
     re.IGNORECASE,
 )
 _RESTRICTED_IDENTITY_CONTENT = re.compile(
@@ -696,9 +706,14 @@ def _automatic_sensitivity(
 ) -> Sensitivity:
     if not isinstance(proposed, Sensitivity) or proposed is Sensitivity.PROHIBITED:
         raise MemoryValidationError("Automatic sensitivity is invalid.")
+    direct_personal_fact = (
+        isinstance(payload, FactPayload)
+        and payload.subject.startswith("direct-statement:")
+    )
     type_floor = (
         Sensitivity.PERSONAL
         if isinstance(payload, (InsightPayload, NotePayload))
+        or direct_personal_fact
         else Sensitivity.NORMAL
     )
     deterministic = _deterministic_sensitivity(payload)

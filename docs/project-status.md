@@ -70,7 +70,9 @@ This document is the handoff point between coding sessions. At the end of each s
 - The local-only chat streams responses and has bounded session history while it
   is open. After trusted setup and recovery unlock, it retrieves only eligible
   confirmed persistent records, intercepts explicit remember instructions, and
-  analyzes completed turns asynchronously into quarantined candidates. It has
+  deterministically commits reviewed clear exact low-risk statements before the
+  response while analyzing other completed turns asynchronously into
+  quarantined candidates. It has
   no tools, browser access, broad credential access, or web capability; the
   native composition alone receives a narrow automatic-unlock credential
   adapter that is never exposed to the model or widgets.
@@ -166,6 +168,32 @@ complete; the batched Linux pull-request check is its final platform gate.
 - [ ] Add a web/search tool only behind the tool registry and approval layer.
 
 ## Session history
+
+### 2026-08-26 — Deterministic global memory and standing retrieval approval
+
+Completed:
+
+- Removed the model-analysis dependency from reviewed clear direct facts. The
+  exact current-user sentence is classified and committed synchronously before
+  the main response, even when the model returns no suggestion JSON.
+- Applied standing owner approval to relevant confirmed personal memory, so new,
+  current, and reopened saved chats use the same global canonical records without
+  repeatedly asking whether to check memory. Direct-only, never-mention,
+  restricted, prohibited, and unconfirmed content keeps its stronger boundary.
+- Broadened natural explicit transcript recall to phrases such as “have we
+  discussed,” “did we talk about,” and “do you remember,” while preserving
+  bounded encrypted search, active-chat exclusion, and inert-data handling.
+- Preserved current-fact precedence: retrieved confirmed records are ordered by
+  trusted update time and override stale statements in reopened historical
+  transcripts; contradictions still require clarification instead of silent
+  overwrite.
+- Verified 318 tests locally with the normal performance test skipped.
+
+Next:
+
+- Retest the native app with name, broad residence, pet, and gluten-sensitivity
+  facts across a new chat, a reopened old chat, and an app restart.
+- Continue with native candidate review and backup/restore controls.
 
 ### 2026-08-26 — Cross-chat memory handoff and explicit transcript recall
 

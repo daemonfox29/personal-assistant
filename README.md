@@ -73,11 +73,16 @@ memory suggestions.
 Confirmed low-risk personal facts are global across ordinary saved chats. A new
 chat waits boundedly for the preceding completed turn's accepted memory analysis
 before its first model request, so a fact stated in one chat can be retrieved in
-the next. Clear durable first-person statements use bounded analysis before the
-main response and commit an eligible exact low-risk sentence immediately. A
-trusted italic stage direction then reports a generic topic such as `pet` or
-`digestive health`; conflicts and uncertainty request clarification without
-overwriting confirmed data. Other turns retain the asynchronous candidate path.
+the next. A code-owned phrase gate commits reviewed clear, exact, low-risk
+first-person statements before the main response; this path does not depend on
+the model returning memory-analysis JSON. A trusted italic stage direction then
+reports a generic topic such as `pet` or `digestive health`; conflicts,
+uncertainty, and higher-risk classifications request clarification or review
+without overwriting confirmed data. Other turns retain the asynchronous,
+quarantined candidate path. Confirmed personal memories have standing owner
+approval for relevant ordinary use, so the assistant does not repeatedly ask
+whether it may check memory. Direct-only, never-mention, restricted, and
+unconfirmed records retain their stronger exclusions.
 When a saved older chat is reopened, its transcript remains historical context:
 newer confirmed global memory is supplied with trusted update timestamps and
 takes precedence over conflicting details in that older dialogue.
@@ -86,11 +91,12 @@ reviewed set of deterministic topic connections, and
 referential questions such as “What was the fact I just told you?” reuse only
 the immediately preceding accepted user statement as a retrieval hint. Saved
 transcripts remain separate from canonical memory: they are not
-searched for ordinary prompts. An explicit request such as “Remember when we
-talked about the cobalt garden? Let's continue that here” performs bounded
-full-text search inside the encrypted database and supplies only a few nearby
-user/assistant excerpts as untrusted data. The current chat and Private Chat are
-excluded from this recall path.
+searched for ordinary prompts. Natural explicit recall such as “Have we
+discussed the cobalt garden?” or “Remember when we talked about the cobalt
+garden? Let's continue that here” performs bounded full-text search immediately
+inside the encrypted database and supplies only a few nearby user/assistant
+excerpts as untrusted data. The assistant need not offer to search first. The
+current chat and Private Chat are excluded from this recall path.
 
 While a request is active, the native UI displays a transient local animation
 such as *Thinking...* or *Pondering...*. It is removed on the first real event,

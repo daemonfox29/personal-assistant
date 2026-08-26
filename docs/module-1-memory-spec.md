@@ -331,18 +331,20 @@ Migrations are packaged numeric, forward-only SQL files. The runner must:
    and ambiguous entities.
 4. Ambiguity is clarified rather than guessed.
 5. Explicit user remember instructions may create confirmed low-risk records.
-   A post-response proposal may also create confirmed memory only when its
-   evidence locates a complete low-risk declarative sentence in the user's
-   current message. The stored payload is that exact sentence under deterministic
-   trusted-interface provenance, never the model's subject or paraphrase.
-   Questions, inferred, mismatched, sensitive, or conflicting information create
-   a quarantined candidate.
+   A code-owned pre-response phrase gate may also create confirmed memory when a
+   reviewed pattern selects a complete, exact, low-risk declarative sentence in
+   the user's current message. It does not require model output. The stored
+   payload is that exact sentence under deterministic trusted-interface
+   provenance, never a model subject or paraphrase. Questions, inferred,
+   mismatched, sensitive, or conflicting information create a quarantined
+   candidate or require clarification.
 6. The repository writes the record and first revision in one transaction using
    an expected version.
 7. A sanitized audit event records operation, outcome, IDs, reason codes, and
    duration, but not record content.
 
-Explicit remember requests are handled synchronously. Inferred-candidate
+Explicit remember requests and reviewed clear direct statements are handled
+synchronously. Inferred-candidate
 analysis runs only after the visible answer has completed, is bounded and
 cancellable, uses at most the completed turn plus the minimum required context,
 and cannot delay first-token streaming. It may create only a small configured
@@ -353,6 +355,12 @@ Future automatic confirmation is enabled separately per low-risk category only
 after sufficient accepted feedback. The policy and thresholds remain visible,
 reversible, and deterministic. Sensitive or restricted categories never gain
 automatic confirmation merely because the model is confident.
+
+The owner grants standing approval for relevant ordinary retrieval of confirmed
+personal records. This removes repeated conversational “may I check memory?”
+prompts without changing storage eligibility. Direct-only, never-mention,
+restricted, prohibited, and unconfirmed records retain their stricter policy
+boundaries.
 
 ## Contradictions and revisions
 

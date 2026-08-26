@@ -24,7 +24,11 @@ from personal_assistant.memory_capture import (
     ExplicitMemoryRequest,
     MemoryCaptureCoordinator,
 )
-from personal_assistant.memory_repository import MemoryRepository, RetrievalRequest
+from personal_assistant.memory_repository import (
+    MemoryRepository,
+    RetrievalMode,
+    RetrievalRequest,
+)
 from personal_assistant.memory_types import (
     FactPayload,
     MemoryValidationError,
@@ -138,6 +142,11 @@ class MemoryCaptureTests(unittest.TestCase):
         self.assertEqual(captured.decision, CaptureDecision.CREATED_CONFIRMED)
         assert captured.record is not None
         self.assertEqual(captured.record.status, RecordStatus.CONFIRMED)
+        self.assertEqual(captured.record.sensitivity, Sensitivity.PERSONAL)
+        self.assertEqual(
+            captured.record.mention_policy,
+            MentionPolicy.ASK_BEFORE_MENTIONING,
+        )
         self.assertIsInstance(captured.record.revision.payload, FactPayload)
         assert isinstance(captured.record.revision.payload, FactPayload)
         self.assertEqual(captured.record.revision.payload.statement, user_text)
@@ -147,7 +156,10 @@ class MemoryCaptureTests(unittest.TestCase):
         )
         self.assertNotIn(user_text, repr(self.audit_sink.events))
         self.assertNotIn("invented model content", repr(self.audit_sink.events))
-        recalled = self.repository.retrieve(RetrievalRequest("my name"), uuid4())
+        recalled = self.repository.retrieve(
+            RetrievalRequest("my name", mode=RetrievalMode.APPROVED),
+            uuid4(),
+        )
         self.assertEqual(
             recalled.memories[0].record.record_id,
             captured.record.record_id,
@@ -225,6 +237,58 @@ class MemoryCaptureTests(unittest.TestCase):
                     result.record.mention_policy,
                     MentionPolicy.ASK_BEFORE_MENTIONING,
                 )
+
+    def test_direct_personal_metadata_is_classified_before_global_use(self) -> None:
+        for index, user_text in enumerate(
+            (
+                "My name is Synthetic Person.",
+                "My favorite synthetic color is blue.",
+                "I have a synthetic gluten sensitivity.",
+                "I am synthetically gluten sensitive.",
+                "My job is synthetic testing.",
+            ),
+            start=1,
+        ):
+            with self.subTest(user_text=user_text):
+                result = self.coordinator.process_suggestion_batch(
+                    (
+                        self._suggestion(
+                            user_evidence=user_text,
+                            source_ref=f"synthetic-personal-metadata-{index}",
+                        ),
+                    ),
+                    uuid4(),
+                    direct_user_text=user_text,
+                ).results[0]
+
+                assert result.record is not None
+                self.assertEqual(result.record.sensitivity, Sensitivity.PERSONAL)
+                self.assertEqual(
+                    result.record.mention_policy,
+                    MentionPolicy.ASK_BEFORE_MENTIONING,
+                )
+
+    def test_birthday_stays_unconfirmed_without_higher_risk_review(self) -> None:
+        user_text = "My birthday is Synthetic January 1."
+        result = self.coordinator.process_suggestion_batch(
+            (
+                self._suggestion(
+                    FactPayload("synthetic birthday", user_text),
+                    user_evidence=user_text,
+                    source_ref="synthetic-birthday-turn",
+                ),
+            ),
+            uuid4(),
+            direct_user_text=user_text,
+        ).results[0]
+
+        assert result.record is not None
+        self.assertEqual(result.record.status, RecordStatus.CANDIDATE)
+        self.assertEqual(result.record.sensitivity, Sensitivity.SENSITIVE)
+        self.assertEqual(
+            result.record.mention_policy,
+            MentionPolicy.ONLY_WHEN_DIRECTLY_ASKED,
+        )
 
     def test_explicit_instruction_creates_confirmed_revisioned_memory(self) -> None:
         result = self.coordinator.remember_explicitly(self._explicit(), uuid4())

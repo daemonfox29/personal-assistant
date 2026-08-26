@@ -56,16 +56,30 @@ _DIRECT_ASSERTION = re.compile(
 _CLEAR_MEMORY_ASSERTION = re.compile(
     r"\b(?:"
     r"i\s+(?:live|prefer|like|love|dislike|avoid|work|grew|was\s+born|"
-    r"cannot|can['’]t)\b|"
-    r"i(?:\s+am|['’]m)\s+(?:from|based|located|allergic|sensitive|a\b|an\b)|"
-    r"i\s+have\s+(?:a\s+|an\s+)?(?:[\w'-]+\s+){0,5}"
-    r"(?:allerg\w*|sensitiv\w*|intoleran\w*|"
-    r"condition|dog|cat|pet|child|sibling|partner|spouse)|"
-    r"i\s+(?:do\s+not|don['’]t)\s+have\s+(?:a\s+|an\s+)?"
-    r"(?:[\w'-]+\s+){0,5}(?:allerg\w*|sensitiv\w*|intoleran\w*|"
-    r"condition|dog|cat|pet|child|sibling|partner|spouse)|"
+    r"want|need|use|own|usually|always|never|cannot|can['’]t)\b|"
+    r"i(?:\s+am|['’]m)\s+(?:from|based|located|(?:[\w'-]+\s+){0,4}"
+    r"(?:allergic|sensitive|intolerant)|a\b|an\b|\d{1,3}\b)|"
+    r"i\s+(?:have|do\s+not\s+have|don['’]t\s+have)\b|"
     r"my\s+(?:name|dog|cat|pet|favorite|preference|allerg\w*|sensitiv\w*|"
-    r"home|job|career|profession|pronouns?)\b|"
+    r"intoleran\w*|birthday|birth\s+date|age|home|city|state|country|job|"
+    r"career|profession|pronouns?|schedule|goal|values?|hobb(?:y|ies)|diet)\b|"
+    r"is\s+my\s+(?:dog|cat|pet|partner|spouse)\b"
+    r")",
+    re.IGNORECASE,
+)
+_SAFE_DIRECT_CAPTURE_ASSERTION = re.compile(
+    r"\b(?:"
+    r"i\s+(?:live|prefer|like|love|dislike|avoid|work|grew|was\s+born|"
+    r"want|own|usually|always|never|cannot|can['’]t)\b|"
+    r"i(?:\s+am|['’]m)\s+(?:from|based|located|(?:[\w'-]+\s+){0,4}"
+    r"(?:allergic|sensitive|intolerant)|a\b|an\b|\d{1,3}\b)|"
+    r"i\s+(?:have|do\s+not\s+have|don['’]t\s+have)\s+"
+    r"(?:a\s+|an\s+)?(?:[\w'-]+\s+){0,5}"
+    r"(?:allerg\w*|sensitiv\w*|intoleran\w*|dog|cat|pet|child|sibling|"
+    r"partner|spouse)|"
+    r"my\s+(?:name|dog|cat|pet|favorite|preference|allerg\w*|sensitiv\w*|"
+    r"intoleran\w*|birthday|birth\s+date|age|home|city|state|country|job|"
+    r"career|profession|pronouns?|schedule|goal|values?|hobb(?:y|ies)|diet)\b|"
     r"is\s+my\s+(?:dog|cat|pet|partner|spouse)\b"
     r")",
     re.IGNORECASE,
@@ -73,6 +87,12 @@ _CLEAR_MEMORY_ASSERTION = re.compile(
 _UNCERTAIN_ASSERTION = re.compile(
     r"\b(?:maybe|might|possibly|probably|i\s+(?:think|guess|suspect)|"
     r"i['’]m\s+not\s+sure|i\s+am\s+not\s+sure)\b",
+    re.IGNORECASE,
+)
+_TRANSIENT_ASSERTION = re.compile(
+    r"\bi\s+have\s+(?:a|an|another|one|some)\s+"
+    r"(?:question|request|task|problem|issue)\b|"
+    r"\bi(?:\s+am|['’]m)\s+(?:looking|trying|asking|wondering)\b",
     re.IGNORECASE,
 )
 _USER_SENTENCE = re.compile(r"[^.!?\n]+(?:[.!?]+|$)")
@@ -340,17 +360,44 @@ def _evidence_terms(value: object) -> set[str]:
 
 
 def has_clear_direct_memory_statement(user_text: str) -> bool:
-    """Select only bounded declarative phrases for pre-response analysis."""
+    """Return whether exact deterministic capture can confirm one statement."""
+
+    return bool(clear_direct_memory_statements(user_text))
+
+
+def clear_direct_memory_statements(user_text: str) -> tuple[str, ...]:
+    """Return bounded exact durable-looking statements, never paraphrases."""
+
+    return tuple(
+        sentence
+        for sentence in _direct_memory_statements(
+            user_text,
+            include_uncertain=False,
+        )
+        if _SAFE_DIRECT_CAPTURE_ASSERTION.search(sentence)
+    )
+
+
+def _direct_memory_statements(
+    user_text: str,
+    *,
+    include_uncertain: bool,
+) -> tuple[str, ...]:
+    """Select exact current-user sentences through code-owned phrase rules."""
 
     if not isinstance(user_text, str):
-        return False
-    return any(
-        8 <= len(sentence) <= MAX_DIRECT_EVIDENCE_CHARS
-        and not sentence.endswith("?")
-        and _CLEAR_MEMORY_ASSERTION.search(sentence)
+        return ()
+    statements = tuple(
+        sentence
         for match in _USER_SENTENCE.finditer(user_text)
         if (sentence := match.group(0).strip())
+        and 8 <= len(sentence) <= MAX_DIRECT_EVIDENCE_CHARS
+        and not sentence.endswith("?")
+        and _CLEAR_MEMORY_ASSERTION.search(sentence)
+        and not _TRANSIENT_ASSERTION.search(sentence)
+        and (include_uncertain or not _UNCERTAIN_ASSERTION.search(sentence))
     )
+    return tuple(dict.fromkeys(statements))[:MAX_ANALYZER_SUGGESTIONS]
 
 
 @dataclass(frozen=True)
@@ -362,7 +409,7 @@ class _CompletedTurn:
 
 
 class PostResponseMemoryWorker:
-    """Analyze at most one queued turn without delaying visible response output."""
+    """Capture clear facts synchronously; analyze other turns in one-slot queue."""
 
     def __init__(
         self,
@@ -432,31 +479,71 @@ class PostResponseMemoryWorker:
         ordinary post-response worker should still analyze the completed turn.
         """
 
-        if self._cancelled.is_set() or not has_clear_direct_memory_statement(
-            user_text
-        ):
+        selected = _direct_memory_statements(user_text, include_uncertain=True)
+        if self._cancelled.is_set() or not selected:
             return None
-        if not self.wait_until_idle(15.0):
-            return (
-                _memory_notice(
-                    "Memory not saved",
-                    user_text,
-                    "personal information",
-                    "Memory processing is still busy. Please try again or use "
-                    "‘remember that …’.",
-                ),
-            )
         correlation_id = uuid4()
         source_ref = f"turn:{correlation_id}"
-        try:
-            suggestions = self._analyzer.analyze(
-                user_text,
-                "",
-                source_ref,
-                correlation_id,
+        clear_statements = clear_direct_memory_statements(user_text)
+        uncertain_statements = tuple(
+            sentence
+            for sentence in selected
+            if _UNCERTAIN_ASSERTION.search(sentence)
+        )
+        review_statements = tuple(
+            sentence
+            for sentence in selected
+            if sentence not in clear_statements
+            and sentence not in uncertain_statements
+        )
+        if not clear_statements and not review_statements:
+            return (
+                _memory_notice(
+                    "Memory needs clarification",
+                    user_text,
+                    "personal information",
+                    "The statement sounded uncertain, so I did not add it to "
+                    "confirmed memory. Please state the current fact directly.",
+                ),
             )
+        try:
+            direct_suggestions = tuple(
+                AutomaticMemorySuggestion(
+                    FactPayload("direct user statement", sentence),
+                    Sensitivity.NORMAL,
+                    MentionPolicy.MAY_MENTION_WHEN_RELEVANT,
+                    Scope(ScopeType.GLOBAL),
+                    source_ref,
+                    "deterministic-direct-v1",
+                    sentence,
+                )
+                for sentence in clear_statements
+            )
+            analyzed_suggestions = (
+                self._analyzer.analyze(
+                    "\n".join(review_statements),
+                    "",
+                    source_ref,
+                    correlation_id,
+                )
+                if review_statements
+                else ()
+            )
+            suggestions = (
+                direct_suggestions + analyzed_suggestions
+            )[:MAX_ANALYZER_SUGGESTIONS]
             if self._cancelled.is_set():
                 return None
+            if not suggestions:
+                return (
+                    _memory_notice(
+                        "Memory needs clarification",
+                        user_text,
+                        "personal information",
+                        "I could not safely classify it as a lasting fact. "
+                        "Please state the current fact more directly.",
+                    ),
+                )
             result = self._coordinator.process_suggestion_batch(
                 suggestions,
                 correlation_id,
@@ -477,7 +564,18 @@ class PostResponseMemoryWorker:
                     "Memory processing was unavailable.",
                 ),
             )
-        return _capture_notices(suggestions, result, user_text)
+        notices = list(_capture_notices(suggestions, result, user_text))
+        if uncertain_statements:
+            notices.append(
+                _memory_notice(
+                    "Memory needs clarification",
+                    " ".join(uncertain_statements),
+                    "personal information",
+                    "The statement sounded uncertain, so I did not add it to "
+                    "confirmed memory. Please state the current fact directly.",
+                )
+            )
+        return tuple(notices)
 
     def wait_until_idle(self, timeout_seconds: float = 15.0) -> bool:
         """Wait boundedly for accepted turns to finish persistence."""
@@ -588,11 +686,11 @@ def _capture_notices(
     if not suggestions:
         return (
             _memory_notice(
-                "Memory not saved",
+                "Memory needs clarification",
                 user_text,
                 "personal information",
-                "I could not identify a lasting fact confidently. Please clarify "
-                "or use ‘remember that …’ to confirm it.",
+                "I could not safely classify it as a lasting fact. Please state "
+                "the current fact more directly.",
             ),
         )
     notices: list[str] = []

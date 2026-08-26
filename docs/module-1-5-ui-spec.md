@@ -110,7 +110,8 @@ Opening a saved conversation restores only complete user/assistant exchanges to
 the existing token-bounded RAM context. Notices and unanswered prompts remain
 visible but cannot become model roles. Listing other conversations never loads
 their content into RAM or model context. A distinct owner-triggered recall path
-recognizes explicit history language such as “remember when we talked about.” It
+recognizes natural explicit history language such as “have we discussed” and
+“remember when we talked about.” It
 uses an encrypted FTS index, excludes the active conversation, and supplies at
 most three matching conversations with at most four nearby user/assistant
 messages each in a token-bounded, untrusted-data JSON envelope. Ordinary prompts
@@ -122,15 +123,20 @@ new or saved chat replaces active RAM history, its first persistent-memory
 request waits up to a fixed bound for already accepted post-response analysis
 from the preceding chat. Model paraphrases may locate one unambiguous
 first-person declarative sentence, but only the exact user sentence can be
-confirmed; ambiguous matches and model-authored content remain quarantined.
-Clear durable-looking first-person statements are analyzed synchronously before
-the main response so an eligible low-risk exact sentence is committed before
-the UI reports `Memory updated: <generic topic>`. The receipt is produced from
-the repository decision and reviewed local topic labels, never model prose.
+confirmed; ambiguous matches and model-authored content remain quarantined. A
+code-owned phrase gate captures reviewed clear durable-looking statements
+synchronously before the main response, so an eligible low-risk exact sentence
+is committed even when the model returns no memory-analysis JSON. The UI then
+reports `Memory updated: <generic topic>`. The receipt is produced from the
+repository decision and reviewed local topic labels, never model prose.
 Uncertainty, conflicts, and higher-risk classifications instead produce an
 immediate clarification or review receipt and do not overwrite confirmed data.
 Prompts outside the deterministic gate retain asynchronous post-response
 analysis to avoid adding latency to every request.
+Confirmed personal memories have standing owner approval for relevant ordinary
+retrieval, eliminating per-answer permission prompts. Direct-only,
+never-mention, restricted, and unconfirmed records remain excluded except by
+their stronger trusted paths.
 The first request may use the immediately preceding accepted user statement as
 a retrieval-only hint when the new prompt explicitly refers to “that fact” or
 “what I just told you.” Direct self-questions and conservative singular/plural

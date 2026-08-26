@@ -1,6 +1,5 @@
 """Composition tests for the UI-facing application boundary."""
 
-import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
@@ -39,46 +38,6 @@ class SyntheticModel:
         return ModelResponse("synthetic response")
 
 
-class CrossChatMemoryModel(SyntheticModel):
-    def generate(self, request: ModelRequest) -> ModelResponse:
-        self.requests.append(request)
-        if request.messages[0].content.startswith(
-            "Identify zero to three durable user-memory suggestions."
-        ):
-            return ModelResponse(
-                '[{"type":"fact","subject":"model pet","content":'
-                '"The user has a dog called Synthetic Scooby",'
-                '"evidence_quote":"","sensitivity":"normal",'
-                '"mention_policy":"may_mention_when_relevant"}]'
-            )
-        return ModelResponse("synthetic response")
-
-
-class ExactEvidenceMemoryModel(SyntheticModel):
-    def generate(self, request: ModelRequest) -> ModelResponse:
-        self.requests.append(request)
-        if request.messages[0].content.startswith(
-            "Identify zero to three durable user-memory suggestions."
-        ):
-            turn = json.loads(request.messages[-1].content.split("\n", 1)[1])
-            user_text = turn["user"]
-            return ModelResponse(
-                json.dumps(
-                    [
-                        {
-                            "type": "fact",
-                            "subject": "model-authored synthetic preference",
-                            "content": "model-authored synthetic paraphrase",
-                            "evidence_quote": user_text,
-                            "sensitivity": "normal",
-                            "mention_policy": "may_mention_when_relevant",
-                        }
-                    ]
-                )
-            )
-        return ModelResponse("synthetic response")
-
-
 class SyntheticRecoveryStore:
     def __init__(self, recovery: str | None = None) -> None:
         self.recovery = recovery
@@ -107,7 +66,9 @@ class ApplicationServiceTests(unittest.TestCase):
             )
             factory = AssistantApplicationFactory(settings)
             factory.setup(RECOVERY, RECOVERY, PASSCODE, PASSCODE)
-            model = ExactEvidenceMemoryModel()
+            # This model cannot produce memory-analysis JSON. Clear exact facts
+            # must still commit synchronously without depending on model output.
+            model = SyntheticModel()
             with patch(
                 "personal_assistant.application_service.OllamaModel",
                 return_value=model,
@@ -192,6 +153,12 @@ class ApplicationServiceTests(unittest.TestCase):
                 )
                 service.new_conversation()
                 tuple(service.iter_events("Continue where we left off."))
+                service.new_conversation()
+                tuple(
+                    service.iter_events(
+                        "Have we discussed the cobalt garden before?"
+                    )
+                )
                 service.close()
 
             ordinary_requests = [
@@ -217,6 +184,11 @@ class ApplicationServiceTests(unittest.TestCase):
             self.assertIn(
                 "Remember when we talked about the cobalt garden?",
                 latest_system_text,
+            )
+            natural_recall_system_text = ordinary_requests[4].messages[0].content
+            self.assertIn(
+                "We planned the synthetic cobalt garden launch.",
+                natural_recall_system_text,
             )
 
     def test_ordinary_new_chat_does_not_search_prior_transcripts(self) -> None:
@@ -260,7 +232,7 @@ class ApplicationServiceTests(unittest.TestCase):
             )
             factory = AssistantApplicationFactory(settings)
             factory.setup(RECOVERY, RECOVERY, PASSCODE, PASSCODE)
-            model = CrossChatMemoryModel()
+            model = SyntheticModel()
             with patch(
                 "personal_assistant.application_service.OllamaModel",
                 return_value=model,
