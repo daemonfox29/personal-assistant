@@ -30,7 +30,6 @@ from personal_assistant.model import ModelToolCall, ModelToolDefinition
 from personal_assistant.permissions import ActionKind
 from personal_assistant.web_search import (
     WebSearchProvider,
-    query_is_derived_from_user_text,
     validate_search_query,
 )
 
@@ -89,6 +88,10 @@ ToolContextValidator = Callable[
     [Mapping[str, object], ToolExecutionContext],
     None,
 ]
+ToolContextResolver = Callable[
+    [Mapping[str, object], ToolExecutionContext],
+    dict[str, object],
+]
 
 
 @dataclass(frozen=True)
@@ -100,6 +103,7 @@ class RegisteredTool:
     validator: ToolValidator
     handler: ToolHandler
     context_validator: ToolContextValidator | None = None
+    context_resolver: ToolContextResolver | None = None
     repeat_allowed: bool = True
     invalid_input_message: str = "The tool arguments were invalid."
     failure_message: str = "The tool could not complete safely."
@@ -115,6 +119,8 @@ class RegisteredTool:
             self.context_validator
         ):
             raise TypeError("A registered tool context validator must be callable.")
+        if self.context_resolver is not None and not callable(self.context_resolver):
+            raise TypeError("A registered tool context resolver must be callable.")
         if not isinstance(self.repeat_allowed, bool):
             raise TypeError("A registered tool repeat policy must be a boolean.")
         for label, message in (
@@ -233,9 +239,17 @@ class ToolExecutor:
         )
         try:
             arguments = tool.validator(call.arguments())
-            if tool.context_validator is not None:
+            if (
+                tool.context_validator is not None
+                or tool.context_resolver is not None
+            ):
                 if execution_context is None:
                     raise ToolInputError("Request context is required.")
+            if tool.context_resolver is not None:
+                arguments = tool.context_resolver(arguments, execution_context)
+                if not isinstance(arguments, dict):
+                    raise ToolInputError("Resolved tool arguments are invalid.")
+            if tool.context_validator is not None:
                 tool.context_validator(arguments, execution_context)
         except (ToolInputError, TypeError, ValueError):
             self._audit(
@@ -444,23 +458,20 @@ def default_tool_registry(
         return {"result": rendered}
 
     def validate_web_search(arguments: Mapping[str, object]) -> dict[str, object]:
-        if set(arguments) != {"query"}:
+        if set(arguments) not in (set(), {"query"}):
             raise ToolInputError("Search fields are invalid.")
-        try:
-            query = validate_search_query(arguments["query"])
-        except ValueError as error:
-            raise ToolInputError("The search query is invalid.") from error
-        return {"query": query}
+        return {}
 
-    def validate_web_search_context(
+    def resolve_web_search_context(
         arguments: Mapping[str, object],
         context: ToolExecutionContext,
-    ) -> None:
-        if not query_is_derived_from_user_text(
-            str(arguments["query"]),
-            context.user_text,
-        ):
-            raise ToolInputError("The search query was not supplied by the user.")
+    ) -> dict[str, object]:
+        del arguments
+        try:
+            query = validate_search_query(context.user_text)
+        except ValueError as error:
+            raise ToolInputError("The current user question cannot be searched.") from error
+        return {"query": query}
 
     def search_web(arguments: Mapping[str, object]) -> Mapping[str, object]:
         if web_search is None:
@@ -516,30 +527,23 @@ def default_tool_registry(
             RegisteredTool(
                 ModelToolDefinition.create(
                     "search_public_web",
-                    "Search current public web results using words from the "
-                    "user's current message.",
+                    "Search current public web results for the current user's "
+                    "question. Supply no arguments; deterministic code derives the "
+                    "query from the current user message.",
                     {
                         "additionalProperties": False,
-                        "properties": {
-                            "query": {
-                                "maxLength": 256,
-                                "minLength": 2,
-                                "type": "string",
-                            }
-                        },
-                        "required": ["query"],
+                        "properties": {},
                         "type": "object",
                     },
                 ),
                 ActionKind.WEB_SEARCH,
                 validate_web_search,
                 search_web,
-                context_validator=validate_web_search_context,
+                context_resolver=resolve_web_search_context,
                 repeat_allowed=False,
                 invalid_input_message=(
-                    "Search was denied. Retry once using an exact contiguous phrase "
-                    "copied from the current user message; do not paraphrase or add "
-                    "words."
+                    "Search was denied because the current user question could not "
+                    "be converted into a bounded public query."
                 ),
                 failure_message=(
                     "The local web-search service is unavailable or returned an "

@@ -127,8 +127,9 @@ authority but no model, memory, database, credential, browser, or assistant-
 process access. A deterministic Colima lifecycle starts its dedicated one-GiB
 profile on first use and stops it after 120 idle seconds or app shutdown. Only
 the reviewed configuration directory is mounted read-only; the model cannot
-control service lifecycle or configuration. The outbound query must occur verbatim after normalization in
-the current user message. Returned titles, snippets, and HTTPS URLs are bounded
+control service lifecycle or configuration. The model supplies no search query;
+deterministic code uses only the normalized current user message. Returned
+titles, snippets, and HTTPS URLs are bounded
 untrusted data and result URLs are never fetched. Calls are serial, request-
 scoped, and limited to three tool steps. Browser, file, credential, shell,
 arbitrary URL fetch, and arbitrary-code capabilities remain disabled.

@@ -373,7 +373,14 @@ class ConversationService:
                 return True
 
             call = ordered_calls[0]
-            call_identity = (call.name, call.arguments_json)
+            call_identity = (
+                call.name,
+                (
+                    call.arguments_json
+                    if self._tool_executor.repeat_allowed(call.name)
+                    else ""
+                ),
+            )
             if (
                 call_identity in seen_calls
                 and not self._tool_executor.repeat_allowed(call.name)
@@ -604,10 +611,9 @@ class ConversationService:
                 "Automatically use public web search, without asking permission or "
                 "requiring the user to say 'search', when a public factual question "
                 "depends on information you do not know confidently or that may have "
-                "changed. The search query must be one exact contiguous phrase copied "
-                "from the current user message: do not paraphrase, reorder, or add "
-                "words. If a search is denied for this reason, retry once with a valid "
-                "exact phrase. Do not search for casual conversation, creative work, "
+                "changed. Call the search tool with an empty argument object; trusted "
+                "deterministic code derives the outbound query from the current user "
+                "message. Do not search for casual conversation, creative work, "
                 "private memory, or facts already established by trusted context. "
                 "For current date or time answers, use the tool's explicit "
                 "calendar_date, local_time, weekday, and timezone fields; do not "

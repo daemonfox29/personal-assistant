@@ -25,6 +25,9 @@ DEFAULT_SEARCH_IDLE_SECONDS = 120.0
 MAX_SEARCH_STARTUP_SECONDS = 45.0
 COLIMA_PATH = "/opt/homebrew/bin/colima"
 DOCKER_PATH = "/opt/homebrew/bin/docker"
+SAFE_SEARCH_COMMAND_PATH = (
+    "/opt/homebrew/bin:/opt/homebrew/sbin:/usr/bin:/bin:/usr/sbin:/sbin"
+)
 
 
 class SearchRuntimeError(RuntimeError):
@@ -63,13 +66,13 @@ def _run_command(
         in {
             "DOCKER_CONFIG",
             "HOME",
-            "PATH",
             "TMPDIR",
             "XDG_CONFIG_HOME",
             "XDG_DATA_HOME",
             "XDG_RUNTIME_DIR",
         }
     }
+    environment["PATH"] = SAFE_SEARCH_COMMAND_PATH
     if extra_environment is not None:
         environment.update(extra_environment)
     try:

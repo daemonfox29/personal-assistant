@@ -322,7 +322,10 @@ class ConversationServiceTests(unittest.TestCase):
 
         events = tuple(service.events_for("What is the latest SearXNG release?"))
 
-        self.assertEqual(provider.queries, ["latest SearXNG release"])
+        self.assertEqual(
+            provider.queries,
+            ["What is the latest SearXNG release?"],
+        )
         self.assertIn(
             "Automatically use public web search",
             model.requests[0].messages[0].content,
@@ -332,7 +335,7 @@ class ConversationServiceTests(unittest.TestCase):
             model.requests[0].messages[0].content,
         )
         self.assertIn(
-            "exact contiguous phrase copied",
+            "empty argument object",
             model.requests[0].messages[0].content,
         )
         self.assertIn(
@@ -344,8 +347,8 @@ class ConversationServiceTests(unittest.TestCase):
             "".join(event.text for event in events),
         )
 
-    def test_invalid_search_paraphrase_gets_one_safe_retry_instruction(self) -> None:
-        class RetrySearchModel:
+    def test_model_search_query_is_not_used_as_outbound_data(self) -> None:
+        class InjectingSearchModel:
             def __init__(self) -> None:
                 self.requests: list[ModelRequest] = []
 
@@ -357,31 +360,14 @@ class ConversationServiceTests(unittest.TestCase):
                         (
                             ModelToolCall.create(
                                 "search_public_web",
-                                {"query": "newest Python version"},
-                            ),
-                        ),
-                    )
-                if len(self.requests) == 2:
-                    self.assert_retry_guidance(request)
-                    return ModelResponse(
-                        "",
-                        (
-                            ModelToolCall.create(
-                                "search_public_web",
-                                {"query": "current Python release"},
+                                {"query": "private model memory value"},
                             ),
                         ),
                     )
                 return ModelResponse("Python result.")
 
-            @staticmethod
-            def assert_retry_guidance(request: ModelRequest) -> None:
-                tool_message = request.messages[-1]
-                if "exact contiguous phrase" not in tool_message.content:
-                    raise AssertionError("Search retry guidance was not returned.")
-
         provider = SearchProvider()
-        model = RetrySearchModel()
+        model = InjectingSearchModel()
         service = ConversationService(
             model,
             tool_executor=ToolExecutor(
@@ -394,8 +380,12 @@ class ConversationServiceTests(unittest.TestCase):
             service.events_for("What is the current Python release today?")
         )
 
-        self.assertEqual(provider.queries, ["current Python release"])
-        self.assertEqual(len(model.requests), 3)
+        self.assertEqual(
+            provider.queries,
+            ["What is the current Python release today?"],
+        )
+        self.assertNotIn("private model memory value", repr(provider.queries))
+        self.assertEqual(len(model.requests), 2)
         self.assertIn("Python result.", "".join(event.text for event in events))
 
     def test_duplicate_web_search_is_stopped_after_first_attempt(self) -> None:
@@ -427,7 +417,7 @@ class ConversationServiceTests(unittest.TestCase):
 
         events = tuple(service.events_for("Find the current public result."))
 
-        self.assertEqual(provider.queries, ["current public result"])
+        self.assertEqual(provider.queries, ["Find the current public result."])
         self.assertEqual(model.requests, 2)
         self.assertTrue(any("already attempted" in event.text for event in events))
     def test_pre_response_memory_notice_precedes_model_and_skips_duplicate_queue(self) -> None:

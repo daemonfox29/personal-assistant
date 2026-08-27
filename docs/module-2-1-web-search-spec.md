@@ -24,8 +24,9 @@ outbound query private from those upstream engines.
 
 ## Narrow authority
 
-The `search_public_web` tool accepts one query and returns at most five public
-result summaries. The assistant-side adapter can contact only one configured
+The `search_public_web` tool accepts no model-authored arguments and returns at
+most five public result summaries. Deterministic code derives its query from the
+current user message. The assistant-side adapter can contact only one configured
 numeric loopback HTTP origin and the fixed `/search` path. It cannot:
 
 - contact an internet host, LAN address, hostname, or alternate local port;
@@ -52,13 +53,14 @@ Read-only search still discloses the query beyond the machine. The model already
 receives selected persistent memory, so unrestricted model-authored queries
 would create an exfiltration channel.
 
-For Module 2.1, the normalized outbound query must be a contiguous substring of
-the current user's normalized message. The model may select relevant words the
-user just supplied, but cannot add a name, address, memory value, encoded
-payload, site filter, or instruction absent from that message. Deterministic
-code enforces this immediately before contacting local SearXNG. A query that is
-empty, too long, contains controls, or is not derived from the current message
-is denied and never leaves the assistant process.
+For Module 2.1, deterministic code uses the normalized current user message as
+the outbound query. The model can signal that public search is appropriate, but
+cannot select, rewrite, append to, or otherwise author the query. A legacy or
+malformed model-supplied `query` value is ignored rather than sent. Therefore
+the model cannot add a name, address, memory value, encoded payload, site filter,
+or instruction absent from the current message. A current message that is
+empty, too long, or contains controls is denied and never leaves the assistant
+process.
 
 Running the reviewed local SearXNG service is the owner's explicit global
 enablement of this narrow search action. Under the user-derived-query rule,
@@ -71,13 +73,14 @@ The model should propose search automatically, without asking for permission or
 requiring explicit search phrasing, when a public factual question depends on
 information it does not know confidently or that may have changed. It should
 not search casual conversation, creative work, private-memory questions, or
-facts already established by trusted context. This is a model decision inside
-the deterministic authority boundary: every proposed query still must pass the
-current-user substring rule before any request can leave the process.
+facts already established by trusted context. Deciding whether search is useful
+is a model proposal inside the deterministic authority boundary; constructing
+the query is not.
 
 ## Inputs and outputs
 
-Input is exactly one `query` string containing 2 to 256 Unicode characters after
+The model-facing input is an empty object. Trusted request context supplies the
+current user message, which must contain 2 to 256 Unicode characters after
 whitespace normalization. Control characters, line breaks, nulls, and invisible
 formatting controls are rejected.
 

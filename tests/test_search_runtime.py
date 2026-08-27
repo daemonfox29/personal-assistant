@@ -1,8 +1,11 @@
 """Tests for app-owned on-demand SearXNG lifecycle management."""
 
+import os
 from pathlib import Path
+import subprocess
 from tempfile import TemporaryDirectory
 import unittest
+from unittest.mock import patch
 from urllib.error import URLError
 
 from personal_assistant.search_runtime import (
@@ -10,8 +13,10 @@ from personal_assistant.search_runtime import (
     DOCKER_CONTEXT_NAME,
     SEARXNG_CONTAINER_NAME,
     SEARXNG_IMAGE,
+    SAFE_SEARCH_COMMAND_PATH,
     ColimaSearchRuntime,
     SearchRuntimeError,
+    _run_command,
 )
 
 
@@ -238,6 +243,30 @@ class SearchRuntimeTests(unittest.TestCase):
                 colima_path=self.colima,
                 docker_path=self.docker,
             )
+
+    def test_command_runner_uses_fixed_homebrew_path_under_gui_environment(
+        self,
+    ) -> None:
+        completed = subprocess.CompletedProcess((self.colima, "version"), 0)
+        with patch.dict(
+            os.environ,
+            {
+                "HOME": self.temporary.name,
+                "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+                "UNRELATED_SECRET": "must-not-be-forwarded",
+            },
+            clear=True,
+        ), patch(
+            "personal_assistant.search_runtime.subprocess.run",
+            return_value=completed,
+        ) as run:
+            status = _run_command((self.colima, "version"), 5.0, None)
+
+        self.assertEqual(status, 0)
+        environment = run.call_args.kwargs["env"]
+        self.assertEqual(environment["PATH"], SAFE_SEARCH_COMMAND_PATH)
+        self.assertEqual(environment["HOME"], self.temporary.name)
+        self.assertNotIn("UNRELATED_SECRET", environment)
 
 
 if __name__ == "__main__":

@@ -213,9 +213,10 @@ Completed:
   following, cookies, page retrieval, result URL fetching, credentials, or
   arbitrary destination selection. The adapter bounds timeout, response bytes,
   JSON shape, result count, title, snippet, and HTTPS URLs.
-- Added a deterministic contextual validator: an outbound query must be a
-  normalized contiguous phrase from the current user message. The model cannot
-  append memory values or other model-authored text to the search request.
+- Added deterministic query derivation: the model can request a search but
+  supplies no outbound query. Code uses only the bounded normalized current user
+  message and ignores model-authored query text, preventing appended memory
+  values or other model-authored data from reaching search.
 - Labeled all results as untrusted web data, strengthened the system instruction
   against result-borne prompt injection, required exact returned source URLs for
   search-supported claims, and stopped duplicate exact search attempts.
@@ -230,23 +231,30 @@ Completed:
 - Rejected Podman after its real macOS gate exposed current VM forwarding and
   startup failures. Colima with macOS Virtualization.Framework passed the same
   stability, real-search, and shutdown gates.
-- Fixed a live model-contract failure where Qwen paraphrased an outbound query
-  and the exact-user-phrase exfiltration guard correctly denied it. The trusted
-  prompt now states the exact-copy rule, and a denied search returns bounded
-  retry guidance so the model can correct the query once without weakening the
-  validator.
+- Live audit showed that prompting Qwen to copy an exact query, including a
+  bounded retry, remained unreliable. Removed query authorship from the model
+  contract entirely rather than weakening the exfiltration boundary.
 - Added a pre-search liveness check so cached in-process runtime state cannot
   outlive the actual VM or container. If the dedicated service was stopped
   externally, the app now re-establishes the bounded runtime before searching.
+- Added a fixed trusted Homebrew and macOS system command path for the managed
+  runtime. Spotlight/Finder's minimal environment no longer prevents Colima
+  from locating its Lima dependency, and arbitrary inherited path entries are
+  not trusted.
 
 Verification:
 
 - A real generic public search returned bounded HTTPS results through the pinned
   SearXNG image, and managed close removed the listener and stopped the VM.
+- An independent agent launched the real application factory with real Qwen and
+  SearXNG under a Finder/Spotlight-style minimal environment. An ordinary current
+  factual question triggered `web_search` audit events from `started` to
+  `succeeded`, returned an exact HTTPS citation with no search notice, and clean
+  shutdown stopped the VM and removed the loopback listener.
 - A literal 125-second observation confirmed the dedicated runtime stopped after
   its 120-second inactivity threshold.
 - `uv lock --check` passed, all source and test modules compiled, and the full
-  local suite passed: 405 tests in 13.618 seconds, with only the intentionally
+  local suite passed: 407 tests in 13.743 seconds, with only the intentionally
   opt-in 100,000-record memory benchmark skipped.
 
 Next:

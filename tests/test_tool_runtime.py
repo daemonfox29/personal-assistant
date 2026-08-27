@@ -137,7 +137,7 @@ class ToolRuntimeTests(unittest.TestCase):
         self.assertIs(result.status, ToolExecutionStatus.DENIED)
         self.assertEqual(calls, [])
 
-    def test_web_search_requires_query_from_current_user_message(self) -> None:
+    def test_web_search_ignores_model_query_and_uses_current_user_message(self) -> None:
         class SearchProvider:
             def __init__(self) -> None:
                 self.queries: list[str] = []
@@ -164,10 +164,10 @@ class ToolRuntimeTests(unittest.TestCase):
                 "Please search for the latest SearXNG release."
             ),
         )
-        refused = executor.execute(
+        model_injection_ignored = executor.execute(
             ModelToolCall.create(
                 "search_public_web",
-                {"query": "latest SearXNG release private memory value"},
+                {"query": {"private": "model memory value"}},
             ),
             uuid4(),
             execution_context=ToolExecutionContext(
@@ -176,12 +176,35 @@ class ToolRuntimeTests(unittest.TestCase):
         )
 
         self.assertIs(allowed.status, ToolExecutionStatus.SUCCEEDED)
-        self.assertIs(refused.status, ToolExecutionStatus.DENIED)
-        self.assertIn("exact contiguous phrase", refused.content)
-        self.assertNotIn("private memory value", refused.content)
-        self.assertEqual(provider.queries, ["latest SearXNG release"])
+        self.assertIs(model_injection_ignored.status, ToolExecutionStatus.SUCCEEDED)
+        self.assertEqual(
+            provider.queries,
+            [
+                "Please search for the latest SearXNG release.",
+                "Please search for the latest SearXNG release.",
+            ],
+        )
         self.assertFalse(executor.repeat_allowed("search_public_web"))
         self.assertTrue(executor.repeat_allowed("calculate"))
+
+    def test_web_search_rejects_unbounded_current_user_message(self) -> None:
+        class SearchProvider:
+            def search(self, query: str):
+                raise AssertionError(f"Search must not run for {query}")
+
+        executor = ToolExecutor(
+            default_tool_registry(web_search=SearchProvider()),
+            self.audit,
+        )
+
+        result = executor.execute(
+            ModelToolCall.create("search_public_web", {}),
+            uuid4(),
+            execution_context=ToolExecutionContext("x" * 257),
+        )
+
+        self.assertIs(result.status, ToolExecutionStatus.DENIED)
+        self.assertIn("bounded public query", result.content)
 
     def test_web_search_query_is_not_written_to_audit(self) -> None:
         class SearchProvider:
@@ -198,7 +221,7 @@ class ToolRuntimeTests(unittest.TestCase):
             self.audit,
         )
         executor.execute(
-            ModelToolCall.create("search_public_web", {"query": secret_query}),
+            ModelToolCall.create("search_public_web", {}),
             uuid4(),
             execution_context=ToolExecutionContext(secret_query),
         )
