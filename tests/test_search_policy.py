@@ -73,6 +73,24 @@ class SearchPolicyTests(unittest.TestCase):
         with self.assertRaises(SearchPolicyError):
             policy.plan_for("Check Google Scholar for synthetic evidence.")
 
+    def test_provider_override_does_not_persist_into_follow_up(self) -> None:
+        policy = QualitySearchPolicy()
+
+        first = policy.plan_for(
+            "Look up bipolar disorder on PubMed and summarize it."
+        )
+        follow_up = policy.plan_for(
+            "Is lamotrigine a typical treatment for it? What does it do?"
+        )
+
+        self.assertTrue(first.explicit)
+        self.assertEqual(first.sources, (SearchSource.PUBMED,))
+        self.assertFalse(follow_up.explicit)
+        self.assertEqual(
+            follow_up.sources,
+            (SearchSource.PUBMED, SearchSource.GOOGLE_SCHOLAR),
+        )
+
     def test_owner_enabled_subset_is_respected(self) -> None:
         policy = QualitySearchPolicy(
             (SearchSource.CROSSREF, SearchSource.ARXIV)

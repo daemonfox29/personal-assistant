@@ -355,10 +355,32 @@ class ConversationServiceTests(unittest.TestCase):
             "untrusted_web_search_results",
             model.requests[1].messages[-1].content,
         )
-        self.assertIn(
-            "https://example.test/current",
-            "".join(event.text for event in events),
+        visible = "".join(event.text for event in events)
+        self.assertIn("Source S1 — Example", visible)
+        self.assertNotIn("https://example.test/current", visible)
+
+    def test_search_urls_are_revealed_only_when_requested(self) -> None:
+        class LinkedAnswerModel:
+            def generate(self, request: ModelRequest) -> ModelResponse:
+                return ModelResponse("Current information [S1].")
+
+        service = ConversationService(
+            LinkedAnswerModel(),
+            tool_executor=ToolExecutor(
+                default_tool_registry(web_search=SearchProvider()),
+                InMemoryAuditSink(),
+            ),
         )
+
+        events = tuple(
+            service.events_for(
+                "Update me on current events today and include source links."
+            )
+        )
+
+        visible = "".join(event.text for event in events)
+        self.assertIn("Source S1 — Example", visible)
+        self.assertIn("https://example.test/current", visible)
 
     def test_model_search_query_is_not_used_as_outbound_data(self) -> None:
         class InjectingSearchModel:
@@ -454,7 +476,8 @@ class ConversationServiceTests(unittest.TestCase):
         self.assertEqual(model.requests[0].tools, ())
         answer = "".join(event.text for event in events)
         self.assertIn("synthesized", answer)
-        self.assertIn("https://example.test/current", answer)
+        self.assertIn("Source S1 — Example", answer)
+        self.assertNotIn("https://example.test/current", answer)
         self.assertIn(
             "Earlier conversation and saved context were omitted from this "
             "request to leave room for tool results.",
@@ -923,9 +946,7 @@ class ConversationServiceTests(unittest.TestCase):
                 self.requests.append(request)
                 if len(self.requests) == 1:
                     return ModelResponse("Useful draft without a citation.")
-                return ModelResponse(
-                    "Repaired grounded answer (https://example.test/current)."
-                )
+                return ModelResponse("Repaired grounded answer [S1].")
 
         model = RepairingModel()
         service = ConversationService(
@@ -943,6 +964,8 @@ class ConversationServiceTests(unittest.TestCase):
         self.assertNotIn("Useful draft", visible)
         self.assertIn("Correcting the source links", visible)
         self.assertIn("Repaired grounded answer", visible)
+        self.assertIn("Source S1 — Example", visible)
+        self.assertNotIn("https://example.test/current", visible)
         self.assertIn(
             ConversationEventKind.COMPLETED,
             tuple(event.kind for event in events),

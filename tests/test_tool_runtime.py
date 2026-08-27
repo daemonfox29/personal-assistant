@@ -265,6 +265,7 @@ class ToolRuntimeTests(unittest.TestCase):
         )
 
         self.assertIs(search.status, ToolExecutionStatus.SUCCEEDED)
+        self.assertIn('"citation_id":"S1"', search.content)
         self.assertIs(read.status, ToolExecutionStatus.SUCCEEDED)
         self.assertIs(stale.status, ToolExecutionStatus.FAILED)
         self.assertEqual(fetched, ["https://example.com/current"])

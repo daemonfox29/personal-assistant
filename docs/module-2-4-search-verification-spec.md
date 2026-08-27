@@ -14,8 +14,9 @@ papers, reports, authors, journals, and publishers that can be compared.
 - Prefer multiple distinct documents and primary or authoritative material when
   available. Do not count duplicated or syndicated reporting as independent
   corroboration merely because it has multiple URLs.
-- Associate factual claims with the exact current-result URLs that support them.
-  Omit or qualify details that the retrieved material does not support.
+- Associate factual claims with code-owned source IDs backed by exact
+  current-result URLs. Omit or qualify details that the retrieved material does
+  not support.
 - State material disagreement, date limitations, and cases where only one
   relevant document was available.
 - Treat a named search provider as a retrieval constraint, not as proof. An
@@ -41,10 +42,15 @@ or memory analysis.
 ## Deterministic citation boundary
 
 - Search-backed final answers are buffered until citation validation completes.
-- Every emitted HTTPS citation must exactly match a URL returned by the current
-  correlated search or page-read tool result.
-- At least one current evidence URL is required before an answer is presented as
-  search-grounded.
+- Code assigns bounded source IDs such as `S1`; the model may cite those IDs but
+  cannot define their destination.
+- Every cited ID and every emitted HTTPS URL must map to a URL returned by the
+  current correlated search or page-read tool result.
+- At least one current evidence source is required before an answer is presented
+  as search-grounded.
+- The default rendering contains a readable source name without an active URL.
+  Exact validated URLs appear only when the current user message asks for links,
+  URLs, or web addresses.
 - If validation fails, the unverified draft is not presented as a verified
   answer. A fixed notice asks the owner to retry or refine the request.
 - Deterministic validation checks provenance, not semantic truth. The model is
@@ -70,6 +76,8 @@ or memory analysis.
   without a second model pass.
 - An explicit Scholar-only request remains one provider while up to three
   separate Scholar results are available for comparison.
+- A named provider applies only to that current message. A follow-up that does
+  not name a provider returns to automatic quality routing.
 - Explicit double-check wording produces exactly one additional model pass and
   exposes only the reviewed answer.
 - Unknown or missing citations fail closed with a fixed notice.

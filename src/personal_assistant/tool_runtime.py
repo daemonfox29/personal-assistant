@@ -570,7 +570,15 @@ def default_tool_registry(
     def search_web(arguments: Mapping[str, object]) -> Mapping[str, object]:
         if web_search is None:
             raise ToolRuntimeError("Web search is unavailable.")
-        result = web_search.search(str(arguments["query"]))
+        result = dict(web_search.search(str(arguments["query"])))
+        raw_results = result.get("results")
+        if isinstance(raw_results, list):
+            result["results"] = [
+                {**item, "citation_id": f"S{index}"}
+                if isinstance(item, dict)
+                else item
+                for index, item in enumerate(raw_results, start=1)
+            ]
         if reading_session is not None:
             reading_session.remember(UUID(str(arguments["_request_id"])), result)
         return result

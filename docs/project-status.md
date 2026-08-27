@@ -244,18 +244,28 @@ Completed:
 - Added one bounded citation-repair pass for an otherwise successful search
   whose first model draft omits or alters current-result links. Failed repair
   still fails closed, and explicit evidence review never triggers a third pass.
+- Replaced model-authored visible URLs with code-owned source IDs. Search answers
+  now show readable source names by default and expose exact validated URLs only
+  when the current message asks for links, URLs, or web addresses.
+- Confirmed that provider selection is message-scoped: an explicit PubMed
+  request does not pin a later unnamed treatment follow-up to PubMed-only
+  routing.
 
 Verification:
 
-- All source and test modules compiled, repository whitespace checks passed,
-  and 451 local tests passed in 13.630 seconds with one intentionally opt-in
-  benchmark skipped.
+- All source and test modules compiled, the dependency lock and repository
+  whitespace checks passed, and 458 local tests passed in 13.604 seconds with
+  one intentionally opt-in benchmark skipped.
 - A real Google Scholar-only double-check compared current evidence and produced
   a completed reviewed answer with three exact citations from distinct papers.
   Managed close stopped the dedicated Colima profile afterward.
 - The exact reported `/long look up ... on pubmed, and ...` request then passed
   end to end, returned a completed high-level answer, and included three exact
   current PubMed-route citations.
+- A real follow-up, `Is lamotrigine a typical treatment for it? What does it
+  do?`, completed through automatic health routing, synthesized the retrieved
+  material, displayed source names with zero visible URLs, emitted no failure
+  notice, and stopped the dedicated search VM on close.
 
 Next:
 
