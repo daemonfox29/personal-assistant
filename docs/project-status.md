@@ -105,7 +105,7 @@ This document is the handoff point between coding sessions. At the end of each s
   helper functions and database attachment through a connection authorizer,
   and emits content-free database-open audit events. It has been tested only
   with synthetic data.
-- The encrypted schema is built from 20 fixed, packaged, single-statement SQL
+- The encrypted schema is built from 24 fixed, packaged, single-statement SQL
   migrations. Exact SHA-256 history is stored in the database; missing,
   duplicate, reordered, changed, unknown, or untracked history fails closed.
   The entire pending migration batch commits atomically or rolls back.
@@ -161,14 +161,18 @@ complete; the batched Linux pull-request check is its final platform gate.
 - [x] Module 1.5 owner controls: add a compact native memory inventory, exact
   source navigation for newly linked chat memories, and audited soft deletion
   without exposing authority objects to widgets.
-- [x] Module 1.5 owner controls: add bounded native candidate review with edit,
-  confirm, reject, conflict comparison, atomic correction, dated successors,
-  stale-write protection, and exact protected-memory passcode approvals.
-- [ ] Module 1.5 owner controls: add pagination, a real named-scope registry for
-  contextual exceptions, backup/restore, and bounded audit viewing.
-- [ ] Module 1.5 release gates: package and sign the macOS app, complete
-  accessibility review, and verify packaged recovery and shutdown. Keep Windows
-  packaging and runtime verification as a required later gate.
+- [x] Module 1.5 reconciliation engine: add bounded review values, edit,
+  confirmation, rejection, conflict comparison, atomic correction, dated
+  successors, stale-write protection, and exact protected-memory approvals.
+- [x] Module 1.5 contextual memory: add an encrypted named-scope registry,
+  conservative explicit phrase recognition, and deterministic scoped retrieval.
+- [ ] Module 1.5 owner controls: redesign the deferred Memory Review experience,
+  add pagination, backup/restore, and bounded audit viewing.
+- [ ] Module 1.5 usability gate: complete native acceptance and accessibility
+  review before release packaging.
+- [ ] Deferred release gate: package and sign the macOS app and verify packaged
+  recovery and shutdown. Keep Windows packaging and runtime verification as a
+  required later gate.
 - [ ] Define the assistant's first tool registry and permission-enforcement path before adding any tool.
 - [ ] Add a web/search tool only behind the tool registry and approval layer.
 
@@ -194,17 +198,19 @@ Completed:
   bounded, validated, encrypted, append-only revisioned, content-free audited,
   and applied immediately to subsequent replies through a style-only system-data
   envelope that cannot grant authority or weaken safety rules.
-- Added a dedicated Memory Review screen for the quarantined proposal ledger.
-  It supports editable confirmation, recoverable rejection, related-current-
-  memory comparison, atomic global correction, and dated change-over-time
-  reconciliation with explicit previews and optimistic concurrency.
+- Preserved the tested candidate-reconciliation engine but removed its first
+  dense Memory Review page from active Settings navigation. A simpler redesign
+  is recorded in future features and should be informed by actual suggestion-
+  review value rather than presenting every lifecycle choice immediately.
 - Protected candidate values remain redacted until passcode-backed review.
   Protected decisions bind approval to the exact decision, content digest,
   record versions, target, and effective date; widgets never receive approval
   receipts or authority objects.
-- Kept contextual exceptions honest: the UI states that they remain tentative
-  until a named-scope registry and deterministic resolver exist, rather than
-  storing a decorative label that retrieval cannot enforce.
+- Added encrypted named contextual scopes for explicit phrases such as `At
+  work, ...`, `For project Apollo, ...`, and `When discussing family plans,
+  ...`. Complete-label matching activates them during retrieval; outside that
+  context they remain excluded. Ambiguous phrasing stays global rather than
+  letting the model invent a scope.
 - Linked newly created chat-derived memories to the exact opaque encrypted user
   message ID. View source resolves the ID directly, opens the correct saved
   conversation, and highlights the exact sequence even when text is duplicated.
@@ -215,14 +221,13 @@ Completed:
   inferred, deleted, and imported sources are never guessed.
 - Kept memory deletion recoverable: the row leaves ordinary retrieval while its
   revision history and content-free audit event remain.
-- Verified all 345 local tests under the locked `uv` environment; one opt-in
+- Verified all 352 local tests under the locked `uv` environment; one opt-in
   performance test remained skipped.
 
 Next:
 
-- Add native pagination beyond the initial newest-100 inventory, a named-scope
-  registry for enforceable contextual exceptions, backup/restore, and bounded
-  audit viewing.
+- Add native pagination beyond the initial newest-100 inventory, backup/restore,
+  and bounded audit viewing. Keep the Memory Review redesign deferred.
 - Run a native manual check that creates a new fact, opens its source, deletes
   its chat, and verifies the unavailable-source message.
 

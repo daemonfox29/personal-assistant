@@ -31,6 +31,7 @@ from personal_assistant.memory_repository import (
     MemoryRecord,
     MemoryRepository,
 )
+from personal_assistant.memory_scopes import detect_explicit_named_scope
 from personal_assistant.memory_types import (
     ActorType,
     FactPayload,
@@ -46,6 +47,7 @@ from personal_assistant.memory_types import (
     RecordDraft,
     RecordStatus,
     Scope,
+    ScopeType,
     Sensitivity,
     SourceType,
     canonical_json,
@@ -209,6 +211,22 @@ class MemoryCaptureCoordinator:
         self._audit_sink = audit_sink
         self._candidates_per_source = candidates_per_source
         self._lock = Lock()
+
+    def scope_for_explicit_statement(
+        self,
+        statement: str,
+        correlation_id: UUID,
+    ) -> Scope:
+        """Resolve only an explicit code-recognized context; otherwise global."""
+
+        detected = detect_explicit_named_scope(statement)
+        if detected is None:
+            return Scope(ScopeType.GLOBAL)
+        return self._repository.resolve_named_scope(
+            detected.scope_type,
+            detected.display_label,
+            correlation_id,
+        )
 
     def remember_explicitly(
         self,

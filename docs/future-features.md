@@ -66,6 +66,16 @@ pull-request workflow does not spend the limited Actions budget on an unused
 platform. Treat Windows support as unverified until this gate passes; package
 availability alone is not proof of runtime compatibility.
 
+## Signed macOS packaging
+
+Defer the self-contained, signed, and notarized macOS application package until
+the owner-facing UI and accessibility review are stable. The current native
+development launcher should continue opening the live checkout in the meantime.
+Before release, verify clean installation, protected Keychain enrollment, Touch
+ID and Mac-login-password fallback, recovery, database migration, graceful
+shutdown persistence, code signing, notarization, and an uninstall path that
+does not silently destroy the encrypted database or backups.
+
 ## Reassess the Python dependency workflow
 
 At a later maintenance milestone, reassess whether `uv` is still the right
@@ -81,6 +91,15 @@ pinning, package-hash verification, clean-environment testing, and a documented
 rollback path.
 
 ## Memory, privacy, and backup settings interface
+
+Revisit and redesign the native Memory Review page after automatic suggestions
+have demonstrated enough practical value. The first dense candidate/reconciliation
+screen was intentionally removed from active Settings navigation because its
+complexity outweighed its current usefulness. Preserve the tested encrypted
+candidate, revision, correction, dated-successor, stale-write, and protected-
+approval engine underneath; later UI work should begin from actual review usage
+and prioritize a simpler, calmer decision flow rather than exposing every
+lifecycle choice at once.
 
 Add a non-technical configuration interface for persistent memory after the
 Module 1 data boundary is implemented. It should let the user:

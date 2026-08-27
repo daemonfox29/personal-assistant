@@ -96,21 +96,28 @@ The first usable slice includes:
    Each row shows the saved value, kind, status, update date, source navigation,
    and audited soft-delete control through immutable application-service values.
 
-The native Memory Review panel exposes a bounded candidate inbox through
-immutable application-service values. Normal and personal suggestions may be
-edited, confirmed, rejected, compared with related confirmed memories, applied
-as an explicit correction, or recorded as a dated successor. Corrections and
-dated changes update both records atomically, preserve revision history, reject
-stale row versions, and require a before/after preview. Sensitive and restricted
-content remains redacted until exact passcode-backed review; its confirmation
-receipt is bound to the decision, edited-content digest, target, versions, and
-effective date. Widgets never receive receipts or approval authority.
+The encrypted candidate-reconciliation engine supports bounded review values,
+editable confirmation, rejection, conflict comparison, atomic correction,
+dated successors, stale-write protection, and exact protected-memory approval.
+The first dense native review page was removed from active Settings navigation
+pending a later, simpler redesign based on demonstrated usage. Its tested engine
+remains available behind the application-service boundary; widgets never receive
+receipts or approval authority.
 
-A context-specific exception remains tentative until the project has a named
-scope registry and deterministic request-to-scope resolver. A free-form label is
-not presented as an enforceable scope. Backup/restore, pagination beyond the
-initial bounded inventories, and the bounded audit viewer follow as additional
-panels over service methods. They must not expose repository objects to widgets.
+Named contextual scopes are enforceable for conservative owner-authored phrases
+such as `At work, ...`, `For project Apollo, ...`, and `When discussing family
+plans, ...`. The encrypted registry assigns opaque identifiers to short validated
+labels. Capture uses a non-global scope only when a code-owned pattern detects
+an explicit leading context and comma boundary; it never asks the model to infer
+one. Retrieval activates a topic or project scope only when its complete label
+appears in the current request. Generic place labels such as `work` additionally
+require an `at`, `in`, or `for` context cue, so a question like “how does this
+work?” cannot retrieve workplace memory. Global memory still applies normally,
+while scoped memory remains excluded outside its named context.
+
+Backup/restore, pagination beyond the initial bounded inventories, the bounded
+audit viewer, and a redesigned review experience follow as additional panels
+over service methods. They must not expose repository objects to widgets.
 
 Communication style is applied immediately to subsequent replies across all
 chats, including Private Chat, because it is a global owner preference rather

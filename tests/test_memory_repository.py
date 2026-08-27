@@ -222,6 +222,44 @@ class MemoryRepositoryTests(unittest.TestCase):
         with self.assertRaisesRegex(MemoryValidationError, "candidates only"):
             self.repository.create_record(self._fact(), self._model(), uuid4())
 
+    def test_named_scopes_persist_and_match_only_complete_query_phrases(self) -> None:
+        first = self.repository.resolve_named_scope(
+            ScopeType.PROJECT,
+            "Apollo",
+            uuid4(),
+        )
+        repeated = self.repository.resolve_named_scope(
+            ScopeType.PROJECT,
+            "apollo",
+            uuid4(),
+        )
+
+        self.assertEqual(first, repeated)
+        self.assertEqual(
+            self.repository.match_named_scopes(
+                "What did we decide for Apollo?",
+                uuid4(),
+            ),
+            (first,),
+        )
+        self.assertEqual(
+            self.repository.match_named_scopes("Apollonia", uuid4()),
+            (),
+        )
+        work = self.repository.resolve_named_scope(
+            ScopeType.PLACE,
+            "work",
+            uuid4(),
+        )
+        self.assertEqual(
+            self.repository.match_named_scopes("How does this work?", uuid4()),
+            (),
+        )
+        self.assertEqual(
+            self.repository.match_named_scopes("What do I prefer at work?", uuid4()),
+            (work,),
+        )
+
     def test_model_candidate_cannot_revise_confirmed_memory(self) -> None:
         record = self.repository.create_record(
             self._fact(), self._explicit(), uuid4()

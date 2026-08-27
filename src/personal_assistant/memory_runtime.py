@@ -29,6 +29,10 @@ from personal_assistant.memory_capture import (
 )
 from personal_assistant.memory_context import RepositoryMemoryContextProvider
 from personal_assistant.memory_repository import MemoryRecord, MemoryRepository
+from personal_assistant.memory_scopes import (
+    detect_explicit_named_scope,
+    named_scope_needs_clarification,
+)
 from personal_assistant.retrieval_language import safe_topic_labels
 from personal_assistant.memory_types import (
     ActorType,
@@ -185,14 +189,30 @@ class MemoryRuntime:
         normalized = " ".join(content.split())
         if not normalized:
             return "Usage: /remember <information to remember>"
+        if named_scope_needs_clarification(normalized):
+            return (
+                "Memory needs clarification: the statement appears contextual. "
+                "State the context first, such as ‘At work, ...’, so it is not "
+                "saved as a global fact."
+            )
         subject = normalized[:256]
         try:
+            detected_scope = detect_explicit_named_scope(normalized)
+            scope = (
+                Scope(ScopeType.GLOBAL)
+                if detected_scope is None
+                else self.repository.resolve_named_scope(
+                    detected_scope.scope_type,
+                    detected_scope.display_label,
+                    correlation_id,
+                )
+            )
             result = self.capture.remember_explicitly(
                 ExplicitMemoryRequest(
                     FactPayload(subject, normalized),
                     Sensitivity.NORMAL,
                     MentionPolicy.MAY_MENTION_WHEN_RELEVANT,
-                    Scope(ScopeType.GLOBAL),
+                    scope,
                     source_ref or f"turn:{correlation_id}",
                 ),
                 correlation_id,

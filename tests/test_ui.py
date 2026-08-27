@@ -199,13 +199,13 @@ class NativeUiTests(unittest.TestCase):
             "Be warm and use plain language.",
             persistent=True,
         )
-        page._section_list.setCurrentRow(2)
+        page._section_list.setCurrentRow(1)
 
         page._communication_save.click()
 
         self.assertEqual(saved, ["Be warm and use plain language."])
         self.assertEqual(page._section_pages.currentIndex(), 2)
-        self.assertEqual(page._section_list.count(), 4)
+        self.assertEqual(page._section_list.count(), 3)
         page._communication_style.setPlainText("x" * 2_001)
         self.assertFalse(page._communication_save.isEnabled())
 

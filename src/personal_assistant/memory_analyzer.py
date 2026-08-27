@@ -1,6 +1,6 @@
 """Bounded analysis of candidates and exact low-risk user evidence."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 import json
 import re
@@ -29,6 +29,7 @@ from personal_assistant.memory_capture import (
 from personal_assistant.memory_evidence import (
     is_standalone_direct_memory_statement,
 )
+from personal_assistant.memory_scopes import named_scope_needs_clarification
 from personal_assistant.memory_types import (
     FactPayload,
     InsightConfidence,
@@ -517,6 +518,14 @@ class PostResponseMemoryWorker:
         correlation_id = correlation_id or uuid4()
         source_ref = source_ref or f"turn:{correlation_id}"
         clear_statements = clear_direct_memory_statements(user_text)
+        ambiguous_context = tuple(
+            sentence
+            for sentence in clear_statements
+            if named_scope_needs_clarification(sentence)
+        )
+        clear_statements = tuple(
+            sentence for sentence in clear_statements if sentence not in ambiguous_context
+        )
         uncertain_statements = tuple(
             sentence
             for sentence in selected
@@ -527,7 +536,18 @@ class PostResponseMemoryWorker:
             for sentence in selected
             if sentence not in clear_statements
             and sentence not in uncertain_statements
+            and sentence not in ambiguous_context
         )
+        if ambiguous_context:
+            return (
+                _memory_notice(
+                    "Memory needs clarification",
+                    user_text,
+                    "contextual preference",
+                    "The statement appears context-specific. State the context "
+                    "first, such as ‘At work, ...’, so I do not save it globally.",
+                ),
+            )
         if not clear_statements and not review_statements:
             return (
                 _memory_notice(
@@ -544,7 +564,10 @@ class PostResponseMemoryWorker:
                     FactPayload("direct user statement", sentence),
                     Sensitivity.NORMAL,
                     MentionPolicy.MAY_MENTION_WHEN_RELEVANT,
-                    Scope(ScopeType.GLOBAL),
+                    self._coordinator.scope_for_explicit_statement(
+                        sentence,
+                        correlation_id,
+                    ),
                     source_ref,
                     "deterministic-direct-v1",
                     sentence,
@@ -560,6 +583,18 @@ class PostResponseMemoryWorker:
                 )
                 if review_statements
                 else ()
+            )
+            analyzed_suggestions = tuple(
+                replace(
+                    suggestion,
+                    scope=self._coordinator.scope_for_explicit_statement(
+                        suggestion.user_evidence,
+                        correlation_id,
+                    ),
+                )
+                if suggestion.user_evidence is not None
+                else suggestion
+                for suggestion in analyzed_suggestions
             )
             suggestions = (
                 direct_suggestions + analyzed_suggestions

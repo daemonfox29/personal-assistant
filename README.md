@@ -83,6 +83,13 @@ quarantined candidate path. Confirmed personal memories have standing owner
 approval for relevant ordinary use, so the assistant does not repeatedly ask
 whether it may check memory. Direct-only, never-mention, restricted, and
 unconfirmed records retain their stronger exclusions.
+Explicit leading context phrases can create narrower named memory instead of a
+global fact. For example, `At work, I prefer quiet focus time.` and `For project
+Apollo, I prefer concise updates.` create encrypted opaque scopes only because
+their wording matches conservative code-owned patterns. That memory is retrieved
+when the complete scope label appears in a later request and remains excluded
+outside that context. Generic place labels such as `work` also require an `at`,
+`in`, or `for` cue; the model cannot infer or invent a scope.
 The post-response analyzer may also retain a low-risk, expiring **tentative
 observation** when a statement seems useful but may be situational rather than a
 global fact. Relevant observations are sent to the model in a separate labeled

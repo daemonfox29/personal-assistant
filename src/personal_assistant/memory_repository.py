@@ -27,6 +27,13 @@ from personal_assistant.memory_evidence import (
     is_standalone_direct_memory_statement,
     memory_payload_equivalence_key,
 )
+from personal_assistant.memory_scopes import (
+    MAX_MATCHED_SCOPES,
+    MAX_NAMED_SCOPES,
+    normalize_scope_label,
+    normalize_scope_query,
+    validate_scope_label,
+)
 from personal_assistant.encrypted_database import EncryptedConnectionProvider
 from personal_assistant.memory_types import (
     ActorType,
@@ -565,6 +572,97 @@ class MemoryRepository:
                 return tuple(
                     self._load_record(connection, UUID(row[0])) for row in rows
                 )
+
+    def resolve_named_scope(
+        self,
+        scope_type: ScopeType,
+        display_label: str,
+        correlation_id: UUID,
+    ) -> Scope:
+        """Return one persistent opaque scope for an explicit owner label."""
+
+        if scope_type not in {ScopeType.TOPIC, ScopeType.PROJECT, ScopeType.PLACE}:
+            raise MemoryValidationError("Named memory scope type is invalid.")
+        label = validate_scope_label(display_label)
+        normalized = normalize_scope_label(label)
+        with self._audited(
+            correlation_id,
+            AuditOperation.REPOSITORY_WRITE,
+            "named_scope_resolve",
+        ):
+            with self._connection_provider.connect(correlation_id) as connection:
+                with self._transaction(connection):
+                    row = connection.execute(
+                        "SELECT scope_id FROM named_memory_scopes "
+                        "WHERE scope_type = ? AND normalized_label = ?",
+                        (scope_type.value, normalized),
+                    ).fetchone()
+                    if row is not None:
+                        return Scope(scope_type, UUID(row[0]))
+                    count = connection.execute(
+                        "SELECT count(*) FROM named_memory_scopes"
+                    ).fetchone()[0]
+                    if (
+                        isinstance(count, bool)
+                        or not isinstance(count, int)
+                        or count < 0
+                        or count >= MAX_NAMED_SCOPES
+                    ):
+                        raise MemoryValidationError(
+                            "The named memory scope limit was reached."
+                        )
+                    scope_id = self._new_id()
+                    connection.execute(
+                        "INSERT INTO named_memory_scopes "
+                        "(scope_id, scope_type, normalized_label, display_label, "
+                        "created_at) VALUES (?, ?, ?, ?, ?)",
+                        (
+                            str(scope_id),
+                            scope_type.value,
+                            normalized,
+                            label,
+                            self._now().isoformat(),
+                        ),
+                    )
+                    return Scope(scope_type, scope_id)
+
+    def match_named_scopes(
+        self,
+        query: str,
+        correlation_id: UUID,
+        *,
+        limit: int = MAX_MATCHED_SCOPES,
+    ) -> tuple[Scope, ...]:
+        """Match stored labels as complete phrases in one bounded query."""
+
+        if (
+            isinstance(limit, bool)
+            or not isinstance(limit, int)
+            or not 1 <= limit <= MAX_MATCHED_SCOPES
+        ):
+            raise MemoryValidationError("Named scope match limit is invalid.")
+        normalized = normalize_scope_query(query)
+        if not normalized:
+            return ()
+        with self._audited(
+            correlation_id,
+            AuditOperation.REPOSITORY_READ,
+            "named_scope_match",
+            item_count=limit,
+        ):
+            with self._connection_provider.connect(correlation_id) as connection:
+                rows = connection.execute(
+                    "SELECT scope_id, scope_type FROM named_memory_scopes "
+                    "WHERE (scope_type = 'place' AND ("
+                    "instr(' ' || ? || ' ', ' at ' || normalized_label || ' ') > 0 "
+                    "OR instr(' ' || ? || ' ', ' in ' || normalized_label || ' ') > 0 "
+                    "OR instr(' ' || ? || ' ', ' for ' || normalized_label || ' ') > 0"
+                    ")) OR (scope_type IN ('topic', 'project') AND "
+                    "instr(' ' || ? || ' ', ' ' || normalized_label || ' ') > 0) "
+                    "ORDER BY length(normalized_label) DESC, scope_id LIMIT ?",
+                    (normalized, normalized, normalized, normalized, limit),
+                ).fetchall()
+        return tuple(Scope(ScopeType(row[1]), UUID(row[0])) for row in rows)
 
     def find_capture_neighbors(
         self,

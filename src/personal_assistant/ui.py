@@ -308,14 +308,11 @@ class SettingsPage(QWidget):
         )
         memory_section = QListWidgetItem("Memory")
         memory_section.setData(Qt.ItemDataRole.UserRole, 0)
-        review_section = QListWidgetItem("Memory review")
-        review_section.setData(Qt.ItemDataRole.UserRole, 1)
         communication_section = QListWidgetItem("Communication style")
         communication_section.setData(Qt.ItemDataRole.UserRole, 2)
         model_section = QListWidgetItem("Model & appearance")
         model_section.setData(Qt.ItemDataRole.UserRole, 3)
         self._section_list.addItem(memory_section)
-        self._section_list.addItem(review_section)
         self._section_list.addItem(communication_section)
         self._section_list.addItem(model_section)
         navigation_layout.addWidget(self._section_list, 1)
@@ -1880,9 +1877,6 @@ class AssistantWindow(QMainWindow):
             )
             try:
                 self._settings.set_memories(self._service.list_memories())
-                self._settings.set_memory_candidates(
-                    self._service.list_memory_candidates()
-                )
             except ApplicationOpenError as error:
                 self._show_safe_error(str(error))
                 return

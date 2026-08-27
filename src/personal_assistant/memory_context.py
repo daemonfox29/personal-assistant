@@ -73,16 +73,21 @@ class RepositoryMemoryContextProvider:
                 # memory in ordinary chat. Direct-only and never-mention records
                 # remain excluded by repository policy.
                 mode = RetrievalMode.APPROVED
+        except MemoryValidationError:
+            return None
+        try:
+            scopes = self.repository.match_named_scopes(
+                user_text,
+                correlation_id,
+            )
             request = RetrievalRequest(
                 query,
+                scopes=scopes,
                 mode=mode,
                 max_records=self.max_records,
                 token_limit=self.token_limit,
                 include_tentative_observations=True,
             )
-        except MemoryValidationError:
-            return None
-        try:
             result = self.repository.retrieve(
                 request,
                 correlation_id,

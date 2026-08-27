@@ -40,6 +40,54 @@ class SyntheticKeyProvider:
 
 
 class MemoryContextTests(unittest.TestCase):
+    def test_named_scope_is_resolved_from_query_before_retrieval(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            path = Path(temporary_directory) / "memory.db"
+            audit = InMemoryAuditSink()
+            database = self._database(path, audit)
+            MigrationRunner(
+                connection_provider=database,
+                migration_source=PackageMigrationSource(),
+                audit_sink=audit,
+            ).migrate(uuid4())
+            repository = MemoryRepository(
+                connection_provider=database,
+                audit_sink=audit,
+            )
+            work_scope = repository.resolve_named_scope(
+                ScopeType.PLACE,
+                "work",
+                uuid4(),
+            )
+            repository.create_record(
+                RecordDraft(
+                    FactPayload(
+                        "synthetic work preference",
+                        "At work, I prefer synthetic quiet time.",
+                    ),
+                    RecordStatus.CONFIRMED,
+                    Sensitivity.NORMAL,
+                    MentionPolicy.MAY_MENTION_WHEN_RELEVANT,
+                    work_scope,
+                ),
+                self._provenance(SourceType.EXPLICIT_USER),
+                uuid4(),
+            )
+            provider = RepositoryMemoryContextProvider(repository)
+
+            outside = provider.context_for(
+                "What are my synthetic quiet preferences?",
+                uuid4(),
+            )
+            inside = provider.context_for(
+                "At work, what are my synthetic quiet preferences?",
+                uuid4(),
+            )
+
+            self.assertIsNone(outside)
+            self.assertIsNotNone(inside)
+            self.assertIn("synthetic quiet time", inside)
+
     def test_confirmed_memory_survives_restart_candidate_stays_hidden(self) -> None:
         with TemporaryDirectory() as temporary_directory:
             path = Path(temporary_directory) / "memory.db"

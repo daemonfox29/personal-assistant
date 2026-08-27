@@ -600,6 +600,75 @@ class MemoryAnalyzerTests(unittest.TestCase):
         self.assertIn("Memory updated:", notices[0])
         self.assertEqual(len(recalled.memories), 1)
 
+    def test_clear_context_phrase_creates_scope_and_retrieves_only_in_context(self) -> None:
+        class EmptyAnalyzer:
+            @staticmethod
+            def analyze(user_text, assistant_text, source_ref, correlation_id):
+                return ()
+
+        worker = PostResponseMemoryWorker(
+            EmptyAnalyzer(),
+            self.coordinator,
+            audit_sink=self.audit,
+        )
+
+        notices = worker.capture_before_response(
+            "At work, I prefer synthetic quiet time."
+        )
+        outside = self.repository.retrieve(
+            RetrievalRequest(
+                "synthetic quiet time",
+                mode=RetrievalMode.APPROVED,
+            ),
+            uuid4(),
+        )
+        scopes = self.repository.match_named_scopes(
+            "At work, what do I prefer about synthetic quiet time?",
+            uuid4(),
+        )
+        inside = self.repository.retrieve(
+            RetrievalRequest(
+                "synthetic quiet time",
+                scopes=scopes,
+                mode=RetrievalMode.APPROVED,
+            ),
+            uuid4(),
+        )
+        worker.close()
+
+        self.assertIsNotNone(notices)
+        self.assertEqual(outside.memories, ())
+        self.assertEqual(len(scopes), 1)
+        self.assertEqual(len(inside.memories), 1)
+
+    def test_ambiguous_context_is_not_silently_saved_as_global(self) -> None:
+        class EmptyAnalyzer:
+            @staticmethod
+            def analyze(user_text, assistant_text, source_ref, correlation_id):
+                return ()
+
+        worker = PostResponseMemoryWorker(
+            EmptyAnalyzer(),
+            self.coordinator,
+            audit_sink=self.audit,
+        )
+
+        notices = worker.capture_before_response(
+            "I prefer synthetic quiet time when I am at work."
+        )
+        recalled = self.repository.retrieve(
+            RetrievalRequest(
+                "synthetic quiet time",
+                mode=RetrievalMode.APPROVED,
+            ),
+            uuid4(),
+        )
+        worker.close()
+
+        self.assertIsNotNone(notices)
+        self.assertIn("context-specific", notices[0])
+        self.assertEqual(recalled.memories, ())
+
     def test_worker_promotes_only_exact_direct_user_evidence(self) -> None:
         completed = Event()
         user_text = "My name is Synthetic Worker Person."
