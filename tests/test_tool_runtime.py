@@ -232,6 +232,30 @@ class ToolRuntimeTests(unittest.TestCase):
 
         self.assertEqual(calls, [])
 
+    def test_web_search_failure_names_local_service_without_leaking_error(self) -> None:
+        class FailingSearchProvider:
+            def search(self, query: str):
+                raise RuntimeError(f"private failure for {query}")
+
+        executor = ToolExecutor(
+            default_tool_registry(web_search=FailingSearchProvider()),
+            self.audit,
+        )
+        result = executor.execute(
+            ModelToolCall.create("search_public_web", {"query": "current weather"}),
+            uuid4(),
+            execution_context=ToolExecutionContext("What is the current weather?"),
+        )
+
+        self.assertIs(result.status, ToolExecutionStatus.FAILED)
+        document = json.loads(result.content)
+        self.assertEqual(
+            document["data"]["message"],
+            "The local web-search service is unavailable or returned an invalid "
+            "response.",
+        )
+        self.assertNotIn("private failure", result.content)
+
     def test_audit_events_exclude_arguments_results_and_exception_text(self) -> None:
         secret_number = 987_654_321
         self.executor.execute(

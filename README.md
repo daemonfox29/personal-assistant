@@ -45,10 +45,17 @@ The assistant can search only when the reviewed SearXNG service in
 published only on `127.0.0.1:8888`, uses no paid API key, and has no access to
 assistant memory, conversations, databases, model state, or credentials.
 
+For public factual questions, the model is instructed to search automatically
+when it is uncertain or the answer may have changed. The user does not need to
+say "search the web" or approve each query. Casual conversation, creative work,
+private-memory questions, and facts already supplied by trusted context should
+not trigger public search.
+
 SearXNG requires a container runtime such as Docker or Podman. It is not bundled
 into the Python process and is not currently installed automatically. If the
 service is absent, search fails safely while chat, memory, time, and calculator
-features continue normally. The checked-in deployment guide explains the
+features continue normally, and the tool reports that the local search service
+is unavailable instead of presenting a generic retrieval failure. The checked-in deployment guide explains the
 current manual setup; native setup and service-health controls remain future UI
 work.
 

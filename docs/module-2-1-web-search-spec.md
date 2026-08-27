@@ -67,6 +67,14 @@ enablement of this narrow search action. Under the user-derived-query rule,
 memory-derived searches, or adding any other destination requires a new review
 and trusted per-action approval design.
 
+The model should propose search automatically, without asking for permission or
+requiring explicit search phrasing, when a public factual question depends on
+information it does not know confidently or that may have changed. It should
+not search casual conversation, creative work, private-memory questions, or
+facts already established by trusted context. This is a model decision inside
+the deterministic authority boundary: every proposed query still must pass the
+current-user substring rule before any request can leave the process.
+
 ## Inputs and outputs
 
 Input is exactly one `query` string containing 2 to 256 Unicode characters after

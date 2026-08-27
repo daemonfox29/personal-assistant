@@ -100,6 +100,7 @@ class RegisteredTool:
     handler: ToolHandler
     context_validator: ToolContextValidator | None = None
     repeat_allowed: bool = True
+    failure_message: str = "The tool could not complete safely."
 
     def __post_init__(self) -> None:
         if not isinstance(self.definition, ModelToolDefinition):
@@ -114,6 +115,12 @@ class RegisteredTool:
             raise TypeError("A registered tool context validator must be callable.")
         if not isinstance(self.repeat_allowed, bool):
             raise TypeError("A registered tool repeat policy must be a boolean.")
+        if (
+            not isinstance(self.failure_message, str)
+            or not self.failure_message
+            or len(self.failure_message) > 200
+        ):
+            raise TypeError("A registered tool failure message must be bounded text.")
 
 
 class ToolRegistry:
@@ -255,7 +262,7 @@ class ToolExecutor:
             return self._fixed_result(
                 tool.definition.name,
                 ToolExecutionStatus.FAILED,
-                "The tool could not complete safely.",
+                tool.failure_message,
             )
         self._audit(
             correlation_id,
@@ -498,6 +505,10 @@ def default_tool_registry(
                 search_web,
                 context_validator=validate_web_search_context,
                 repeat_allowed=False,
+                failure_message=(
+                    "The local web-search service is unavailable or returned an "
+                    "invalid response."
+                ),
             )
         )
     return ToolRegistry(tuple(tools))

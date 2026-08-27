@@ -320,11 +320,17 @@ class ConversationServiceTests(unittest.TestCase):
             ),
         )
 
-        events = tuple(
-            service.events_for("Please search for the latest SearXNG release.")
-        )
+        events = tuple(service.events_for("What is the latest SearXNG release?"))
 
         self.assertEqual(provider.queries, ["latest SearXNG release"])
+        self.assertIn(
+            "Automatically use public web search",
+            model.requests[0].messages[0].content,
+        )
+        self.assertIn(
+            "without asking permission",
+            model.requests[0].messages[0].content,
+        )
         self.assertIn(
             "untrusted_web_search_results",
             model.requests[1].messages[-1].content,
