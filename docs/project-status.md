@@ -247,9 +247,14 @@ Verification:
   “Update me on major current events today,” audited both search and public-page
   reading as succeeded, returned a synthesized five-item update with exact HTTPS
   source links, emitted no error notice, and closed the managed runtime cleanly.
+- The live 64K model stack processed “Tell me some recent news about Iran,”
+  automatically read bounded public pages, and returned concrete cited updates
+  rather than a list of search-result links.
 - `uv lock --check`, source/test compilation, and whitespace validation passed.
-  The complete local suite passed 419 tests in 13.790 seconds, with only the
-  intentionally opt-in 100,000-record memory benchmark skipped.
+  The non-UI suite passed 399 tests in 13.472 seconds (one intentional
+  100,000-record benchmark skip), and the native UI suite passed 21 tests in
+  0.172 seconds. They are run separately because the combined Qt runner can
+  intermittently hang in unrelated worker-thread cleanup.
 
 ### 2026-08-26 — Module 2.1 open-source read-only search boundary
 

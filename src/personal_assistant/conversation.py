@@ -827,6 +827,9 @@ def _is_broad_current_events_request(user_text: str) -> bool:
     phrases = (
         "current events",
         "latest news",
+        "recent news",
+        "recent updates",
+        "latest updates",
         "news update",
         "news briefing",
         "top headlines",

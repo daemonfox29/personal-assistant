@@ -10,6 +10,7 @@ from personal_assistant.audit import InMemoryAuditSink
 from personal_assistant.conversation import (
     ConversationEventKind,
     ConversationService,
+    _is_broad_current_events_request,
 )
 from personal_assistant.model import (
     LanguageModel,
@@ -389,7 +390,7 @@ class ConversationServiceTests(unittest.TestCase):
         self.assertEqual(len(model.requests), 2)
         self.assertIn("Python result.", "".join(event.text for event in events))
 
-    def test_current_events_search_auto_reads_before_synthesized_answer(self) -> None:
+    def test_recent_news_search_auto_reads_before_synthesized_answer(self) -> None:
         class ReadingModel:
             def __init__(self) -> None:
                 self.requests: list[ModelRequest] = []
@@ -430,9 +431,9 @@ class ConversationServiceTests(unittest.TestCase):
             ),
         )
 
-        events = tuple(service.events_for("Update me on current events today."))
+        events = tuple(service.events_for("Tell me some recent news about Iran."))
 
-        self.assertEqual(provider.queries, ["Update me on current events today."])
+        self.assertEqual(provider.queries, ["Tell me some recent news about Iran."])
         self.assertEqual(len(model.requests), 2)
         self.assertIn(
             "untrusted_public_page_text",
@@ -447,6 +448,15 @@ class ConversationServiceTests(unittest.TestCase):
             "request to leave room for tool results.",
             tuple(event.text for event in events),
         )
+
+    def test_broad_news_phrases_trigger_automatic_page_reading(self) -> None:
+        for prompt in (
+            "Update me on current events today.",
+            "Tell me some recent news about Iran.",
+            "What are the latest updates on this story?",
+        ):
+            with self.subTest(prompt=prompt):
+                self.assertTrue(_is_broad_current_events_request(prompt))
 
     def test_tool_reserve_scales_down_with_an_8k_context_window(self) -> None:
         model = SyntheticStreamingModel()
