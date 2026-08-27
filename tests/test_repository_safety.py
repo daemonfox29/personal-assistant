@@ -67,6 +67,7 @@ class RepositorySafetyTests(unittest.TestCase):
         self.assertIn('version = "0.6.2"', lockfile)
         self.assertIn("uv sync --locked", workflow)
         self.assertIn("uv run --locked --no-sync", workflow)
+        self.assertIn("--no-install-recommends libegl1", workflow)
 
     def test_common_secret_files_are_ignored(self) -> None:
         ignore_rules = (REPOSITORY_ROOT / ".gitignore").read_text()

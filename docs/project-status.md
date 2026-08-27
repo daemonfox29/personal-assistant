@@ -206,10 +206,14 @@ Completed:
   of content-minimized owner audit history.
 - Verified all 363 local tests; one opt-in performance test remained skipped.
   Dependency consistency and compile checks also passed.
+- PR #8's first Linux run reached the UI test import after 343 successful tests,
+  then exposed a missing runner dependency: `libEGL.so.1`. The workflow now
+  installs only the required `libegl1` runtime package before the locked project
+  install, and a repository-safety assertion keeps that CI prerequisite visible.
 
 Next:
 
-- Review the blocker fixes locally, then open the batched Linux pull request.
+- Confirm PR #8's replacement Linux run imports and exercises the native UI.
 - Keep the two documented P2 audit defects visible for the following maintenance
   pass.
 
