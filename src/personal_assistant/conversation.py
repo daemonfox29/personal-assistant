@@ -421,6 +421,8 @@ class ConversationService:
         if self._post_response_worker is not None:
             self._wait_for_post_response_memory()
             self._post_response_worker.close()
+        if self._tool_executor is not None:
+            self._tool_executor.close()
 
     def replace_history(
         self,

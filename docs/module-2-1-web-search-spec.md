@@ -111,6 +111,10 @@ of scope, so the assistant must say when snippets are insufficient.
 ## Resource, failure, and cancellation rules
 
 - one SearXNG request per tool execution and no retry;
+- app-owned Colima startup on the first search, with a fixed one-GiB VM ceiling;
+- reset the idle timer after each search and stop the dedicated container and
+  VM after 120 seconds without search activity;
+- stop the dedicated runtime immediately during normal app shutdown;
 - maximum five seconds for the complete local request;
 - maximum 64 KiB response before JSON parsing;
 - maximum five accepted results and two KiB canonical model-facing output;
@@ -161,6 +165,10 @@ Module 2.1 is locally complete when tests prove:
 15. the reviewed SearXNG deployment is loopback-bound, version-pinned, and
     exposes JSON search without an internet-facing listen address; and
 16. the full local suite passes on the current development machine.
+
+The runtime gate must additionally verify a real public search and a literal
+120-second idle shutdown on macOS. The model has no install, start, stop,
+configuration, image-pull, or update authority.
 
 Linux and Windows execution remain explicit deferred portability gates at the
 owner's direction; they are not represented as verified by local tests.

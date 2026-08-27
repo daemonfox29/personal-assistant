@@ -6,6 +6,7 @@ from datetime import datetime
 from decimal import Decimal, DivisionByZero, InvalidOperation, localcontext
 from enum import StrEnum
 import json
+from threading import Lock
 import time
 from uuid import UUID
 
@@ -153,13 +154,26 @@ class ToolRegistry:
 class ToolExecutor:
     """Validate, authorize, audit, and invoke registered callables only."""
 
-    def __init__(self, registry: ToolRegistry, audit_sink: AuditSink) -> None:
+    def __init__(
+        self,
+        registry: ToolRegistry,
+        audit_sink: AuditSink,
+        *,
+        resource_closers: tuple[Callable[[], None], ...] = (),
+    ) -> None:
         if not isinstance(registry, ToolRegistry):
             raise TypeError("A tool executor requires a registry.")
         if not isinstance(audit_sink, AuditSink):
             raise TypeError("A tool executor requires an audit sink.")
+        if not isinstance(resource_closers, tuple) or not all(
+            callable(closer) for closer in resource_closers
+        ):
+            raise TypeError("Tool resource closers must be an immutable tuple.")
         self._registry = registry
         self._audit_sink = audit_sink
+        self._resource_closers = resource_closers
+        self._close_lock = Lock()
+        self._closed = False
 
     @property
     def definitions(self) -> tuple[ModelToolDefinition, ...]:
@@ -167,6 +181,16 @@ class ToolExecutor:
 
     def repeat_allowed(self, name: str) -> bool:
         return self._registry.repeat_allowed(name)
+
+    def close(self) -> None:
+        """Release app-owned resources without exposing them to the model."""
+
+        with self._close_lock:
+            if self._closed:
+                return
+            self._closed = True
+        for closer in self._resource_closers:
+            closer()
 
     def execute(
         self,

@@ -51,13 +51,13 @@ say "search the web" or approve each query. Casual conversation, creative work,
 private-memory questions, and facts already supplied by trusted context should
 not trigger public search.
 
-SearXNG requires a container runtime such as Docker or Podman. It is not bundled
-into the Python process and is not currently installed automatically. If the
-service is absent, search fails safely while chat, memory, time, and calculator
-features continue normally, and the tool reports that the local search service
-is unavailable instead of presenting a generic retrieval failure. The checked-in deployment guide explains the
-current manual setup; native setup and service-health controls remain future UI
-work.
+SearXNG runs in a dedicated open-source Colima profile with a one-GiB memory
+ceiling. The application starts that isolated profile on the first search,
+reuses it while searches remain active, and stops its container and VM after
+two minutes without a search or immediately when the app closes. Only the
+reviewed SearXNG configuration directory is mounted into the VM, read-only. If
+the runtime is absent or unhealthy, search fails safely while chat, memory,
+time, and calculator features continue normally.
 
 An outbound query is still visible to SearXNG's configured upstream search
 engines. Deterministic code therefore permits only a bounded phrase copied from

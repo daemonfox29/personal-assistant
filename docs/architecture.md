@@ -124,7 +124,10 @@ date/time and bounded decimal arithmetic. Module 2.1 optionally adds a read-only
 `search_public_web` entry that can contact only a configured numeric-loopback
 SearXNG service. SearXNG is a separate open-source process with upstream network
 authority but no model, memory, database, credential, browser, or assistant-
-process access. The outbound query must occur verbatim after normalization in
+process access. A deterministic Colima lifecycle starts its dedicated one-GiB
+profile on first use and stops it after 120 idle seconds or app shutdown. Only
+the reviewed configuration directory is mounted read-only; the model cannot
+control service lifecycle or configuration. The outbound query must occur verbatim after normalization in
 the current user message. Returned titles, snippets, and HTTPS URLs are bounded
 untrusted data and result URLs are never fetched. Calls are serial, request-
 scoped, and limited to three tool steps. Browser, file, credential, shell,

@@ -52,6 +52,31 @@ class RecordingOpener:
 
 
 class WebSearchTests(unittest.TestCase):
+    def test_managed_provider_runs_inside_lifecycle_and_closes_it(self) -> None:
+        class Lifecycle:
+            def __init__(self) -> None:
+                self.runs = 0
+                self.closed = False
+
+            def run_while_active(self, operation):
+                self.runs += 1
+                return operation()
+
+            def close(self) -> None:
+                self.closed = True
+
+        lifecycle = Lifecycle()
+        provider = SearXNGSearchProvider(
+            opener=RecordingOpener(SyntheticResponse({"results": []})),
+            lifecycle=lifecycle,
+        )
+
+        provider.search("safe query")
+        provider.close()
+
+        self.assertEqual(lifecycle.runs, 1)
+        self.assertTrue(lifecycle.closed)
+
     def test_request_uses_only_fixed_loopback_search_parameters(self) -> None:
         opener = RecordingOpener(
             SyntheticResponse(

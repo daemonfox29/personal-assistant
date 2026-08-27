@@ -128,6 +128,30 @@ class RepositorySafetyTests(unittest.TestCase):
         self.assertIn("- json", settings)
         self.assertNotIn("- html", settings)
 
+    def test_managed_search_runtime_is_bounded_and_not_model_controlled(self) -> None:
+        runtime = (
+            REPOSITORY_ROOT / "src" / "personal_assistant" / "search_runtime.py"
+        ).read_text()
+        application = (
+            REPOSITORY_ROOT
+            / "src"
+            / "personal_assistant"
+            / "application_service.py"
+        ).read_text()
+
+        self.assertIn('COLIMA_PROFILE_NAME = "personal-assistant-search"', runtime)
+        self.assertIn("DEFAULT_SEARCH_IDLE_SECONDS = 120.0", runtime)
+        self.assertIn('"--activate=false"', runtime)
+        self.assertIn('"--memory=1"', runtime)
+        self.assertIn('f"--mount={self._settings_path.parent}:ro"', runtime)
+        self.assertIn('"127.0.0.1:8888:8080"', runtime)
+        self.assertIn('"--pull=never"', runtime)
+        self.assertIn('"no-new-privileges"', runtime)
+        self.assertIn('"--cap-drop"', runtime)
+        self.assertIn("SEARXNG_IMAGE,", runtime)
+        self.assertIn("ColimaSearchRuntime()", application)
+        self.assertIn("resource_closers=(search_provider.close,)", application)
+
 
 if __name__ == "__main__":
     unittest.main()

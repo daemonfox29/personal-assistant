@@ -8,6 +8,12 @@ SearXNG is a separate service licensed under AGPL-3.0-or-later. Its source and
 license are available at <https://github.com/searxng/searxng>. This project does
 not copy SearXNG code into the assistant package.
 
+The native assistant uses an isolated Colima profile and the Docker CLI to run
+this same fixed service on demand. It caps the VM at one GiB, mounts only this
+configuration directory read-only, and stops the container and VM after two
+idle minutes or normal app shutdown. The Compose file remains a reviewed manual
+and portability reference.
+
 The image is pinned to a reviewed multi-architecture manifest rather than
 `latest`. Updating it requires reviewing release/configuration changes,
 replacing both tag and digest, and rerunning the search boundary tests.

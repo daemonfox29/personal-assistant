@@ -299,6 +299,19 @@ class ToolRuntimeTests(unittest.TestCase):
 
         self.assertEqual(calls, [])
 
+    def test_close_releases_app_owned_resources_exactly_once(self) -> None:
+        close_calls: list[bool] = []
+        executor = ToolExecutor(
+            default_tool_registry(),
+            self.audit,
+            resource_closers=(lambda: close_calls.append(True),),
+        )
+
+        executor.close()
+        executor.close()
+
+        self.assertEqual(close_calls, [True])
+
 
 if __name__ == "__main__":
     unittest.main()

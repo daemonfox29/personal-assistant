@@ -10,8 +10,9 @@ of open questions.
 
 The initial registry, native model-call protocol, validation, permission, audit,
 and executor path are implemented in Module 2.0. Module 2.1 uses a separate local
-SearXNG boundary. Revisit native container installation, start/stop, health,
-update review, and provider selection controls after the MVP; also revisit the
+SearXNG boundary with app-owned on-demand start and two-minute idle shutdown.
+Revisit trusted Settings health, manual override, idle-time, update review, and
+provider selection controls after the MVP; also revisit the
 trusted UI pause-and-resume experience before the first approval-required tool.
 
 ## Model interface and protocols

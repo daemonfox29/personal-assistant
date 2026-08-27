@@ -27,14 +27,16 @@ When a feature is added, use automation to create the standard project pieces wh
 
 Add a trusted Settings surface for the optional local SearXNG service. It should
 show whether search is installed, running, healthy, and pinned to the reviewed
-version; offer deliberate setup, start, stop, and reviewed-update actions; and
+version; offer deliberate setup, manual start/stop overrides, idle-time
+configuration, and reviewed-update actions; and
 explain which upstream engines receive a query. Keep the service bound to
 numeric loopback and preserve the assistant's fail-closed search boundary. Do
 not give the model authority to install, start, reconfigure, or update it.
 
-Until this exists, SearXNG setup and lifecycle management remain a manual
-development step. A container runtime must be selected and separately approved
-before the real-search runtime gate can pass.
+The current app-owned lifecycle starts the isolated Colima profile on first
+search and stops it after two idle minutes or app shutdown. The future UI must
+preserve those safe defaults and must not turn lifecycle control into a model
+tool.
 
 ## Approval interface
 

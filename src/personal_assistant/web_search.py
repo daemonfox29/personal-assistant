@@ -35,6 +35,20 @@ class WebSearchProvider(Protocol):
         """Return bounded untrusted public results for one validated query."""
 
 
+@runtime_checkable
+class SearchLifecycle(Protocol):
+    """App-owned service lifecycle used around a bounded provider request."""
+
+    def run_while_active(
+        self,
+        operation: Callable[[], Mapping[str, object]],
+    ) -> Mapping[str, object]:
+        """Run an operation while preventing idle service shutdown."""
+
+    def close(self) -> None:
+        """Release the app-owned search runtime."""
+
+
 SearchOpener = Callable[[Request, float], BinaryIO]
 
 
@@ -56,6 +70,7 @@ class SearXNGSearchProvider:
         *,
         timeout_seconds: float = 5.0,
         opener: SearchOpener = open_local,
+        lifecycle: SearchLifecycle | None = None,
     ) -> None:
         self._base_url = validate_loopback_http_url(base_url, base_url=True)
         if (
@@ -66,8 +81,11 @@ class SearXNGSearchProvider:
             raise ValueError("The search timeout is outside its safe range.")
         if not callable(opener):
             raise TypeError("The search adapter requires a local opener.")
+        if lifecycle is not None and not isinstance(lifecycle, SearchLifecycle):
+            raise TypeError("The search adapter requires a managed lifecycle.")
         self._timeout_seconds = float(timeout_seconds)
         self._opener = opener
+        self._lifecycle = lifecycle
 
     @property
     def base_url(self) -> str:
@@ -75,6 +93,15 @@ class SearXNGSearchProvider:
 
     def search(self, query: str) -> Mapping[str, object]:
         query = validate_search_query(query)
+        if self._lifecycle is not None:
+            return self._lifecycle.run_while_active(lambda: self._search(query))
+        return self._search(query)
+
+    def close(self) -> None:
+        if self._lifecycle is not None:
+            self._lifecycle.close()
+
+    def _search(self, query: str) -> Mapping[str, object]:
         form = urlencode(
             {
                 "categories": "general",

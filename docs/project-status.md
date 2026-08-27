@@ -61,9 +61,9 @@ This document is the handoff point between coding sessions. At the end of each s
   backed only by numeric-loopback SearXNG. Its query must be copied from the
   current user message, result URLs are never fetched, and returned snippets are
   bounded untrusted data. Browser, file, credential, shell, arbitrary URL fetch,
-  and arbitrary-code tools remain disabled. The pinned SearXNG deployment is
-  checked in but cannot yet be runtime-verified because no container runtime is
-  installed on the current Mac.
+  and arbitrary-code tools remain disabled. The pinned SearXNG deployment now
+  runs on demand in a dedicated one-GiB Colima profile and stops after two idle
+  minutes or normal app shutdown.
 - GitHub Actions is configured to test pull requests targeting `main` before
   merge. The public repository has an active ruleset requiring the `test`
   check and blocking force pushes and deletion. Non-draft pull requests from
@@ -196,9 +196,9 @@ complete; the batched Linux pull-request check is its final platform gate.
 - [x] Module 2.1 code boundary: add user-derived read-only public search through
   fixed numeric-loopback SearXNG, with bounded inert results, citations,
   timeouts, duplicate suppression, policy enforcement, and content-free audit.
-- [ ] Module 2.1 runtime gate: install an approved container runtime, start the
-  pinned loopback-only SearXNG deployment, and verify one real search. Docker is
-  not currently installed on this Mac.
+- [x] Module 2.1 runtime gate: install the approved open-source Colima runtime,
+  start the pinned loopback-only SearXNG deployment, verify a real search, and
+  verify literal 120-second idle shutdown.
 
 ## Session history
 
@@ -222,20 +222,29 @@ Completed:
 - Added a pinned, loopback-published, read-only SearXNG container definition with
   a small reviewed engine set, moderate safe search, JSON-only responses, no
   autocomplete or image proxy, short upstream timeouts, and no retries.
+- Added app-owned Colima lifecycle management. The dedicated profile is capped
+  at one GiB and two CPUs, mounts only the reviewed configuration directory
+  read-only, starts on first search, resets its timer after each search, and
+  stops after 120 idle seconds or normal app shutdown. The model has no
+  lifecycle or container authority.
+- Rejected Podman after its real macOS gate exposed current VM forwarding and
+  startup failures. Colima with macOS Virtualization.Framework passed the same
+  stability, real-search, and shutdown gates.
 
 Verification:
 
-- The complete local suite passes: 393 tests passed with one opt-in performance
-  test skipped. Bytecode compilation, lockfile validation, and whitespace checks
-  also pass.
-- The real SearXNG container remains unverified because Docker is not installed
-  on this Mac; absence of the service fails safely.
+- A real generic public search returned bounded HTTPS results through the pinned
+  SearXNG image, and managed close removed the listener and stopped the VM.
+- A literal 125-second observation confirmed the dedicated runtime stopped after
+  its 120-second inactivity threshold.
+- `uv lock --check` passed, all source and test modules compiled, and the full
+  local suite passed: 403 tests in 13.504 seconds, with only the intentionally
+  opt-in 100,000-record memory benchmark skipped.
 
 Next:
 
-- Install or select an approved container runtime before the separate real-search
-  gate. Later add native SearXNG setup, start/stop, health, and update controls so
-  routine use does not require a terminal.
+- Add trusted Settings status, manual override, idle-time, and reviewed-update
+  controls later without exposing lifecycle authority to the model.
 
 ### 2026-08-26 — Module 2.0 bounded local tool foundation
 
