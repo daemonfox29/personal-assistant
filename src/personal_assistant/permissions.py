@@ -11,6 +11,7 @@ class ActionKind(StrEnum):
     READ_SYSTEM_TIME = "read_system_time"
     CALCULATE = "calculate"
     WEB_SEARCH = "web_search"
+    READ_PUBLIC_WEB_PAGE = "read_public_web_page"
     READ_PERSONAL_DATA = "read_personal_data"
     WRITE_LOCAL_FILE = "write_local_file"
     BROWSER_NAVIGATION = "browser_navigation"
@@ -55,6 +56,10 @@ POLICY_BY_ACTION: dict[ActionKind, PermissionResult] = {
     ActionKind.WEB_SEARCH: PermissionResult(
         PermissionDecision.ALLOW,
         "A user-derived query to the fixed local search service is allowed.",
+    ),
+    ActionKind.READ_PUBLIC_WEB_PAGE: PermissionResult(
+        PermissionDecision.ALLOW,
+        "Reading bounded text from current public search results is allowed.",
     ),
     ActionKind.READ_PERSONAL_DATA: PermissionResult(
         PermissionDecision.REQUIRE_APPROVAL,

@@ -129,10 +129,17 @@ profile on first use and stops it after 120 idle seconds or app shutdown. Only
 the reviewed configuration directory is mounted read-only; the model cannot
 control service lifecycle or configuration. The model supplies no search query;
 deterministic code uses only the normalized current user message. Returned
-titles, snippets, and HTTPS URLs are bounded
-untrusted data and result URLs are never fetched. Calls are serial, request-
+titles, snippets, and HTTPS URLs are bounded untrusted data. The search adapter
+does not fetch results; Module 2.2 owns the separate reading boundary. Calls are serial, request-
 scoped, and limited to three tool steps. Browser, file, credential, shell,
 arbitrary URL fetch, and arbitrary-code capabilities remain disabled.
+
+Module 2.2 adds a distinct bounded public-page reader, not arbitrary URL fetch.
+Only result numbers from the current correlated search can resolve to URLs.
+DNS must contain exclusively global addresses; the socket is pinned to one
+validated address while TLS remains verified for the original hostname. The
+reader rejects redirects, proxies, cookies, authentication, compressed or
+non-text responses, and returns only bounded inert text labeled untrusted.
 
 ## Initial scope
 

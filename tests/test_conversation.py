@@ -21,6 +21,7 @@ from personal_assistant.model import (
     ModelUnavailableError,
 )
 from personal_assistant.tool_runtime import ToolExecutor, default_tool_registry
+from personal_assistant.web_reader import PublicWebPageReader
 
 
 class SyntheticStreamingModel:
@@ -387,6 +388,56 @@ class ConversationServiceTests(unittest.TestCase):
         self.assertNotIn("private model memory value", repr(provider.queries))
         self.assertEqual(len(model.requests), 2)
         self.assertIn("Python result.", "".join(event.text for event in events))
+
+    def test_current_events_search_auto_reads_before_synthesized_answer(self) -> None:
+        class ReadingModel:
+            def __init__(self) -> None:
+                self.requests: list[ModelRequest] = []
+
+            def generate(self, request: ModelRequest) -> ModelResponse:
+                self.requests.append(request)
+                last = request.messages[-1]
+                if last.role is MessageRole.USER:
+                    return ModelResponse(
+                        "",
+                        (ModelToolCall.create("search_public_web", {}),),
+                    )
+                return ModelResponse(
+                    "The current update is synthesized from the report "
+                    "(https://example.test/current)."
+                )
+
+        provider = SearchProvider()
+        reader = PublicWebPageReader(
+            fetcher=lambda _url, _timeout: (
+                "text/plain",
+                "utf-8",
+                b"Detailed current public report for synthesis.",
+            )
+        )
+        model = ReadingModel()
+        service = ConversationService(
+            model,
+            tool_executor=ToolExecutor(
+                default_tool_registry(
+                    web_search=provider,
+                    web_page_reader=reader,
+                ),
+                InMemoryAuditSink(),
+            ),
+        )
+
+        events = tuple(service.events_for("Update me on current events today."))
+
+        self.assertEqual(provider.queries, ["Update me on current events today."])
+        self.assertEqual(len(model.requests), 2)
+        self.assertIn(
+            "untrusted_public_page_text",
+            model.requests[1].messages[-1].content,
+        )
+        answer = "".join(event.text for event in events)
+        self.assertIn("synthesized", answer)
+        self.assertIn("https://example.test/current", answer)
 
     def test_duplicate_web_search_is_stopped_after_first_attempt(self) -> None:
         class DuplicateSearchModel:

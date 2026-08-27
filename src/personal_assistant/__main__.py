@@ -30,6 +30,7 @@ from personal_assistant.portable_security import (
 from personal_assistant.search_runtime import ColimaSearchRuntime
 from personal_assistant.tool_runtime import ToolExecutor, default_tool_registry
 from personal_assistant.web_search import SearXNGSearchProvider
+from personal_assistant.web_reader import PublicWebPageReader
 
 
 def startup_message() -> str:
@@ -82,7 +83,10 @@ def main() -> None:
                     explicit_memory_handler=memory_runtime,
                     post_response_worker=memory_worker,
                     tool_executor=ToolExecutor(
-                        default_tool_registry(web_search=search_provider),
+                        default_tool_registry(
+                            web_search=search_provider,
+                            web_page_reader=PublicWebPageReader(),
+                        ),
                         (
                             memory_runtime.audit_sink
                             if memory_runtime is not None

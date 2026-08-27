@@ -17,6 +17,7 @@ from personal_assistant.tool_runtime import (
     ToolRegistry,
     default_tool_registry,
 )
+from personal_assistant.web_reader import PublicWebPageReader
 
 
 class ToolRuntimeTests(unittest.TestCase):
@@ -205,6 +206,74 @@ class ToolRuntimeTests(unittest.TestCase):
 
         self.assertIs(result.status, ToolExecutionStatus.DENIED)
         self.assertIn("bounded public query", result.content)
+
+    def test_page_reader_uses_only_current_correlated_search_results(self) -> None:
+        class SearchProvider:
+            def search(self, _query: str):
+                return {
+                    "provider": "searxng",
+                    "results": [
+                        {
+                            "snippet": "Snippet",
+                            "title": "Current report",
+                            "url": "https://example.com/current",
+                        }
+                    ],
+                    "trust": "untrusted_web_search_results",
+                }
+
+        fetched: list[str] = []
+        reader = PublicWebPageReader(
+            fetcher=lambda url, _timeout: (
+                "text/plain",
+                "utf-8",
+                fetched.append(url) or b"Current public report text.",
+            )
+        )
+        executor = ToolExecutor(
+            default_tool_registry(
+                web_search=SearchProvider(),
+                web_page_reader=reader,
+            ),
+            self.audit,
+        )
+        request_id = uuid4()
+
+        search = executor.execute(
+            ModelToolCall.create(
+                "search_public_web",
+                {"query": {"attempted": "private model URL"}},
+            ),
+            request_id,
+            execution_context=ToolExecutionContext("What happened today?"),
+        )
+        read = executor.execute(
+            ModelToolCall.create(
+                "read_current_search_results",
+                {"result_numbers": [1]},
+            ),
+            request_id,
+            execution_context=ToolExecutionContext("What happened today?"),
+        )
+        stale = executor.execute(
+            ModelToolCall.create(
+                "read_current_search_results",
+                {"result_numbers": [1]},
+            ),
+            uuid4(),
+            execution_context=ToolExecutionContext("What happened today?"),
+        )
+
+        self.assertIs(search.status, ToolExecutionStatus.SUCCEEDED)
+        self.assertIs(read.status, ToolExecutionStatus.SUCCEEDED)
+        self.assertIs(stale.status, ToolExecutionStatus.FAILED)
+        self.assertEqual(fetched, ["https://example.com/current"])
+        self.assertIn("untrusted_public_page_text", read.content)
+        self.assertGreaterEqual(executor.max_result_bytes, 7_500)
+        self.assertGreaterEqual(executor.context_reserve_bytes, 11_500)
+        audit_text = repr(self.audit.events)
+        self.assertNotIn("https://example.com/current", audit_text)
+        self.assertNotIn("Current public report text", audit_text)
 
     def test_web_search_query_is_not_written_to_audit(self) -> None:
         class SearchProvider:

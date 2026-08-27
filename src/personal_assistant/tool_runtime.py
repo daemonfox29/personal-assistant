@@ -32,6 +32,11 @@ from personal_assistant.web_search import (
     WebSearchProvider,
     validate_search_query,
 )
+from personal_assistant.web_reader import (
+    MAX_READ_PAGES,
+    PublicWebPageReader,
+    SearchReadingSession,
+)
 
 
 MAX_TOOL_RESULT_BYTES = 2_048
@@ -89,7 +94,7 @@ ToolContextValidator = Callable[
     None,
 ]
 ToolContextResolver = Callable[
-    [Mapping[str, object], ToolExecutionContext],
+    [Mapping[str, object], ToolExecutionContext, UUID],
     dict[str, object],
 ]
 
@@ -105,6 +110,7 @@ class RegisteredTool:
     context_validator: ToolContextValidator | None = None
     context_resolver: ToolContextResolver | None = None
     repeat_allowed: bool = True
+    max_result_bytes: int = MAX_TOOL_RESULT_BYTES
     invalid_input_message: str = "The tool arguments were invalid."
     failure_message: str = "The tool could not complete safely."
 
@@ -123,6 +129,12 @@ class RegisteredTool:
             raise TypeError("A registered tool context resolver must be callable.")
         if not isinstance(self.repeat_allowed, bool):
             raise TypeError("A registered tool repeat policy must be a boolean.")
+        if (
+            isinstance(self.max_result_bytes, bool)
+            or not isinstance(self.max_result_bytes, int)
+            or not MAX_TOOL_RESULT_BYTES <= self.max_result_bytes <= 8_192
+        ):
+            raise TypeError("A registered tool result limit must be safely bounded.")
         for label, message in (
             ("invalid-input", self.invalid_input_message),
             ("failure", self.failure_message),
@@ -153,6 +165,21 @@ class ToolRegistry:
     @property
     def definitions(self) -> tuple[ModelToolDefinition, ...]:
         return tuple(tool.definition for tool in self._tools.values())
+
+    @property
+    def max_result_bytes(self) -> int:
+        return max(
+            (tool.max_result_bytes for tool in self._tools.values()),
+            default=MAX_TOOL_RESULT_BYTES,
+        )
+
+    @property
+    def context_reserve_bytes(self) -> int:
+        limits = sorted(
+            (tool.max_result_bytes for tool in self._tools.values()),
+            reverse=True,
+        )
+        return sum(limits[:3])
 
     def resolve(self, name: str) -> RegisteredTool | None:
         if not isinstance(name, str):
@@ -192,8 +219,19 @@ class ToolExecutor:
     def definitions(self) -> tuple[ModelToolDefinition, ...]:
         return self._registry.definitions
 
+    @property
+    def max_result_bytes(self) -> int:
+        return self._registry.max_result_bytes
+
+    @property
+    def context_reserve_bytes(self) -> int:
+        return self._registry.context_reserve_bytes
+
     def repeat_allowed(self, name: str) -> bool:
         return self._registry.repeat_allowed(name)
+
+    def has_tool(self, name: str) -> bool:
+        return self._registry.resolve(name) is not None
 
     def close(self) -> None:
         """Release app-owned resources without exposing them to the model."""
@@ -246,7 +284,11 @@ class ToolExecutor:
                 if execution_context is None:
                     raise ToolInputError("Request context is required.")
             if tool.context_resolver is not None:
-                arguments = tool.context_resolver(arguments, execution_context)
+                arguments = tool.context_resolver(
+                    arguments,
+                    execution_context,
+                    correlation_id,
+                )
                 if not isinstance(arguments, dict):
                     raise ToolInputError("Resolved tool arguments are invalid.")
             if tool.context_validator is not None:
@@ -295,7 +337,11 @@ class ToolExecutor:
         )
         try:
             result = tool.handler(arguments)
-            content = self._result_content(True, result)
+            content = self._result_content(
+                True,
+                result,
+                max_bytes=tool.max_result_bytes,
+            )
         except Exception:
             self._audit(
                 correlation_id,
@@ -363,7 +409,12 @@ class ToolExecutor:
         )
 
     @staticmethod
-    def _result_content(ok: bool, data: Mapping[str, object]) -> str:
+    def _result_content(
+        ok: bool,
+        data: Mapping[str, object],
+        *,
+        max_bytes: int = MAX_TOOL_RESULT_BYTES,
+    ) -> str:
         document = {
             "data": dict(data),
             "ok": ok,
@@ -379,7 +430,7 @@ class ToolExecutor:
             )
         except (TypeError, ValueError) as error:
             raise ToolRuntimeError("Tool result data is invalid.") from error
-        if len(content.encode("utf-8")) > MAX_TOOL_RESULT_BYTES:
+        if len(content.encode("utf-8")) > max_bytes:
             raise ToolRuntimeError("Tool result data exceeds its size limit.")
         return content
 
@@ -388,11 +439,24 @@ def default_tool_registry(
     *,
     clock: Callable[[], datetime] = lambda: datetime.now().astimezone(),
     web_search: WebSearchProvider | None = None,
+    web_page_reader: PublicWebPageReader | None = None,
 ) -> ToolRegistry:
     """Build the reviewed registry from code-owned narrow capabilities."""
 
     if web_search is not None and not isinstance(web_search, WebSearchProvider):
         raise TypeError("The tool registry requires a web search provider.")
+    if web_page_reader is not None and not isinstance(
+        web_page_reader,
+        PublicWebPageReader,
+    ):
+        raise TypeError("The tool registry requires a bounded page reader.")
+    if web_page_reader is not None and web_search is None:
+        raise ValueError("Page reading requires the reviewed search provider.")
+    reading_session = (
+        None
+        if web_page_reader is None
+        else SearchReadingSession(web_page_reader)
+    )
 
     def validate_time(arguments: Mapping[str, object]) -> dict[str, object]:
         if dict(arguments):
@@ -465,18 +529,58 @@ def default_tool_registry(
     def resolve_web_search_context(
         arguments: Mapping[str, object],
         context: ToolExecutionContext,
+        request_id: UUID,
     ) -> dict[str, object]:
         del arguments
         try:
             query = validate_search_query(context.user_text)
         except ValueError as error:
             raise ToolInputError("The current user question cannot be searched.") from error
-        return {"query": query}
+        return {"_request_id": request_id.hex, "query": query}
 
     def search_web(arguments: Mapping[str, object]) -> Mapping[str, object]:
         if web_search is None:
             raise ToolRuntimeError("Web search is unavailable.")
-        return web_search.search(str(arguments["query"]))
+        result = web_search.search(str(arguments["query"]))
+        if reading_session is not None:
+            reading_session.remember(UUID(str(arguments["_request_id"])), result)
+        return result
+
+    def validate_page_read(arguments: Mapping[str, object]) -> dict[str, object]:
+        if set(arguments) != {"result_numbers"}:
+            raise ToolInputError("Page-read fields are invalid.")
+        raw_numbers = arguments["result_numbers"]
+        if (
+            not isinstance(raw_numbers, list)
+            or not 1 <= len(raw_numbers) <= MAX_READ_PAGES
+            or any(
+                isinstance(number, bool)
+                or not isinstance(number, int)
+                or not 1 <= number <= 5
+                for number in raw_numbers
+            )
+            or len(set(raw_numbers)) != len(raw_numbers)
+        ):
+            raise ToolInputError("Page selections are invalid.")
+        return {"result_numbers": tuple(raw_numbers)}
+
+    def resolve_page_read_context(
+        arguments: Mapping[str, object],
+        _context: ToolExecutionContext,
+        request_id: UUID,
+    ) -> dict[str, object]:
+        return {
+            "_request_id": request_id.hex,
+            "result_numbers": arguments["result_numbers"],
+        }
+
+    def read_search_pages(arguments: Mapping[str, object]) -> Mapping[str, object]:
+        if reading_session is None:
+            raise ToolRuntimeError("Public page reading is unavailable.")
+        return reading_session.read(
+            UUID(str(arguments["_request_id"])),
+            tuple(arguments["result_numbers"]),
+        )
 
     tools = [
         RegisteredTool(
@@ -548,6 +652,44 @@ def default_tool_registry(
                 failure_message=(
                     "The local web-search service is unavailable or returned an "
                     "invalid response."
+                ),
+            )
+        )
+    if reading_session is not None:
+        tools.append(
+            RegisteredTool(
+                ModelToolDefinition.create(
+                    "read_current_search_results",
+                    "Read bounded text from up to three numbered results returned "
+                    "by search_public_web in this same user request. Select result "
+                    "numbers only; never supply URLs.",
+                    {
+                        "additionalProperties": False,
+                        "properties": {
+                            "result_numbers": {
+                                "items": {
+                                    "maximum": 5,
+                                    "minimum": 1,
+                                    "type": "integer",
+                                },
+                                "maxItems": MAX_READ_PAGES,
+                                "minItems": 1,
+                                "type": "array",
+                                "uniqueItems": True,
+                            }
+                        },
+                        "required": ["result_numbers"],
+                        "type": "object",
+                    },
+                ),
+                ActionKind.READ_PUBLIC_WEB_PAGE,
+                validate_page_read,
+                read_search_pages,
+                context_resolver=resolve_page_read_context,
+                repeat_allowed=False,
+                max_result_bytes=7_500,
+                failure_message=(
+                    "The selected public pages could not be read safely."
                 ),
             )
         )

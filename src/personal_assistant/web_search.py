@@ -272,3 +272,12 @@ def _public_result_url(value: object) -> str | None:
     netloc = hostname if port is None else f"{hostname}:{port}"
     normalized = urlunsplit(("https", netloc, parsed.path or "/", parsed.query, ""))
     return normalized if len(normalized) <= MAX_SEARCH_URL_CHARS else None
+
+
+def validate_public_https_url(value: object) -> str:
+    """Return one normalized public HTTPS URL or reject it."""
+
+    normalized = _public_result_url(value)
+    if normalized is None:
+        raise ValueError("A public HTTPS URL is required.")
+    return normalized

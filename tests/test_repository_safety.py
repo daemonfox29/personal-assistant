@@ -152,6 +152,29 @@ class RepositorySafetyTests(unittest.TestCase):
         self.assertIn("ColimaSearchRuntime()", application)
         self.assertIn("resource_closers=(search_provider.close,)", application)
 
+    def test_public_page_reader_is_pinned_bounded_and_noninteractive(self) -> None:
+        reader = (
+            REPOSITORY_ROOT / "src" / "personal_assistant" / "web_reader.py"
+        ).read_text()
+        application = (
+            REPOSITORY_ROOT
+            / "src"
+            / "personal_assistant"
+            / "application_service.py"
+        ).read_text()
+
+        self.assertIn("socket.getaddrinfo", reader)
+        self.assertIn("if not parsed.is_global", reader)
+        self.assertIn("_PinnedHTTPSConnection", reader)
+        self.assertIn("ssl.create_default_context()", reader)
+        self.assertIn('if response.status != 200:', reader)
+        self.assertIn('"Accept-Encoding": "identity"', reader)
+        self.assertIn("MAX_PAGE_RESPONSE_BYTES = 524_288", reader)
+        self.assertIn("MAX_READ_PAGES = 3", reader)
+        self.assertNotIn("urlopen(", reader)
+        self.assertNotIn("HTTPRedirectHandler", reader)
+        self.assertIn("web_page_reader=PublicWebPageReader()", application)
+
 
 if __name__ == "__main__":
     unittest.main()

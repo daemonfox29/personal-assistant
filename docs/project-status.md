@@ -58,10 +58,11 @@ This document is the handoff point between coding sessions. At the end of each s
   Every proposed execution is schema-validated, policy-checked, content-free
   audited, result-bounded, returned as untrusted tool-role data, and capped at
   three serial steps. Module 2.1 now adds an optional read-only search definition
-  backed only by numeric-loopback SearXNG. Its query must be copied from the
-  current user message, result URLs are never fetched, and returned snippets are
-  bounded untrusted data. Browser, file, credential, shell, arbitrary URL fetch,
-  and arbitrary-code tools remain disabled. The pinned SearXNG deployment now
+  backed only by numeric-loopback SearXNG. Its query is derived only from the
+  current user message and returned snippets are bounded untrusted data. Module
+  2.2 adds request-scoped bounded text reading from numbered current search
+  results, while browser, file, credential, shell, arbitrary URL fetch, and
+  arbitrary-code tools remain disabled. The pinned SearXNG deployment now
   runs on demand in a dedicated one-GiB Colima profile and stops after two idle
   minutes or normal app shutdown.
 - GitHub Actions is configured to test pull requests targeting `main` before
@@ -85,8 +86,9 @@ This document is the handoff point between coding sessions. At the end of each s
   deterministically commits reviewed clear exact low-risk statements before the
   response while analyzing other completed turns asynchronously into
   quarantined candidates. It has the two reviewed local Module 2.0 utilities and
-  the optional bounded SearXNG search path, with no browser access, broad
-  credential access, page retrieval, or general network capability; the native
+  the optional bounded SearXNG search path and numbered-result page reader, with
+  no browser access, broad credential access, arbitrary page retrieval, or
+  general network capability; the native
   composition alone receives a narrow automatic-unlock credential adapter that
   is never exposed to the model or widgets.
 - Conversation policy is documented separately from the action-permission policy.
@@ -199,8 +201,46 @@ complete; the batched Linux pull-request check is its final platform gate.
 - [x] Module 2.1 runtime gate: install the approved open-source Colima runtime,
   start the pinned loopback-only SearXNG deployment, verify a real search, and
   verify literal 120-second idle shutdown.
+- [x] Module 2.2: bind numbered page selections to current correlated search
+  results, pin public DNS addresses under hostname-verified TLS, extract bounded
+  inert text, auto-read broad news results, and verify a cited real-app current-
+  events synthesis.
 
 ## Session history
+
+### 2026-08-26 — Module 2.2 bounded public page reading
+
+Completed:
+
+- Added `read_current_search_results`, which accepts one to three result numbers
+  and resolves them only against URLs saved under the current search correlation
+  ID. The one-use set is consumed on read and cannot cross requests.
+- Added a raw-socket HTTPS reader that rejects non-HTTPS URLs, credentials,
+  alternate ports, redirects, proxies, cookies, authentication, compression,
+  non-text types, and any DNS answer that is not globally routable. The socket
+  connects to a pinned validated address while TLS verifies the original host.
+- Bounded each page to a 512-KiB transferred prefix and 1,800 visible characters,
+  each request to three sequential pages, and the complete tool result to 7,500
+  bytes. Script, style, noscript, template, and SVG content is removed.
+- Labeled all extracted content untrusted and instructed the model to ignore
+  page-borne directions, synthesize evidence, cite exact result URLs, compare
+  sources, and disclose evidence limits.
+- Added deterministic broad-current-events recognition. After a successful
+  search, code automatically reads the first three available results before the
+  model's final turn, avoiding reliance on Qwen to request the reader.
+
+Verification:
+
+- Private and mixed DNS answers, redirect status, unsafe URL forms, unsupported
+  charset, active markup, stale request IDs, model-authored query data, and
+  cross-request page selection have focused regression coverage.
+- The real application factory under a Spotlight-style environment processed
+  “Update me on major current events today,” audited both search and public-page
+  reading as succeeded, returned a synthesized five-item update with exact HTTPS
+  source links, emitted no error notice, and closed the managed runtime cleanly.
+- `uv lock --check`, source/test compilation, and whitespace validation passed.
+  The complete local suite passed 417 tests in 13.678 seconds, with only the
+  intentionally opt-in 100,000-record memory benchmark skipped.
 
 ### 2026-08-26 — Module 2.1 open-source read-only search boundary
 

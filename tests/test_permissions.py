@@ -26,6 +26,7 @@ class PermissionPolicyTests(unittest.TestCase):
             ActionKind.READ_SYSTEM_TIME,
             ActionKind.CALCULATE,
             ActionKind.WEB_SEARCH,
+            ActionKind.READ_PUBLIC_WEB_PAGE,
         ):
             with self.subTest(action=action):
                 self.assertIs(

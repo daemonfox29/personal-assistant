@@ -62,8 +62,13 @@ time, and calculator features continue normally.
 An outbound query is still visible to SearXNG's configured upstream search
 engines. Deterministic code therefore permits only a bounded phrase copied from
 the user's current message—the model cannot append private memory to a query.
-Only inert titles, snippets, and HTTPS source URLs return to the model, labeled
-as untrusted data. Result URLs are never fetched automatically.
+Only inert titles, snippets, and HTTPS source URLs return from search, labeled
+as untrusted data. When snippets are insufficient, a separate bounded reader
+may extract limited inert text from up to three public HTTPS results in the same
+request. The model selects result numbers, never URLs. Private network targets,
+redirects, scripts, cookies, authentication, downloads, and non-text content are
+blocked. Broad current-events requests automatically read available top results
+before the assistant synthesizes and cites its answer.
 
 ## Set up the project
 
@@ -414,7 +419,8 @@ govern future model, memory, browser, tool, data, interface, and audit choices.
   access. It may propose two reviewed local utilities and one bounded read-only
   public search. Deterministic code decides whether any proposal runs. Search
   can contact only local SearXNG with a query copied from the current user
-  message; it cannot fetch returned URLs. The application otherwise exposes
+  message. A separate bounded reader can fetch inert text only from numbered
+  current-request search results. The application otherwise exposes
   only the bounded memory adapter described above.
 
 A local passcode meaningfully reduces accidental or conversational misuse, but

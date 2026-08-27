@@ -143,6 +143,11 @@ Initial hard ceilings:
 - bounded decimal magnitude and precision; and
 - no retries inside an individual tool implementation.
 
+Module 2.2's separately reviewed page-reading tool raises only its own canonical
+result ceiling to 7,500 bytes. The conversation service reserves that larger
+bounded result in the context budget; all original Module 2.0 and search-tool
+limits remain unchanged.
+
 The user can cancel by closing the application; graceful shutdown continues to
 wait for the active bounded request. Future blocking or external tools require
 cancellable process or I/O boundaries before registration.

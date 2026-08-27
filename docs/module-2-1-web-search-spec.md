@@ -159,7 +159,8 @@ Module 2.1 is locally complete when tests prove:
 7. response status, content type, size, JSON shape, result count, text, and URLs
    are bounded and validated;
 8. HTML and control text becomes inert display data;
-9. result URLs are never fetched and invalid or duplicate URLs are omitted;
+9. the search adapter never fetches result URLs, invalid or duplicate URLs are
+   omitted, and any later reading uses the separate Module 2.2 boundary;
 10. search results are labeled untrusted and cannot grant permission;
 11. exact duplicate calls and calls beyond the coordinator ceiling stop;
 12. audit failure before execution prevents the local request;
