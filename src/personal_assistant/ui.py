@@ -71,7 +71,6 @@ from personal_assistant.conversation_history import (
 )
 from personal_assistant.credential_store import default_recovery_credential_store
 from personal_assistant.runtime_preferences import (
-    MAX_CONTEXT_TOKENS,
     MAX_UI_FONT_SIZE,
     MIN_INPUT_TOKENS,
     MIN_CONTEXT_TOKENS,
@@ -113,6 +112,13 @@ THINKING_PHRASES = (
     "Pondering",
     "Connecting the dots",
     "Thinking",
+)
+CONTEXT_WINDOW_PRESETS: tuple[tuple[str, int], ...] = (
+    ("8K", 8_192),
+    ("16K", 16_384),
+    ("32K", 32_768),
+    ("64K", 65_536),
+    ("128K", 131_072),
 )
 
 
@@ -367,6 +373,10 @@ class SettingsPage(QWidget):
             "Global assistant communication instructions"
         )
         self._context_tokens.setAccessibleName("Model context window")
+        self._context_tokens.setAccessibleDescription(
+            "Choose an exact context window of 8K, 16K, 32K, 64K, or 128K "
+            "tokens."
+        )
         self._default_response_tokens.setAccessibleName(
             "Default response token limit"
         )
@@ -611,12 +621,12 @@ class SettingsPage(QWidget):
         card.setObjectName("card")
         form = QFormLayout(card)
         form.setContentsMargins(28, 28, 28, 28)
-        self._context_tokens = self._token_field(
-            MIN_CONTEXT_TOKENS,
-            MAX_CONTEXT_TOKENS,
-            1_024,
+        self._context_tokens = QComboBox()
+        for label, token_count in CONTEXT_WINDOW_PRESETS:
+            self._context_tokens.addItem(label, token_count)
+        self._context_tokens.currentIndexChanged.connect(
+            self._context_window_changed
         )
-        self._context_tokens.valueChanged.connect(self._context_window_changed)
         self._default_response_tokens = self._token_field(1, 2_000, 100)
         self._maximum_response_tokens = self._token_field(1, 2_000, 100)
         self._maximum_response_tokens.valueChanged.connect(
@@ -1230,7 +1240,7 @@ class SettingsPage(QWidget):
         self._default_response_tokens.setValue(
             preferences.default_response_tokens
         )
-        self._context_tokens.setValue(preferences.context_tokens)
+        self._set_context_window_value(preferences.context_tokens)
         self._set_combo_value(self._theme, preferences.theme.value)
         self._set_combo_value(self._font_family, preferences.font_family)
         self._font_size.setValue(preferences.font_size)
@@ -1381,7 +1391,7 @@ class SettingsPage(QWidget):
     @Slot()
     def _save(self) -> None:
         self.save_requested.emit(
-            self._context_tokens.value(),
+            self._selected_context_tokens(),
             self._default_response_tokens.value(),
             self._maximum_response_tokens.value(),
             str(self._theme.currentData()),
@@ -1394,10 +1404,29 @@ class SettingsPage(QWidget):
         self._default_response_tokens.setMaximum(ceiling)
 
     @Slot(int)
-    def _context_window_changed(self, context_tokens: int) -> None:
+    def _context_window_changed(self, _index: int) -> None:
+        context_tokens = self._selected_context_tokens()
         self._maximum_response_tokens.setMaximum(
             min(2_000, context_tokens - MIN_INPUT_TOKENS)
         )
+
+    def _selected_context_tokens(self) -> int:
+        value = self._context_tokens.currentData()
+        if isinstance(value, int) and not isinstance(value, bool):
+            return value
+        return MIN_CONTEXT_TOKENS
+
+    def _set_context_window_value(self, context_tokens: int) -> None:
+        index = self._context_tokens.findData(context_tokens)
+        if index < 0:
+            index = min(
+                range(self._context_tokens.count()),
+                key=lambda candidate: abs(
+                    int(self._context_tokens.itemData(candidate))
+                    - context_tokens
+                ),
+            )
+        self._context_tokens.setCurrentIndex(index)
 
     @staticmethod
     def _token_field(minimum: int, maximum: int, step: int) -> QSpinBox:

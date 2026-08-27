@@ -23,6 +23,21 @@ The current unknown-action fallback remains `DENY` for safety. The completeness 
 
 When a feature is added, use automation to create the standard project pieces while requiring a deliberate review of its security policy before the feature is treated as complete.
 
+## Native web-search service controls
+
+Add a trusted Settings surface for the optional local SearXNG service. It should
+show whether search is installed, running, healthy, and pinned to the reviewed
+version; offer deliberate setup, manual start/stop overrides, idle-time
+configuration, and reviewed-update actions; and
+explain which upstream engines receive a query. Keep the service bound to
+numeric loopback and preserve the assistant's fail-closed search boundary. Do
+not give the model authority to install, start, reconfigure, or update it.
+
+The current app-owned lifecycle starts the isolated Colima profile on first
+search and stops it after two idle minutes or app shutdown. The future UI must
+preserve those safe defaults and must not turn lifecycle control into a model
+tool.
+
 ## Approval interface
 
 After the Module 0.1 approval-receipt foundation is in place, build a small trusted interface that clearly shows the exact action and arguments before the user approves it. Its approval receipt should be one-use and short-lived, so an assistant cannot silently reuse a previous approval for a different action.

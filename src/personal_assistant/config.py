@@ -10,6 +10,7 @@ from personal_assistant.model import validate_response_token_limit
 from personal_assistant.runtime_preferences import (
     MAX_CONTEXT_TOKENS,
     MIN_CONTEXT_TOKENS,
+    MIN_INPUT_TOKENS,
     PREFERENCES_FILENAME,
     RuntimePreferences,
     RuntimePreferencesStore,
@@ -62,6 +63,27 @@ class ChatSettings:
 
 
 @dataclass(frozen=True)
+class SearchSettings:
+    """Fixed loopback boundary for the optional local SearXNG service."""
+
+    base_url: str = "http://127.0.0.1:8888"
+    timeout_seconds: float = 5.0
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "base_url",
+            validate_loopback_http_url(self.base_url, base_url=True),
+        )
+        if (
+            isinstance(self.timeout_seconds, bool)
+            or not isinstance(self.timeout_seconds, (int, float))
+            or not 0.1 <= float(self.timeout_seconds) <= 5.0
+        ):
+            raise ValueError("The search timeout is outside its safe range.")
+
+
+@dataclass(frozen=True)
 class MemorySettings:
     """Machine-local paths and bounded persistent-memory runtime choices."""
 
@@ -103,6 +125,7 @@ class AppSettings:
 
     ollama: OllamaSettings = field(default_factory=OllamaSettings)
     chat: ChatSettings = field(default_factory=ChatSettings)
+    search: SearchSettings = field(default_factory=SearchSettings)
     memory: MemorySettings = field(default_factory=MemorySettings)
 
     def __post_init__(self) -> None:
@@ -110,6 +133,13 @@ class AppSettings:
             raise ValueError(
                 "The default response limit cannot exceed the maximum response "
                 "limit."
+            )
+        if (
+            self.ollama.context_tokens - self.chat.maximum_response_tokens
+            < MIN_INPUT_TOKENS
+        ):
+            raise ValueError(
+                "The context window must reserve at least 1,024 tokens for input."
             )
 
 
@@ -176,6 +206,13 @@ def load_settings(
             timeout_seconds=defaults.ollama.timeout_seconds,
         ),
         chat=chat_settings,
+        search=SearchSettings(
+            base_url=environment.get(
+                "PERSONAL_ASSISTANT_SEARXNG_URL",
+                defaults.search.base_url,
+            ),
+            timeout_seconds=defaults.search.timeout_seconds,
+        ),
         memory=MemorySettings(
             enabled=_boolean(
                 environment,

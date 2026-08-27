@@ -99,6 +99,10 @@ from personal_assistant.runtime_preferences import (
     RuntimePreferencesError,
     RuntimePreferencesStore,
 )
+from personal_assistant.search_runtime import ColimaSearchRuntime
+from personal_assistant.tool_runtime import ToolExecutor, default_tool_registry
+from personal_assistant.web_search import SearXNGSearchProvider
+from personal_assistant.web_reader import PublicWebPageReader
 
 
 class ApplicationServiceError(RuntimeError):
@@ -1715,6 +1719,12 @@ class AssistantApplicationFactory:
                     runtime.capture,
                     audit_sink=runtime.audit_sink,
                 )
+            search_runtime = ColimaSearchRuntime()
+            search_provider = SearXNGSearchProvider(
+                self._settings.search.base_url,
+                timeout_seconds=self._settings.search.timeout_seconds,
+                lifecycle=search_runtime,
+            )
             conversation = ConversationService(
                 model,
                 self._settings.chat,
@@ -1731,6 +1741,14 @@ class AssistantApplicationFactory:
                     else runtime.assistant_preferences.load_communication_style(
                         uuid4()
                     )
+                ),
+                tool_executor=ToolExecutor(
+                    default_tool_registry(
+                        web_search=search_provider,
+                        web_page_reader=PublicWebPageReader(),
+                    ),
+                    self._audit_sink() if runtime is None else runtime.audit_sink,
+                    resource_closers=(search_provider.close,),
                 ),
             )
             return AssistantApplicationService(

@@ -105,6 +105,76 @@ class RepositorySafetyTests(unittest.TestCase):
         self.assertIn("persist-credentials: false", workflow)
         self.assertIn("permissions:\n  contents: read", workflow)
 
+    def test_searxng_deployment_is_pinned_and_loopback_only(self) -> None:
+        compose = (
+            REPOSITORY_ROOT / "deploy" / "searxng" / "compose.yaml"
+        ).read_text()
+        settings = (
+            REPOSITORY_ROOT / "deploy" / "searxng" / "settings.yml"
+        ).read_text()
+
+        self.assertIn('"127.0.0.1:8888:8080"', compose)
+        self.assertRegex(
+            compose,
+            r"image: ghcr\.io/searxng/searxng:[^\s]+@sha256:[0-9a-f]{64}",
+        )
+        self.assertNotIn(":latest", compose)
+        self.assertIn("read_only: true", compose)
+        self.assertIn("no-new-privileges:true", compose)
+        self.assertIn("keep_only:", settings)
+        self.assertIn("safe_search: 1", settings)
+        self.assertIn("autocomplete: \"\"", settings)
+        self.assertIn("method: \"POST\"", settings)
+        self.assertIn("- json", settings)
+        self.assertNotIn("- html", settings)
+
+    def test_managed_search_runtime_is_bounded_and_not_model_controlled(self) -> None:
+        runtime = (
+            REPOSITORY_ROOT / "src" / "personal_assistant" / "search_runtime.py"
+        ).read_text()
+        application = (
+            REPOSITORY_ROOT
+            / "src"
+            / "personal_assistant"
+            / "application_service.py"
+        ).read_text()
+
+        self.assertIn('COLIMA_PROFILE_NAME = "personal-assistant-search"', runtime)
+        self.assertIn("DEFAULT_SEARCH_IDLE_SECONDS = 120.0", runtime)
+        self.assertIn('"--activate=false"', runtime)
+        self.assertIn('"--memory=1"', runtime)
+        self.assertIn('f"--mount={self._settings_path.parent}:ro"', runtime)
+        self.assertIn('"127.0.0.1:8888:8080"', runtime)
+        self.assertIn('"--pull=never"', runtime)
+        self.assertIn('"no-new-privileges"', runtime)
+        self.assertIn('"--cap-drop"', runtime)
+        self.assertIn("SEARXNG_IMAGE,", runtime)
+        self.assertIn("ColimaSearchRuntime()", application)
+        self.assertIn("resource_closers=(search_provider.close,)", application)
+
+    def test_public_page_reader_is_pinned_bounded_and_noninteractive(self) -> None:
+        reader = (
+            REPOSITORY_ROOT / "src" / "personal_assistant" / "web_reader.py"
+        ).read_text()
+        application = (
+            REPOSITORY_ROOT
+            / "src"
+            / "personal_assistant"
+            / "application_service.py"
+        ).read_text()
+
+        self.assertIn("socket.getaddrinfo", reader)
+        self.assertIn("if not parsed.is_global", reader)
+        self.assertIn("_PinnedHTTPSConnection", reader)
+        self.assertIn("ssl.create_default_context()", reader)
+        self.assertIn('if response.status != 200:', reader)
+        self.assertIn('"Accept-Encoding": "identity"', reader)
+        self.assertIn("MAX_PAGE_RESPONSE_BYTES = 524_288", reader)
+        self.assertIn("MAX_READ_PAGES = 3", reader)
+        self.assertNotIn("urlopen(", reader)
+        self.assertNotIn("HTTPRedirectHandler", reader)
+        self.assertIn("web_page_reader=PublicWebPageReader()", application)
+
 
 if __name__ == "__main__":
     unittest.main()

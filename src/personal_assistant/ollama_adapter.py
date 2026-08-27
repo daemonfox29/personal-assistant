@@ -12,10 +12,12 @@ from personal_assistant.model import (
     LanguageModel,
     MalformedModelResponseError,
     ModelNotFoundError,
+    ModelMessage,
     ModelRequest,
     ModelRequestError,
     ModelResponse,
     ModelStreamChunk,
+    ModelToolCall,
     ModelUnavailableError,
     validate_response_token_limit,
 )
@@ -93,11 +95,15 @@ class OllamaModel(LanguageModel):
         self._ensure_available()
         response = self._checked_request(request)
         message = response.get("message")
-        if not isinstance(message, dict) or not isinstance(
-            message.get("content"), str
-        ):
+        if not isinstance(message, dict):
             raise MalformedModelResponseError("Malformed local model response.")
-        return ModelResponse(text=message["content"])
+        tool_calls = self._validated_tool_calls(message.get("tool_calls"))
+        content = message.get("content", "")
+        if content is None and tool_calls:
+            content = ""
+        if not isinstance(content, str):
+            raise MalformedModelResponseError("Malformed local model response.")
+        return ModelResponse(text=content, tool_calls=tool_calls)
 
     def stream_generate(self, request: ModelRequest) -> Iterator[ModelStreamChunk]:
         """Yield response text as Ollama generates it."""
@@ -128,16 +134,51 @@ class OllamaModel(LanguageModel):
         message = response.get("message")
         if response.get("done") is True and message is None:
             return
-        if not isinstance(message, dict) or not isinstance(
-            message.get("content"), str
-        ):
+        if not isinstance(message, dict):
             raise MalformedModelResponseError("Malformed streaming response.")
-        text = message["content"]
+        tool_calls = self._validated_tool_calls(message.get("tool_calls"))
+        text = message.get("content", "")
+        if text is None and tool_calls:
+            text = ""
+        if not isinstance(text, str):
+            raise MalformedModelResponseError("Malformed streaming response.")
         done_reason = response.get("done_reason")
         if done_reason is not None and not isinstance(done_reason, str):
             raise MalformedModelResponseError("Invalid completion reason.")
-        if text or done_reason:
-            yield ModelStreamChunk(text=text, done_reason=done_reason)
+        if text or done_reason or tool_calls:
+            yield ModelStreamChunk(
+                text=text,
+                done_reason=done_reason,
+                tool_calls=tool_calls,
+            )
+
+    @staticmethod
+    def _validated_tool_calls(value: object) -> tuple[ModelToolCall, ...]:
+        if value is None:
+            return ()
+        if not isinstance(value, list) or len(value) > 4:
+            raise MalformedModelResponseError("Malformed model tool calls.")
+        calls: list[ModelToolCall] = []
+        try:
+            for position, item in enumerate(value):
+                if not isinstance(item, dict):
+                    raise ValueError
+                function = item.get("function")
+                if not isinstance(function, dict):
+                    raise ValueError
+                name = function.get("name")
+                arguments = function.get("arguments")
+                index = function.get("index", item.get("index", position))
+                if not isinstance(name, str) or not isinstance(arguments, dict):
+                    raise ValueError
+                calls.append(
+                    ModelToolCall.create(name, arguments, index=index)
+                )
+        except (TypeError, ValueError) as error:
+            raise MalformedModelResponseError(
+                "Malformed model tool calls."
+            ) from error
+        return tuple(calls)
 
     def _ensure_available(self) -> None:
         try:
@@ -223,10 +264,7 @@ class OllamaModel(LanguageModel):
         validate_response_token_limit(response_limit)
         return {
             "model": self._settings.model_name,
-            "messages": [
-                {"role": message.role.value, "content": message.content}
-                for message in request.messages
-            ],
+            "messages": [self._message_document(message) for message in request.messages],
             "stream": stream,
             "think": False,
             "keep_alive": self._settings.keep_alive,
@@ -234,4 +272,43 @@ class OllamaModel(LanguageModel):
                 "num_ctx": self._settings.context_tokens,
                 "num_predict": response_limit,
             },
+            **(
+                {
+                    "tools": [
+                        {
+                            "type": "function",
+                            "function": {
+                                "name": tool.name,
+                                "description": tool.description,
+                                "parameters": tool.parameters(),
+                            },
+                        }
+                        for tool in request.tools
+                    ]
+                }
+                if request.tools
+                else {}
+            ),
         }
+
+    @staticmethod
+    def _message_document(message: ModelMessage) -> dict[str, object]:
+        document: dict[str, object] = {
+            "role": message.role.value,
+            "content": message.content,
+        }
+        if message.tool_calls:
+            document["tool_calls"] = [
+                {
+                    "type": "function",
+                    "function": {
+                        "index": call.index,
+                        "name": call.name,
+                        "arguments": call.arguments(),
+                    },
+                }
+                for call in message.tool_calls
+            ]
+        if message.tool_name is not None:
+            document["tool_name"] = message.tool_name
+        return document

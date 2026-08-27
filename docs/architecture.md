@@ -110,9 +110,43 @@ retrieval; direct-only, never-mention, restricted, and unconfirmed records do
 not. Natural explicit prior-discussion language triggers bounded transcript
 search immediately rather than asking whether to search.
 
-Future action flow:
+Current Module 2.0 action flow:
 
-User request → coordinator → model and/or tools → permission layer → approved action → result returned to user
+User request → coordinator advertises code-owned schemas → model proposes a
+structured call → registry resolves the exact name → validator bounds arguments
+→ permission layer evaluates the registered action → audit records the start →
+executor invokes only the registered callable → bounded untrusted tool result →
+model produces the user-facing response
+
+Recognized current-news requests take a narrower deterministic route: before
+the model's first generation turn, the coordinator invokes the same registered,
+validated, permission-checked, and audited search and page-read tools using only
+the bounded current user message. The model then receives inert evidence with
+further tools disabled and can only produce the local user-facing response.
+
+The model never receives a callable, audit sink, approval authority, credential,
+or general execution primitive. The initial registry contains current local
+date/time and bounded decimal arithmetic. Module 2.1 optionally adds a read-only
+`search_public_web` entry that can contact only a configured numeric-loopback
+SearXNG service. SearXNG is a separate open-source process with upstream network
+authority but no model, memory, database, credential, browser, or assistant-
+process access. A deterministic Colima lifecycle starts its dedicated one-GiB
+profile on first use and stops it after 120 idle seconds or app shutdown. Only
+the reviewed configuration directory is mounted read-only; the model cannot
+control service lifecycle or configuration. The model supplies no search query;
+deterministic code uses only the normalized current user message. Returned
+titles, snippets, and HTTPS URLs are bounded untrusted data. The search adapter
+does not fetch results; Module 2.2 owns the separate reading boundary. Calls are serial, request-
+scoped, and limited to three tool steps. Browser, file, credential, shell,
+arbitrary URL fetch, and arbitrary-code capabilities remain disabled.
+
+Module 2.2 adds a distinct bounded public-page reader, not arbitrary URL fetch.
+Only result numbers from the current correlated search can resolve to URLs.
+DNS must contain exclusively global addresses; the socket is pinned to one
+validated address while TLS remains verified for the original hostname. The
+reader rejects redirects, proxies, cookies, authentication, compressed or
+non-text responses, and returns only bounded inert text labeled untrusted. A
+hard caller deadline and four-worker ceiling contain slow-drip public servers.
 
 ## Initial scope
 

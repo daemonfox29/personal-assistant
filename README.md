@@ -29,7 +29,46 @@ repainting, and background output cannot be rendered into a different chat.
 Native Settings also provides paginated memory inventory,
 encrypted backup creation and guided restore, a content-minimized audit viewer,
 and keyboard-accessible owner controls. A verified recovery entry can enroll
-protected automatic unlock for later native-app launches. Tools are not enabled.
+protected automatic unlock for later native-app launches. Module 2.0 adds only
+two code-owned, read-only local tools: current date/time and bounded decimal
+arithmetic. The model can propose these calls, but a deterministic registry,
+permission policy, audit boundary, and three-step ceiling control execution.
+Module 2.1 adds an optional read-only public-search proposal backed by a separate
+local open-source SearXNG service. The main app contacts only numeric loopback;
+it cannot visit result pages or make arbitrary internet requests. Browser,
+filesystem, credential, shell, and arbitrary-code tools remain disabled.
+
+## Optional open-source web search
+
+The assistant can search only when the reviewed SearXNG service in
+`deploy/searxng` is running locally. The service is version-and-digest pinned,
+published only on `127.0.0.1:8888`, uses no paid API key, and has no access to
+assistant memory, conversations, databases, model state, or credentials.
+
+For public factual questions, the model is instructed to search automatically
+when it is uncertain or the answer may have changed. The user does not need to
+say "search the web" or approve each query. Casual conversation, creative work,
+private-memory questions, and facts already supplied by trusted context should
+not trigger public search.
+
+SearXNG runs in a dedicated open-source Colima profile with a one-GiB memory
+ceiling. The application starts that isolated profile on the first search,
+reuses it while searches remain active, and stops its container and VM after
+two minutes without a search or immediately when the app closes. Only the
+reviewed SearXNG configuration directory is mounted into the VM, read-only. If
+the runtime is absent or unhealthy, search fails safely while chat, memory,
+time, and calculator features continue normally.
+
+An outbound query is still visible to SearXNG's configured upstream search
+engines. Deterministic code therefore permits only a bounded phrase copied from
+the user's current message—the model cannot append private memory to a query.
+Only inert titles, snippets, and HTTPS source URLs return from search, labeled
+as untrusted data. When snippets are insufficient, a separate bounded reader
+may extract limited inert text from up to three public HTTPS results in the same
+request. The model selects result numbers, never URLs. Private network targets,
+redirects, scripts, cookies, authentication, downloads, and non-text content are
+blocked. Broad current-events requests automatically read available top results
+before the assistant synthesizes and cites its answer.
 
 ## Set up the project
 
@@ -376,8 +415,13 @@ govern future model, memory, browser, tool, data, interface, and audit choices.
 - Runtime personal data stays local and is excluded from Git.
 - The Ollama adapter can connect only to an explicit loopback address.
 - Every model request is limited to at most 2,000 response tokens.
-- The model has no web, browser, file, raw database, key, or tool access. The
-  application exposes only the bounded memory adapter described above.
+- The model has no browser, file, raw database, key, shell, or arbitrary tool
+  access. It may propose two reviewed local utilities and one bounded read-only
+  public search. Deterministic code decides whether any proposal runs. Search
+  can contact only local SearXNG with a query copied from the current user
+  message. A separate bounded reader can fetch inert text only from numbered
+  current-request search results. The application otherwise exposes
+  only the bounded memory adapter described above.
 
 A local passcode meaningfully reduces accidental or conversational misuse, but
 it is not a defense against an attacker who already controls the same operating-

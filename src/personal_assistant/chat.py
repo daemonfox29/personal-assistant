@@ -11,6 +11,7 @@ from personal_assistant.conversation import (
 )
 from personal_assistant.memory_context import MemoryContextProvider
 from personal_assistant.model import LanguageModel, StreamingLanguageModel
+from personal_assistant.tool_runtime import ToolExecutor
 
 
 InputReader = Callable[[str], str]
@@ -45,6 +46,7 @@ class ChatSession:
         memory_context_provider: MemoryContextProvider | None = None,
         explicit_memory_handler: ExplicitMemoryHandler | None = None,
         post_response_worker: PostResponseWorker | None = None,
+        tool_executor: ToolExecutor | None = None,
     ) -> None:
         self._settings = settings
         self._read_input = read_input
@@ -59,6 +61,7 @@ class ChatSession:
             memory_context_provider=memory_context_provider,
             explicit_memory_handler=explicit_memory_handler,
             post_response_worker=post_response_worker,
+            tool_executor=tool_executor,
         )
 
     def run(self) -> None:

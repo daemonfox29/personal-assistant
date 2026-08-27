@@ -6,9 +6,11 @@ from unittest.mock import Mock
 from uuid import UUID
 
 from personal_assistant.assistant_preferences import CommunicationStyle
+from personal_assistant.audit import InMemoryAuditSink
 from personal_assistant.conversation import (
     ConversationEventKind,
     ConversationService,
+    _is_broad_current_events_request,
 )
 from personal_assistant.model import (
     LanguageModel,
@@ -16,8 +18,11 @@ from personal_assistant.model import (
     ModelRequest,
     ModelResponse,
     ModelStreamChunk,
+    ModelToolCall,
     ModelUnavailableError,
 )
+from personal_assistant.tool_runtime import ToolExecutor, default_tool_registry
+from personal_assistant.web_reader import PublicWebPageReader
 
 
 class SyntheticStreamingModel:
@@ -47,6 +52,60 @@ class BlockingModel:
         self.started.set()
         self.release.wait(timeout=2)
         return ModelResponse("finished")
+
+
+class ToolCallingStreamingModel:
+    def __init__(self) -> None:
+        self.requests: list[ModelRequest] = []
+
+    def generate(self, request: ModelRequest) -> ModelResponse:
+        return ModelResponse("synthetic full response")
+
+    def stream_generate(self, request: ModelRequest):  # type: ignore[no-untyped-def]
+        self.requests.append(request)
+        if request.messages[-1].role is MessageRole.TOOL:
+            yield ModelStreamChunk("The calculated result is 5.")
+            return
+        yield ModelStreamChunk(
+            "",
+            tool_calls=(
+                ModelToolCall.create(
+                    "calculate",
+                    {"operator": "add", "left": 2, "right": 3},
+                ),
+            ),
+        )
+
+
+class RepeatingToolModel:
+    def __init__(self) -> None:
+        self.requests: list[ModelRequest] = []
+
+    def generate(self, request: ModelRequest) -> ModelResponse:
+        self.requests.append(request)
+        return ModelResponse(
+            "",
+            (ModelToolCall.create("get_current_datetime", {}),),
+        )
+
+
+class SearchProvider:
+    def __init__(self) -> None:
+        self.queries: list[str] = []
+
+    def search(self, query: str):
+        self.queries.append(query)
+        return {
+            "provider": "searxng",
+            "results": [
+                {
+                    "title": "Example",
+                    "snippet": "Current public information.",
+                    "url": "https://example.test/current",
+                }
+            ],
+            "trust": "untrusted_web_search_results",
+        }
 
 
 class RecordingMemoryHandler:
@@ -107,6 +166,409 @@ class BlockingHandoffMemoryWorker(RecordingPostResponseWorker):
 
 
 class ConversationServiceTests(unittest.TestCase):
+    def test_registered_tool_result_returns_through_tool_role_before_final_text(
+        self,
+    ) -> None:
+        model = ToolCallingStreamingModel()
+        executor = ToolExecutor(default_tool_registry(), InMemoryAuditSink())
+        service = ConversationService(model, tool_executor=executor)
+
+        events = tuple(service.events_for("What is two plus three?"))
+
+        self.assertEqual(len(model.requests), 2)
+        self.assertEqual(len(model.requests[0].tools), 2)
+        self.assertIn("Tool calls are proposals only", model.requests[0].messages[0].content)
+        tool_message = model.requests[1].messages[-1]
+        self.assertIs(tool_message.role, MessageRole.TOOL)
+        self.assertEqual(tool_message.tool_name, "calculate")
+        self.assertIn('"result":"5"', tool_message.content)
+        self.assertEqual(
+            "".join(
+                event.text
+                for event in events
+                if event.kind is ConversationEventKind.ASSISTANT_CHUNK
+            ),
+            "The calculated result is 5.",
+        )
+
+    def test_parallel_tool_calls_are_refused_without_execution(self) -> None:
+        class ParallelModel:
+            def generate(self, request: ModelRequest) -> ModelResponse:
+                return ModelResponse(
+                    "",
+                    (
+                        ModelToolCall.create("get_current_datetime", {}, index=0),
+                        ModelToolCall.create(
+                            "calculate",
+                            {"operator": "add", "left": 1, "right": 2},
+                            index=1,
+                        ),
+                    ),
+                )
+
+        audit = InMemoryAuditSink()
+        service = ConversationService(
+            ParallelModel(),
+            tool_executor=ToolExecutor(default_tool_registry(), audit),
+        )
+
+        events = tuple(service.events_for("Use two tools"))
+
+        self.assertTrue(
+            any("Parallel tool requests" in event.text for event in events)
+        )
+        self.assertEqual(audit.events, ())
+
+    def test_conflicting_nonstream_tool_indexes_are_rejected(self) -> None:
+        class ConflictingModel:
+            def generate(self, request: ModelRequest) -> ModelResponse:
+                return ModelResponse(
+                    "",
+                    (
+                        ModelToolCall.create("get_current_datetime", {}, index=0),
+                        ModelToolCall.create(
+                            "calculate",
+                            {"operator": "add", "left": 1, "right": 2},
+                            index=0,
+                        ),
+                    ),
+                )
+
+        audit = InMemoryAuditSink()
+        service = ConversationService(
+            ConflictingModel(),
+            tool_executor=ToolExecutor(default_tool_registry(), audit),
+        )
+
+        events = tuple(service.events_for("Use a tool"))
+
+        self.assertTrue(any("unreadable response" in event.text for event in events))
+        self.assertEqual(audit.events, ())
+
+    def test_tool_loop_stops_after_three_executions(self) -> None:
+        model = RepeatingToolModel()
+        audit = InMemoryAuditSink()
+        service = ConversationService(
+            model,
+            tool_executor=ToolExecutor(default_tool_registry(), audit),
+        )
+
+        events = tuple(service.events_for("Keep checking the time"))
+
+        self.assertEqual(len(model.requests), 4)
+        self.assertEqual(
+            sum(event.outcome.value == "succeeded" for event in audit.events),
+            3,
+        )
+        self.assertTrue(any("tool-step limit" in event.text for event in events))
+
+    def test_tool_messages_are_not_persisted_into_the_next_user_turn(self) -> None:
+        class FirstToolThenTextModel:
+            def __init__(self) -> None:
+                self.requests: list[ModelRequest] = []
+
+            def generate(self, request: ModelRequest) -> ModelResponse:
+                self.requests.append(request)
+                if len(self.requests) == 1:
+                    return ModelResponse(
+                        "",
+                        (ModelToolCall.create("get_current_datetime", {}),),
+                    )
+                return ModelResponse("done")
+
+        model = FirstToolThenTextModel()
+        service = ConversationService(
+            model,
+            tool_executor=ToolExecutor(default_tool_registry(), InMemoryAuditSink()),
+        )
+
+        tuple(service.events_for("What time is it?"))
+        tuple(service.events_for("Thanks"))
+
+        next_turn_messages = model.requests[-1].messages
+        self.assertFalse(
+            any(message.role is MessageRole.TOOL for message in next_turn_messages)
+        )
+
+    def test_web_search_uses_current_user_query_and_returns_citation_data(self) -> None:
+        class SearchModel:
+            def __init__(self) -> None:
+                self.requests: list[ModelRequest] = []
+
+            def generate(self, request: ModelRequest) -> ModelResponse:
+                self.requests.append(request)
+                if request.messages[-1].role is MessageRole.TOOL:
+                    return ModelResponse(
+                        "Example reports current information "
+                        "(https://example.test/current)."
+                    )
+                return ModelResponse(
+                    "",
+                    (
+                        ModelToolCall.create(
+                            "search_public_web",
+                            {"query": "latest SearXNG release"},
+                        ),
+                    ),
+                )
+
+        provider = SearchProvider()
+        model = SearchModel()
+        service = ConversationService(
+            model,
+            tool_executor=ToolExecutor(
+                default_tool_registry(web_search=provider),
+                InMemoryAuditSink(),
+            ),
+        )
+
+        events = tuple(service.events_for("What is the latest SearXNG release?"))
+
+        self.assertEqual(
+            provider.queries,
+            ["What is the latest SearXNG release?"],
+        )
+        self.assertIn(
+            "Automatically use public web search",
+            model.requests[0].messages[0].content,
+        )
+        self.assertIn(
+            "without asking permission",
+            model.requests[0].messages[0].content,
+        )
+        self.assertIn(
+            "empty argument object",
+            model.requests[0].messages[0].content,
+        )
+        self.assertIn(
+            "untrusted_web_search_results",
+            model.requests[1].messages[-1].content,
+        )
+        self.assertIn(
+            "https://example.test/current",
+            "".join(event.text for event in events),
+        )
+
+    def test_model_search_query_is_not_used_as_outbound_data(self) -> None:
+        class InjectingSearchModel:
+            def __init__(self) -> None:
+                self.requests: list[ModelRequest] = []
+
+            def generate(self, request: ModelRequest) -> ModelResponse:
+                self.requests.append(request)
+                if len(self.requests) == 1:
+                    return ModelResponse(
+                        "",
+                        (
+                            ModelToolCall.create(
+                                "search_public_web",
+                                {"query": "private model memory value"},
+                            ),
+                        ),
+                    )
+                return ModelResponse("Python result.")
+
+        provider = SearchProvider()
+        model = InjectingSearchModel()
+        service = ConversationService(
+            model,
+            tool_executor=ToolExecutor(
+                default_tool_registry(web_search=provider),
+                InMemoryAuditSink(),
+            ),
+        )
+
+        events = tuple(
+            service.events_for("What is the current Python release today?")
+        )
+
+        self.assertEqual(
+            provider.queries,
+            ["What is the current Python release today?"],
+        )
+        self.assertNotIn("private model memory value", repr(provider.queries))
+        self.assertEqual(len(model.requests), 2)
+        self.assertIn("Python result.", "".join(event.text for event in events))
+
+    def test_recent_news_search_auto_reads_before_synthesized_answer(self) -> None:
+        class ReadingModel:
+            def __init__(self) -> None:
+                self.requests: list[ModelRequest] = []
+
+            def generate(self, request: ModelRequest) -> ModelResponse:
+                self.requests.append(request)
+                last = request.messages[-1]
+                if last.role is MessageRole.USER:
+                    return ModelResponse(
+                        "I cannot access current information. Check these links."
+                    )
+                return ModelResponse(
+                    "The current update is synthesized from the report "
+                    "(https://example.test/current)."
+                )
+
+        provider = SearchProvider()
+        reader = PublicWebPageReader(
+            fetcher=lambda _url, _timeout: (
+                "text/plain",
+                "utf-8",
+                b"Detailed current public report for synthesis.",
+            )
+        )
+        model = ReadingModel()
+        service = ConversationService(
+            model,
+            communication_style=CommunicationStyle("a" * 2_000),
+            context_window_tokens=8_192,
+            default_response_tokens=2_000,
+            tool_executor=ToolExecutor(
+                default_tool_registry(
+                    web_search=provider,
+                    web_page_reader=reader,
+                ),
+                InMemoryAuditSink(),
+            ),
+        )
+
+        events = tuple(service.events_for("Tell me some recent news about Iran."))
+
+        self.assertEqual(provider.queries, ["Tell me some recent news about Iran."])
+        self.assertEqual(len(model.requests), 1)
+        self.assertIn(
+            "untrusted_public_page_text",
+            model.requests[0].messages[-1].content,
+        )
+        self.assertEqual(model.requests[0].tools, ())
+        answer = "".join(event.text for event in events)
+        self.assertIn("synthesized", answer)
+        self.assertIn("https://example.test/current", answer)
+        self.assertIn(
+            "Earlier conversation and saved context were omitted from this "
+            "request to leave room for tool results.",
+            tuple(event.text for event in events),
+        )
+
+    def test_broad_news_phrases_trigger_automatic_page_reading(self) -> None:
+        for prompt in (
+            "Update me on current events today.",
+            "Tell me some recent news about Iran.",
+            "What are the latest updates on this story?",
+        ):
+            with self.subTest(prompt=prompt):
+                self.assertTrue(_is_broad_current_events_request(prompt))
+
+    def test_tool_reserve_scales_down_with_an_8k_context_window(self) -> None:
+        model = SyntheticStreamingModel()
+        service = ConversationService(
+            model,
+            context_window_tokens=8_192,
+            default_response_tokens=400,
+            tool_executor=ToolExecutor(
+                default_tool_registry(
+                    web_search=SearchProvider(),
+                    web_page_reader=PublicWebPageReader(
+                        fetcher=lambda _url, _timeout: (
+                            "text/plain",
+                            "utf-8",
+                            b"Current public report.",
+                        )
+                    ),
+                ),
+                InMemoryAuditSink(),
+            ),
+        )
+
+        events = tuple(service.events_for("Hello."))
+
+        self.assertEqual(len(model.requests), 1)
+        self.assertNotIn(
+            "Earlier conversation and saved context were omitted from this "
+            "request to leave room for tool results.",
+            tuple(event.text for event in events),
+        )
+
+    def test_page_read_is_a_coordinator_enforced_terminal_tool_step(self) -> None:
+        class ExtraToolModel:
+            def __init__(self) -> None:
+                self.requests: list[ModelRequest] = []
+
+            def generate(self, request: ModelRequest) -> ModelResponse:
+                self.requests.append(request)
+                if request.messages[-1].role is MessageRole.USER:
+                    return ModelResponse(
+                        "",
+                        (ModelToolCall.create("search_public_web", {}),),
+                    )
+                return ModelResponse(
+                    "",
+                    (
+                        ModelToolCall.create(
+                            "calculate",
+                            {"operator": "add", "left": 1, "right": 1},
+                        ),
+                    ),
+                )
+
+        provider = SearchProvider()
+        model = ExtraToolModel()
+        service = ConversationService(
+            model,
+            tool_executor=ToolExecutor(
+                default_tool_registry(
+                    web_search=provider,
+                    web_page_reader=PublicWebPageReader(
+                        fetcher=lambda _url, _timeout: (
+                            "text/plain",
+                            "utf-8",
+                            b"Current public report.",
+                        )
+                    ),
+                ),
+                InMemoryAuditSink(),
+            ),
+        )
+
+        events = tuple(service.events_for("Update me on current events today."))
+
+        self.assertEqual(len(model.requests), 1)
+        self.assertEqual(model.requests[0].tools, ())
+        self.assertIn(
+            "No further tool requests are allowed after public page reading.",
+            tuple(event.text for event in events),
+        )
+
+    def test_duplicate_web_search_is_stopped_after_first_attempt(self) -> None:
+        class DuplicateSearchModel:
+            def __init__(self) -> None:
+                self.requests = 0
+
+            def generate(self, request: ModelRequest) -> ModelResponse:
+                self.requests += 1
+                return ModelResponse(
+                    "",
+                    (
+                        ModelToolCall.create(
+                            "search_public_web",
+                            {"query": "current public result"},
+                        ),
+                    ),
+                )
+
+        provider = SearchProvider()
+        model = DuplicateSearchModel()
+        service = ConversationService(
+            model,
+            tool_executor=ToolExecutor(
+                default_tool_registry(web_search=provider),
+                InMemoryAuditSink(),
+            ),
+        )
+
+        events = tuple(service.events_for("Find the current public result."))
+
+        self.assertEqual(provider.queries, ["Find the current public result."])
+        self.assertEqual(model.requests, 2)
+        self.assertTrue(any("already attempted" in event.text for event in events))
     def test_pre_response_memory_notice_precedes_model_and_skips_duplicate_queue(self) -> None:
         model = SyntheticStreamingModel()
         worker = RecordingPostResponseWorker()

@@ -6,6 +6,7 @@ from personal_assistant.config import (
     ChatSettings,
     MemorySettings,
     OllamaSettings,
+    SearchSettings,
     load_settings,
 )
 from personal_assistant.local_http import LocalConnectionError
@@ -22,6 +23,7 @@ class AppSettingsTests(unittest.TestCase):
         self.assertEqual(settings.chat.session_history_tokens, 6000)
         self.assertTrue(settings.memory.enabled)
         self.assertEqual(settings.memory.context_tokens, 2000)
+        self.assertEqual(settings.search.base_url, "http://127.0.0.1:8888")
 
     def test_environment_can_override_machine_local_settings(self) -> None:
         settings = load_settings(
@@ -30,6 +32,7 @@ class AppSettingsTests(unittest.TestCase):
                 "PERSONAL_ASSISTANT_CONTEXT_TOKENS": "2048",
                 "PERSONAL_ASSISTANT_HISTORY_TOKENS": "1000",
                 "PERSONAL_ASSISTANT_LONG_RESPONSE_TOKENS": "900",
+                "PERSONAL_ASSISTANT_MAX_RESPONSE_TOKENS": "1000",
             }
         )
 
@@ -37,6 +40,20 @@ class AppSettingsTests(unittest.TestCase):
         self.assertEqual(settings.ollama.context_tokens, 2048)
         self.assertEqual(settings.chat.session_history_tokens, 1000)
         self.assertEqual(settings.chat.long_response_tokens, 900)
+
+    def test_search_override_must_remain_numeric_loopback(self) -> None:
+        settings = load_settings(
+            {"PERSONAL_ASSISTANT_SEARXNG_URL": "http://[::1]:9999"}
+        )
+        self.assertEqual(settings.search.base_url, "http://[::1]:9999")
+
+        for value in (
+            "http://localhost:8888",
+            "http://192.168.1.2:8888",
+            "https://127.0.0.1:8888",
+        ):
+            with self.subTest(value=value), self.assertRaises(LocalConnectionError):
+                SearchSettings(base_url=value)
 
     def test_memory_paths_and_enablement_are_machine_local(self) -> None:
         settings = load_settings(
@@ -85,16 +102,20 @@ class AppSettingsTests(unittest.TestCase):
         with self.assertRaises(LocalConnectionError):
             OllamaSettings(base_url="http://localhost:11434")
 
-    def test_context_window_can_be_increased_for_another_machine(self) -> None:
+    def test_context_window_accepts_the_full_128k_ceiling(self) -> None:
         settings = load_settings(
-            {"PERSONAL_ASSISTANT_CONTEXT_TOKENS": "32768"}
+            {"PERSONAL_ASSISTANT_CONTEXT_TOKENS": "131072"}
         )
 
-        self.assertEqual(settings.ollama.context_tokens, 32768)
+        self.assertEqual(settings.ollama.context_tokens, 131072)
 
     def test_context_window_rejects_unbounded_resource_values(self) -> None:
         with self.assertRaises(ValueError):
             load_settings({"PERSONAL_ASSISTANT_CONTEXT_TOKENS": "131073"})
+
+    def test_context_window_must_leave_room_for_the_response_ceiling(self) -> None:
+        with self.assertRaises(ValueError):
+            load_settings({"PERSONAL_ASSISTANT_CONTEXT_TOKENS": "2048"})
 
     def test_default_response_limit_cannot_exceed_hard_ceiling(self) -> None:
         with self.assertRaises(ValueError):

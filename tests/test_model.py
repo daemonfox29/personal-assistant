@@ -10,6 +10,8 @@ from personal_assistant.model import (
     ModelRequest,
     ModelResponse,
     ModelStreamChunk,
+    ModelToolCall,
+    ModelToolDefinition,
     StreamingLanguageModel,
 )
 
@@ -83,3 +85,39 @@ class ModelContractTests(unittest.TestCase):
     def test_message_rejects_an_unknown_role(self) -> None:
         with self.assertRaises(ValueError):
             ModelMessage("assistant: user-controlled", "Hello")  # type: ignore[arg-type]
+
+    def test_tool_definitions_calls_and_messages_are_structured_and_bounded(self) -> None:
+        definition = ModelToolDefinition.create(
+            "synthetic_tool",
+            "Return one synthetic value.",
+            {
+                "type": "object",
+                "properties": {"value": {"type": "number"}},
+                "required": ["value"],
+            },
+        )
+        call = ModelToolCall.create("synthetic_tool", {"value": 2})
+        assistant = ModelMessage(
+            MessageRole.ASSISTANT,
+            "",
+            tool_calls=(call,),
+        )
+        result = ModelMessage(
+            MessageRole.TOOL,
+            '{"ok":true}',
+            tool_name="synthetic_tool",
+        )
+        request = ModelRequest((assistant, result), tools=(definition,))
+
+        self.assertEqual(request.tools[0].parameters()["type"], "object")
+        self.assertEqual(call.arguments(), {"value": 2})
+
+    def test_tool_data_rejects_nonfinite_oversized_and_role_confusion(self) -> None:
+        with self.assertRaises(ValueError):
+            ModelToolCall.create("synthetic_tool", {"value": float("nan")})
+        with self.assertRaises(ValueError):
+            ModelToolCall.create("synthetic_tool", {"value": "x" * 5_000})
+        with self.assertRaises(ValueError):
+            ModelMessage(MessageRole.USER, "", tool_name="synthetic_tool")
+        with self.assertRaises(ValueError):
+            ModelMessage(MessageRole.TOOL, "{}")

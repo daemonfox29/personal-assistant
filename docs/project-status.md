@@ -52,6 +52,19 @@ This document is the handoff point between coding sessions. At the end of each s
   handoff barrier. Explicit prior-chat recall uses a bounded encrypted FTS index;
   ordinary prompts still do not load other transcripts.
 - The local permission policy is implemented and covered by automated tests.
+- Module 2.0 has a code-owned deterministic tool registry and executor shared by
+  native and recovery-terminal composition. Ollama receives native structured
+  definitions for current local date/time and bounded decimal arithmetic.
+  Every proposed execution is schema-validated, policy-checked, content-free
+  audited, result-bounded, returned as untrusted tool-role data, and capped at
+  three serial steps. Module 2.1 now adds an optional read-only search definition
+  backed only by numeric-loopback SearXNG. Its query is derived only from the
+  current user message and returned snippets are bounded untrusted data. Module
+  2.2 adds request-scoped bounded text reading from numbered current search
+  results, while browser, file, credential, shell, arbitrary URL fetch, and
+  arbitrary-code tools remain disabled. The pinned SearXNG deployment now
+  runs on demand in a dedicated one-GiB Colima profile and stops after two idle
+  minutes or normal app shutdown.
 - GitHub Actions is configured to test pull requests targeting `main` before
   merge. The public repository has an active ruleset requiring the `test`
   check and blocking force pushes and deletion. Non-draft pull requests from
@@ -72,10 +85,12 @@ This document is the handoff point between coding sessions. At the end of each s
   confirmed persistent records, intercepts explicit remember instructions, and
   deterministically commits reviewed clear exact low-risk statements before the
   response while analyzing other completed turns asynchronously into
-  quarantined candidates. It has
-  no tools, browser access, broad credential access, or web capability; the
-  native composition alone receives a narrow automatic-unlock credential
-  adapter that is never exposed to the model or widgets.
+  quarantined candidates. It has the two reviewed local Module 2.0 utilities and
+  the optional bounded SearXNG search path and numbered-result page reader, with
+  no browser access, broad credential access, arbitrary page retrieval, or
+  general network capability; the native
+  composition alone receives a narrow automatic-unlock credential adapter that
+  is never exposed to the model or widgets.
 - Conversation policy is documented separately from the action-permission policy.
 - `docs/security-principles.md` is the governing threat model and review
   checklist for every future capability; design decisions should explicitly
@@ -136,7 +151,7 @@ complete; the batched Linux pull-request check is its final platform gate.
   persistent personal-data operations are enabled.
 - [x] Module 1: select SQLCipher behind a replaceable encrypted SQLite and key-
   provider boundary; verify it locally on macOS ARM64 using synthetic data.
-- [ ] Module 1 portability: confirm the pinned SQLCipher boundary in the batched
+- [x] Module 1 portability: confirm the pinned SQLCipher boundary in the batched
   Linux GitHub Actions run. Windows verification remains a documented release
   gate before distributing a packaged Windows build.
 - [x] Module 1: implement and test the checksummed migration runner and initial
@@ -175,10 +190,174 @@ complete; the batched Linux pull-request check is its final platform gate.
 - [ ] Deferred release gate: package and sign the macOS app and verify packaged
   recovery and shutdown. Keep Windows packaging and runtime verification as a
   required later gate.
-- [ ] Define the assistant's first tool registry and permission-enforcement path before adding any tool.
-- [ ] Add a web/search tool only behind the tool registry and approval layer.
+- [x] Module 2.0: define and implement the assistant's first code-owned tool
+  registry, native Ollama tool-call protocol, deterministic permission and audit
+  path, bounded executor, and safe local time and calculator tools.
+- [ ] Deferred at owner direction: run the Module 2.0/2.1 Linux pull-request
+  portability workflow. Do not describe it as verified meanwhile.
+- [x] Module 2.1 code boundary: add user-derived read-only public search through
+  fixed numeric-loopback SearXNG, with bounded inert results, citations,
+  timeouts, duplicate suppression, policy enforcement, and content-free audit.
+- [x] Module 2.1 runtime gate: install the approved open-source Colima runtime,
+  start the pinned loopback-only SearXNG deployment, verify a real search, and
+  verify literal 120-second idle shutdown.
+- [x] Module 2.2: bind numbered page selections to current correlated search
+  results, pin public DNS addresses under hostname-verified TLS, extract bounded
+  inert text, auto-read broad news results, and verify a cited real-app current-
+  events synthesis.
 
 ## Session history
+
+### 2026-08-26 — Module 2.2 bounded public page reading
+
+Completed:
+
+- Added `read_current_search_results`, which accepts one to three result numbers
+  and resolves them only against URLs saved under the current search correlation
+  ID. The one-use set is consumed on read and cannot cross requests.
+- Added a raw-socket HTTPS reader that rejects non-HTTPS URLs, credentials,
+  alternate ports, redirects, proxies, cookies, authentication, compression,
+  non-text types, and any DNS answer that is not globally routable. The socket
+  connects to a pinned validated address while TLS verifies the original host.
+- Bounded each page to a 512-KiB transferred prefix and 1,200 visible characters,
+  each request to three sequential pages, and the complete tool result to 5,500
+  bytes. Script, style, noscript, template, and SVG content is removed.
+- Labeled all extracted content untrusted and instructed the model to ignore
+  page-borne directions, synthesize evidence, cite exact result URLs, compare
+  sources, and disclose evidence limits.
+- Added deterministic broad-current-events recognition. After a successful
+  classification, code performs search and reads the first three available
+  results before Qwen's first generation turn. Current-news retrieval therefore
+  does not rely on Qwen recognizing that it lacks current knowledge or
+  requesting either tool.
+- Corrected the 16K context reservation to cover the real search-then-read path
+  instead of three impossible maximum-sized page results. Page reading is now a
+  coordinator-enforced terminal tool step, leaving room for the final answer and
+  the maximum configured communication-style preference even when the full
+  2,000-token response allowance is selected.
+- Made the up-front tool reserve proportional to the active model context: it
+  may use at most half of the post-response request budget. Fixed page/result
+  security ceilings remain unchanged, while 8K, 16K, and larger configured
+  windows preserve room for their own prompt and trusted instructions.
+- Replaced the free-form context-window field with exact 8K, 16K, 32K, 64K,
+  and 128K UI presets. The selected label persists its exact token value.
+- Added a hard caller deadline and four-worker ceiling around public page
+  fetching. Per-socket timeouts remain in place, while a hostile slow-drip
+  server can no longer hold the conversation open indefinitely.
+- Aligned environment and desktop resource validation so every context/response
+  combination preserves at least 1,024 tokens for model input.
+
+Verification:
+
+- Private and mixed DNS answers, redirect status, unsafe URL forms, unsupported
+  charset, active markup, stale request IDs, model-authored query data, and
+  cross-request page selection have focused regression coverage.
+- The real application factory under a Spotlight-style environment processed
+  “Update me on major current events today,” audited both search and public-page
+  reading as succeeded, returned a synthesized five-item update with exact HTTPS
+  source links, emitted no error notice, and closed the managed runtime cleanly.
+- The live approximately 64K model stack processed both “Tell me some recent
+  news about Iran” and “Give me some current events on Iran,” automatically
+  searched and read bounded public pages before generation, and returned
+  concrete cited updates rather than a real-time-access refusal or list of
+  search-result links.
+- `uv lock --check`, source/test compilation, Git object integrity, credential
+  signature review, and whitespace validation passed. The complete local suite
+  passed 422 tests in 13.676 seconds, with only the intentionally opt-in
+  100,000-record memory benchmark skipped.
+
+### 2026-08-26 — Module 2.1 open-source read-only search boundary
+
+Completed:
+
+- Chose self-hosted SearXNG instead of a paid/proprietary search API or a broad
+  scraping library. Kept a replaceable provider protocol so the local search
+  implementation can change without changing model or executor contracts.
+- Added a fixed numeric-loopback JSON adapter with no proxy discovery, redirect
+  following, cookies, page retrieval, result URL fetching, credentials, or
+  arbitrary destination selection. The adapter bounds timeout, response bytes,
+  JSON shape, result count, title, snippet, and HTTPS URLs.
+- Added deterministic query derivation: the model can request a search but
+  supplies no outbound query. Code uses only the bounded normalized current user
+  message and ignores model-authored query text, preventing appended memory
+  values or other model-authored data from reaching search.
+- Labeled all results as untrusted web data, strengthened the system instruction
+  against result-borne prompt injection, required exact returned source URLs for
+  search-supported claims, and stopped duplicate exact search attempts.
+- Added a pinned, loopback-published, read-only SearXNG container definition with
+  a small reviewed engine set, moderate safe search, JSON-only responses, no
+  autocomplete or image proxy, short upstream timeouts, and no retries.
+- Added app-owned Colima lifecycle management. The dedicated profile is capped
+  at one GiB and two CPUs, mounts only the reviewed configuration directory
+  read-only, starts on first search, resets its timer after each search, and
+  stops after 120 idle seconds or normal app shutdown. The model has no
+  lifecycle or container authority.
+- Rejected Podman after its real macOS gate exposed current VM forwarding and
+  startup failures. Colima with macOS Virtualization.Framework passed the same
+  stability, real-search, and shutdown gates.
+- Live audit showed that prompting Qwen to copy an exact query, including a
+  bounded retry, remained unreliable. Removed query authorship from the model
+  contract entirely rather than weakening the exfiltration boundary.
+- Added a pre-search liveness check so cached in-process runtime state cannot
+  outlive the actual VM or container. If the dedicated service was stopped
+  externally, the app now re-establishes the bounded runtime before searching.
+- Added a fixed trusted Homebrew and macOS system command path for the managed
+  runtime. Spotlight/Finder's minimal environment no longer prevents Colima
+  from locating its Lima dependency, and arbitrary inherited path entries are
+  not trusted.
+
+Verification:
+
+- A real generic public search returned bounded HTTPS results through the pinned
+  SearXNG image, and managed close removed the listener and stopped the VM.
+- An independent agent launched the real application factory with real Qwen and
+  SearXNG under a Finder/Spotlight-style minimal environment. An ordinary current
+  factual question triggered `web_search` audit events from `started` to
+  `succeeded`, returned an exact HTTPS citation with no search notice, and clean
+  shutdown stopped the VM and removed the loopback listener.
+- A literal 125-second observation confirmed the dedicated runtime stopped after
+  its 120-second inactivity threshold.
+- `uv lock --check` passed, all source and test modules compiled, and the full
+  local suite passed: 407 tests in 13.743 seconds, with only the intentionally
+  opt-in 100,000-record memory benchmark skipped.
+
+Next:
+
+- Add trusted Settings status, manual override, idle-time, and reviewed-update
+  controls later without exposing lifecycle authority to the model.
+
+### 2026-08-26 — Module 2.0 bounded local tool foundation
+
+Completed:
+
+- Specified the first model-to-tool boundary before enabling capability. The
+  initial scope contains only local current date/time and bounded decimal
+  arithmetic; web, browser, files, credentials, shell, and arbitrary evaluation
+  remain explicitly excluded.
+- Extended the replaceable model contract and Ollama adapter with bounded native
+  tool definitions, structured calls, assistant call messages, and distinct
+  tool-result roles. Ordinary no-tool responses retain streaming behavior.
+- Added a code-owned registry and executor that resolve exact names, validate
+  canonical arguments, apply the existing permission policy, fail closed when
+  start auditing is unavailable, and return only bounded JSON labeled as
+  untrusted tool data.
+- Added one-call-per-step and three-step-per-request coordinator ceilings.
+  Parallel, malformed, conflicting-index, unknown, unauthorized, excessive, and
+  invalid calls cannot reach a handler. Internal tool messages are not retained
+  as ordinary conversation history.
+- Wired the same executor into native and recovery-terminal session composition
+  without exposing registry, audit, approval, model, or database authority to
+  widgets.
+- Verified all 380 local tests; one opt-in performance test remained skipped.
+  Focused tool/model tests, source and test compilation, dependency-lock
+  consistency, and diff whitespace checks also passed.
+
+Next:
+
+- Commit the locally verified Module 2.0 milestone, then use one batched pull
+  request for its Linux portability gate when ready.
+- Design Module 2.1 read-only web search as a separate network, redirect,
+  provenance, prompt-injection, citation, cancellation, and approval gate.
 
 ### 2026-08-26 — Pre-PR blocker remediation
 

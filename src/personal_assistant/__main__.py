@@ -27,6 +27,10 @@ from personal_assistant.portable_security import (
     PortableSecurityManager,
     PortableSecuritySettings,
 )
+from personal_assistant.search_runtime import ColimaSearchRuntime
+from personal_assistant.tool_runtime import ToolExecutor, default_tool_registry
+from personal_assistant.web_search import SearXNGSearchProvider
+from personal_assistant.web_reader import PublicWebPageReader
 
 
 def startup_message() -> str:
@@ -60,6 +64,12 @@ def main() -> None:
                         audit_sink=memory_runtime.audit_sink,
                     )
                 print(startup_message())
+                search_runtime = ColimaSearchRuntime()
+                search_provider = SearXNGSearchProvider(
+                    settings.search.base_url,
+                    timeout_seconds=settings.search.timeout_seconds,
+                    lifecycle=search_runtime,
+                )
                 ChatSession(
                     model,
                     settings.chat,
@@ -72,6 +82,22 @@ def main() -> None:
                     ),
                     explicit_memory_handler=memory_runtime,
                     post_response_worker=memory_worker,
+                    tool_executor=ToolExecutor(
+                        default_tool_registry(
+                            web_search=search_provider,
+                            web_page_reader=PublicWebPageReader(),
+                        ),
+                        (
+                            memory_runtime.audit_sink
+                            if memory_runtime is not None
+                            else JsonLinesAuditSink(
+                                AuditFileSettings(
+                                    settings.memory.data_directory / "audit.jsonl"
+                                )
+                            )
+                        ),
+                        resource_closers=(search_provider.close,),
+                    ),
                 ).run()
             finally:
                 if memory_worker is not None:
