@@ -89,12 +89,26 @@ class MemoryAnalyzerTests(unittest.TestCase):
         self.assertTrue(
             has_clear_direct_memory_statement("Synthetic Scooby is my dog.")
         )
+        self.assertTrue(
+            has_clear_direct_memory_statement(
+                "My vet is Synthetic Veterinary Center."
+            )
+        )
         self.assertFalse(
             has_clear_direct_memory_statement("Do I have any gut sensitivities?")
         )
+        self.assertFalse(
+            has_clear_direct_memory_statement("have I ever lived in chicago")
+        )
+        self.assertFalse(
+            has_clear_direct_memory_statement("I was born and raised there!")
+        )
+        self.assertTrue(
+            has_clear_direct_memory_statement("I lived in Chicago from 2021-2023.")
+        )
         self.assertFalse(has_clear_direct_memory_statement("I have a question."))
 
-    def test_model_json_becomes_candidate_never_ordinary_memory(self) -> None:
+    def test_ungrounded_model_fact_is_discarded_not_stored(self) -> None:
         model = Mock(spec=LanguageModel)
         model.generate.return_value = ModelResponse(
             json.dumps(
@@ -123,7 +137,8 @@ class MemoryAnalyzerTests(unittest.TestCase):
         )
         result = self.coordinator.process_suggestion_batch(suggestions, uuid4())
 
-        self.assertEqual(len(result.results), 1)
+        self.assertEqual(suggestions, ())
+        self.assertEqual(result.results, ())
         self.assertEqual(
             self.repository.retrieve(
                 RetrievalRequest("Luna rope toys"), uuid4()
@@ -323,7 +338,7 @@ class MemoryAnalyzerTests(unittest.TestCase):
             ),
         )
 
-    def test_ambiguous_paraphrase_remains_unconfirmed(self) -> None:
+    def test_ambiguous_paraphrase_is_discarded(self) -> None:
         user_text = "My dog Luna likes naps. My dog Scooby likes walks."
         model = Mock(spec=LanguageModel)
         model.generate.return_value = ModelResponse(
@@ -353,7 +368,7 @@ class MemoryAnalyzerTests(unittest.TestCase):
             uuid4(),
         )
 
-        self.assertIsNone(suggestions[0].user_evidence)
+        self.assertEqual(suggestions, ())
 
     def test_exact_content_skips_question_and_finds_later_assertion(self) -> None:
         user_text = "Is Scooby my dog? Scooby is my dog."
@@ -388,16 +403,16 @@ class MemoryAnalyzerTests(unittest.TestCase):
         self.assertEqual(suggestions[0].user_evidence, "Scooby is my dog.")
 
     def test_question_fragment_cannot_be_promoted_as_direct_evidence(self) -> None:
-        user_text = "What do you remember about my dog?"
+        user_text = "have I ever lived in chicago"
         model = Mock(spec=LanguageModel)
         model.generate.return_value = ModelResponse(
             json.dumps(
                 [
                     {
                         "type": "fact",
-                        "subject": "model-authored dog subject",
-                        "content": "my dog",
-                        "evidence_quote": "my dog",
+                        "subject": "model-authored residence subject",
+                        "content": user_text,
+                        "evidence_quote": user_text,
                         "sensitivity": "normal",
                         "mention_policy": "may_mention_when_relevant",
                     }
@@ -422,8 +437,9 @@ class MemoryAnalyzerTests(unittest.TestCase):
             direct_user_text=user_text,
         )
 
-        assert result.results[0].record is not None
-        self.assertEqual(result.results[0].record.status, RecordStatus.CANDIDATE)
+        self.assertEqual(suggestions, ())
+        self.assertEqual(result.results, ())
+        self.assertEqual(self.repository.list_candidates(uuid4()), ())
 
     def test_uncertain_first_person_statement_cannot_be_auto_confirmed(self) -> None:
         user_text = "I think I have a synthetic gluten sensitivity."
@@ -460,9 +476,9 @@ class MemoryAnalyzerTests(unittest.TestCase):
             direct_user_text=user_text,
         )
 
-        self.assertIsNone(suggestions[0].user_evidence)
-        assert result.results[0].record is not None
-        self.assertEqual(result.results[0].record.status, RecordStatus.CANDIDATE)
+        self.assertEqual(suggestions, ())
+        self.assertEqual(result.results, ())
+        self.assertEqual(self.repository.list_candidates(uuid4()), ())
 
     def test_malformed_or_credential_proposal_is_discarded_and_audited(self) -> None:
         model = Mock(spec=LanguageModel)

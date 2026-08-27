@@ -396,6 +396,60 @@ class MemoryRetrievalTests(unittest.TestCase):
 
         self.assertEqual(result.receipt.selected_record_ids, (record.record_id,))
 
+    def test_retrieval_excludes_question_shaped_legacy_fact_and_duplicates(
+        self,
+    ) -> None:
+        question = self.repository.create_record(
+            RecordDraft(
+                FactPayload(
+                    "direct-statement:synthetic-question",
+                    "have I ever lived in chicago",
+                ),
+                RecordStatus.CONFIRMED,
+                Sensitivity.PERSONAL,
+                MentionPolicy.ASK_BEFORE_MENTIONING,
+                Scope(ScopeType.GLOBAL),
+            ),
+            self._explicit(),
+            uuid4(),
+        )
+        self._create("Synthetic canonical duplicate fact")
+        self._create("synthetic canonical duplicate fact.")
+
+        question_result = self.repository.retrieve(
+            RetrievalRequest(
+                "Chicago",
+                mode=RetrievalMode.DIRECT,
+            ),
+            uuid4(),
+        )
+        duplicate_result = self.repository.retrieve(
+            RetrievalRequest("synthetic canonical duplicate"),
+            uuid4(),
+        )
+
+        self.assertNotIn(
+            question.record_id,
+            question_result.receipt.selected_record_ids,
+        )
+        self.assertEqual(
+            dict(question_result.receipt.exclusion_counts)[
+                RetrievalExclusion.UNCONFIRMED
+            ],
+            1,
+        )
+        self.assertEqual(len(duplicate_result.memories), 1)
+        self.assertEqual(
+            dict(duplicate_result.receipt.exclusion_counts)[
+                RetrievalExclusion.DUPLICATE_CONTENT
+            ],
+            1,
+        )
+        self.assertIn(
+            "equivalent_content_deduplicated",
+            duplicate_result.receipt.applied_rules,
+        )
+
     def test_record_and_token_limits_are_enforced_independently(self) -> None:
         for index in range(4):
             self._create(f"bounded synthetic retrieval item {index}")

@@ -1,6 +1,7 @@
 """Composition tests for the UI-facing application boundary."""
 
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
@@ -25,6 +26,8 @@ from personal_assistant.conversation_history import (
 from personal_assistant.memory_types import (
     ActorType,
     FactPayload,
+    InsightConfidence,
+    InsightPayload,
     MentionPolicy,
     Provenance,
     RecordDraft,
@@ -269,6 +272,109 @@ class ApplicationServiceTests(unittest.TestCase):
                     uuid4(),
                 )
                 self.assertEqual(history[-1].status.value, "deleted")
+                service.close()
+
+    def test_memory_inventory_is_canonical_and_excludes_raw_fact_candidates(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            settings = AppSettings(
+                memory=MemorySettings(
+                    data_directory=Path(temporary_directory) / "private"
+                )
+            )
+            factory = AssistantApplicationFactory(settings)
+            factory.setup(RECOVERY, RECOVERY, PASSCODE, PASSCODE)
+            with patch(
+                "personal_assistant.application_service.OllamaModel",
+                return_value=SyntheticModel(),
+            ):
+                service = factory.open(RECOVERY)
+                runtime = service._runtime
+                self.assertIsNotNone(runtime)
+                confirmed = Provenance(
+                    SourceType.TRUSTED_INTERFACE,
+                    "synthetic-inventory",
+                    ActorType.SYSTEM,
+                )
+                candidate = Provenance(
+                    SourceType.MODEL_CANDIDATE,
+                    "turn:99999999-9999-9999-9999-999999999999",
+                    ActorType.MODEL_CANDIDATE,
+                    "synthetic-model-v1",
+                )
+
+                def create(payload, status, provenance):  # type: ignore[no-untyped-def]
+                    return runtime.repository.create_record(  # type: ignore[union-attr]
+                        RecordDraft(
+                            payload,
+                            status,
+                            Sensitivity.PERSONAL,
+                            MentionPolicy.ASK_BEFORE_MENTIONING,
+                            Scope(ScopeType.GLOBAL),
+                        ),
+                        provenance,
+                        uuid4(),
+                    )
+
+                create(
+                    FactPayload(
+                        "direct-statement:first",
+                        "My name is Synthetic Inventory Person.",
+                    ),
+                    RecordStatus.CONFIRMED,
+                    confirmed,
+                )
+                create(
+                    FactPayload(
+                        "direct-statement:duplicate",
+                        "my name is synthetic inventory person",
+                    ),
+                    RecordStatus.CONFIRMED,
+                    confirmed,
+                )
+                create(
+                    FactPayload(
+                        "direct-statement:question",
+                        "have I ever lived in chicago",
+                    ),
+                    RecordStatus.CONFIRMED,
+                    confirmed,
+                )
+                create(
+                    FactPayload(
+                        "model-background",
+                        "The capital of New Jersey is Trenton.",
+                    ),
+                    RecordStatus.CANDIDATE,
+                    candidate,
+                )
+                observed_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
+                create(
+                    InsightPayload(
+                        "Synthetic schedule changes may feel draining",
+                        InsightConfidence.LOW,
+                        "Only one synthetic situation was considered",
+                        observed_at,
+                        observed_at,
+                    ),
+                    RecordStatus.CANDIDATE,
+                    candidate,
+                )
+
+                inventory = service.list_memories()
+
+                self.assertEqual(len(inventory), 2)
+                values = tuple(item.value.casefold() for item in inventory)
+                self.assertEqual(
+                    sum("synthetic inventory person" in value for value in values),
+                    1,
+                )
+                self.assertTrue(
+                    any("schedule changes" in value for value in values)
+                )
+                self.assertFalse(any("chicago" in value for value in values))
+                self.assertFalse(any("capital" in value for value in values))
                 service.close()
 
     def test_tentative_observation_links_to_the_exact_completed_chat_message(

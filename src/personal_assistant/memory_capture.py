@@ -20,6 +20,10 @@ from personal_assistant.audit import (
     AuditReasonCode,
     AuditSink,
 )
+from personal_assistant.memory_evidence import (
+    is_standalone_direct_memory_statement,
+    memory_payload_equivalence_key,
+)
 from personal_assistant.memory_repository import (
     MAX_CAPTURE_NEIGHBORS,
     MAX_CANDIDATES_PER_SOURCE,
@@ -389,7 +393,12 @@ class MemoryCaptureCoordinator:
         """Confirm only exact low-risk text from the current user message."""
 
         evidence = suggestion.user_evidence
-        if evidence is None or user_text is None or evidence not in user_text:
+        if (
+            evidence is None
+            or user_text is None
+            or evidence not in user_text
+            or not is_standalone_direct_memory_statement(evidence)
+        ):
             return None
         digest = sha256(evidence.encode("utf-8")).hexdigest()[:24]
         try:
@@ -687,7 +696,8 @@ _PERSONAL_CONTENT = re.compile(
     r"(?:a\s+|an\s+)?(?:[\w'-]+\s+){0,5}"
     r"(?:allerg\w*|sensitiv\w*|intoleran\w*|dog|cat|pet|child|sibling|"
     r"partner|spouse)|"
-    r"my\s+(?:name|dog|cat|pet|favorite|preference|allerg\w*|sensitiv\w*|"
+    r"my\s+(?:name|dog|cat|pet|vet|veterinarian|favorite|preference|"
+    r"allerg\w*|sensitiv\w*|"
     r"intoleran\w*|age|home|city|state|country|job|career|profession|"
     r"pronouns?|schedule|goal|values?|hobb(?:y|ies)|diet))\b",
     re.IGNORECASE,
@@ -748,13 +758,13 @@ def _classify_neighbors(
     payload: MemoryPayload,
     neighbors: tuple[MemoryRecord, ...],
 ) -> tuple[tuple[MemoryRecord, ...], tuple[MemoryRecord, ...]]:
-    identity = canonical_json(payload_to_data(payload))
+    identity = memory_payload_equivalence_key(payload)
     topic = _payload_topic(payload)
     exact: list[MemoryRecord] = []
     topical: list[MemoryRecord] = []
     for record in neighbors:
         stored_payload = record.revision.payload
-        if canonical_json(payload_to_data(stored_payload)) == identity:
+        if memory_payload_equivalence_key(stored_payload) == identity:
             exact.append(record)
         elif topic is not None and _payload_topic(stored_payload) == topic:
             topical.append(record)

@@ -88,9 +88,11 @@ The first usable slice includes:
    through the same trusted runtime used by the CLI.
 8. A dedicated Memory section in Settings with persistent settings navigation,
    a small stable category sidebar, search, and one compact table rather than
-   one permanent panel per entity. Each row shows the saved value, kind, status,
-   update date, source navigation, and audited soft-delete control through
-   immutable application-service values.
+   one permanent panel per entity. The normal inventory shows confirmed usable
+   memory plus explicitly labeled tentative observations, collapses conservative
+   content-equivalent duplicates, and excludes the raw candidate-review ledger.
+   Each row shows the saved value, kind, status, update date, source navigation,
+   and audited soft-delete control through immutable application-service values.
 
 Candidate confirmation/rejection, backup/restore, pagination beyond the initial
 bounded inventory, and the bounded audit viewer follow as additional panels over
@@ -152,6 +154,14 @@ Uncertainty, conflicts, and higher-risk classifications instead produce an
 immediate clarification or review receipt and do not overwrite confirmed data.
 Prompts outside the deterministic gate retain asynchronous post-response
 analysis to avoid adding latency to every request.
+Question-shaped or context-dependent fragments cannot become confirmed facts,
+even when punctuation is missing or a model quotes them as evidence. Generated
+facts, preferences, notes, background knowledge, and trivia without an exact
+standalone user assertion are discarded rather than added to the candidate
+ledger. Only tentative observations may be inferred without exact user evidence;
+they remain labeled, expiring, and unable to overwrite confirmed facts. Existing
+invalid direct-statement records and equivalent duplicate content are excluded
+from retrieval without deleting their audit/revision history.
 Confirmed personal memories have standing owner approval for relevant ordinary
 retrieval, eliminating per-answer permission prompts. Direct-only,
 never-mention, restricted, and unconfirmed records remain excluded except by

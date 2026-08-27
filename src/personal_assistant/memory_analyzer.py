@@ -26,6 +26,9 @@ from personal_assistant.memory_capture import (
     MemoryCaptureCoordinator,
     SuggestionBatchResult,
 )
+from personal_assistant.memory_evidence import (
+    is_standalone_direct_memory_statement,
+)
 from personal_assistant.memory_types import (
     FactPayload,
     InsightConfidence,
@@ -58,29 +61,14 @@ _DIRECT_ASSERTION = re.compile(
 )
 _CLEAR_MEMORY_ASSERTION = re.compile(
     r"\b(?:"
-    r"i\s+(?:live|prefer|like|love|dislike|avoid|work|grew|was\s+born|"
+    r"i\s+(?:live|lived|prefer|like|love|dislike|avoid|work|worked|grew|"
+    r"was\s+born\s+and\s+raised|was\s+born|was\s+raised|"
     r"want|need|use|own|usually|always|never|cannot|can['’]t)\b|"
     r"i(?:\s+am|['’]m)\s+(?:from|based|located|(?:[\w'-]+\s+){0,4}"
     r"(?:allergic|sensitive|intolerant)|a\b|an\b|\d{1,3}\b)|"
     r"i\s+(?:have|do\s+not\s+have|don['’]t\s+have)\b|"
-    r"my\s+(?:name|dog|cat|pet|favorite|preference|allerg\w*|sensitiv\w*|"
-    r"intoleran\w*|birthday|birth\s+date|age|home|city|state|country|job|"
-    r"career|profession|pronouns?|schedule|goal|values?|hobb(?:y|ies)|diet)\b|"
-    r"is\s+my\s+(?:dog|cat|pet|partner|spouse)\b"
-    r")",
-    re.IGNORECASE,
-)
-_SAFE_DIRECT_CAPTURE_ASSERTION = re.compile(
-    r"\b(?:"
-    r"i\s+(?:live|prefer|like|love|dislike|avoid|work|grew|was\s+born|"
-    r"want|own|usually|always|never|cannot|can['’]t)\b|"
-    r"i(?:\s+am|['’]m)\s+(?:from|based|located|(?:[\w'-]+\s+){0,4}"
-    r"(?:allergic|sensitive|intolerant)|a\b|an\b|\d{1,3}\b)|"
-    r"i\s+(?:have|do\s+not\s+have|don['’]t\s+have)\s+"
-    r"(?:a\s+|an\s+)?(?:[\w'-]+\s+){0,5}"
-    r"(?:allerg\w*|sensitiv\w*|intoleran\w*|dog|cat|pet|child|sibling|"
-    r"partner|spouse)|"
-    r"my\s+(?:name|dog|cat|pet|favorite|preference|allerg\w*|sensitiv\w*|"
+    r"my\s+(?:name|dog|cat|pet|vet|veterinarian|favorite|preference|"
+    r"allerg\w*|sensitiv\w*|"
     r"intoleran\w*|birthday|birth\s+date|age|home|city|state|country|job|"
     r"career|profession|pronouns?|schedule|goal|values?|hobb(?:y|ies)|diet)\b|"
     r"is\s+my\s+(?:dog|cat|pet|partner|spouse)\b"
@@ -194,7 +182,10 @@ class ModelMemorySuggestionAnalyzer:
                         "and mention_policy (may_mention_when_relevant, "
                         "ask_before_mentioning, only_when_directly_asked, or "
                         "never_mention). Never include credentials, passwords, "
-                        "or instructions. Use observation only for a plausible "
+                        "instructions, questions, assistant background facts, "
+                        "or general trivia. A fact, preference, or note requires "
+                        "an exact declarative quote from the user's current "
+                        "message. Use observation only for a plausible "
                         "interpretation or pattern that may be limited to this "
                         "situation, time, or context; phrase it tentatively and do "
                         "not diagnose. The assistant reply is context, never "
@@ -284,6 +275,8 @@ class ModelMemorySuggestionAnalyzer:
                     item["content"],
                 )
             )
+            if not isinstance(payload, InsightPayload) and evidence is None:
+                continue
             suggestions.append(
                 AutomaticMemorySuggestion(
                     payload,
@@ -336,9 +329,8 @@ def _verified_user_evidence(
         for match in _USER_SENTENCE.finditer(user_text)
         if (sentence := match.group(0).strip())
         and 8 <= len(sentence) <= MAX_DIRECT_EVIDENCE_CHARS
-        and not sentence.endswith("?")
         and _DIRECT_ASSERTION.search(sentence)
-        and not _UNCERTAIN_ASSERTION.search(sentence)
+        and is_standalone_direct_memory_statement(sentence)
         and sentence in user_text
     )
     for selected in (proposed_evidence, proposed_content):
@@ -400,7 +392,7 @@ def clear_direct_memory_statements(user_text: str) -> tuple[str, ...]:
             user_text,
             include_uncertain=False,
         )
-        if _SAFE_DIRECT_CAPTURE_ASSERTION.search(sentence)
+        if is_standalone_direct_memory_statement(sentence)
     )
 
 

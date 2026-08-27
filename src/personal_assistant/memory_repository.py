@@ -23,6 +23,10 @@ from personal_assistant.audit import (
     AuditReasonCode,
     AuditSink,
 )
+from personal_assistant.memory_evidence import (
+    is_standalone_direct_memory_statement,
+    memory_payload_equivalence_key,
+)
 from personal_assistant.encrypted_database import EncryptedConnectionProvider
 from personal_assistant.memory_types import (
     ActorType,
@@ -181,6 +185,7 @@ class RetrievalExclusion(StrEnum):
     NOT_CURRENT = "not_current"
     MENTION_RESTRICTED = "mention_restricted"
     SENSITIVITY_RESTRICTED = "sensitivity_restricted"
+    DUPLICATE_CONTENT = "duplicate_content"
     RESULT_LIMIT = "result_limit"
     TOKEN_LIMIT = "token_limit"
 
@@ -649,8 +654,21 @@ class MemoryRepository:
 
                 ranked.sort(key=lambda item: (-item[0], -item[1], item[2]))
                 selected: list[RetrievedMemory] = []
+                selected_content: set[tuple[str, ...]] = set()
                 tokens_returned = 0
                 for _, _, _, record, reasons in ranked:
+                    content_key = memory_payload_equivalence_key(
+                        record.revision.payload
+                    ) + (
+                        record.scope.type.value,
+                        "" if record.scope.id is None else str(record.scope.id),
+                        ""
+                        if record.primary_entity_id is None
+                        else str(record.primary_entity_id),
+                    )
+                    if content_key in selected_content:
+                        exclusions[RetrievalExclusion.DUPLICATE_CONTENT] += 1
+                        continue
                     if len(selected) >= request.max_records:
                         exclusions[RetrievalExclusion.RESULT_LIMIT] += 1
                         continue
@@ -659,6 +677,7 @@ class MemoryRepository:
                         exclusions[RetrievalExclusion.TOKEN_LIMIT] += 1
                         continue
                     selected.append(RetrievedMemory(record, token_count, reasons))
+                    selected_content.add(content_key)
                     tokens_returned += token_count
 
         rules = (
@@ -672,6 +691,7 @@ class MemoryRepository:
             "restricted_requires_separate_authorization",
             "mention_policy_enforced",
             "deterministic_specificity_relevance_recency_rank",
+            "equivalent_content_deduplicated",
             "record_limit_enforced",
             "token_limit_enforced",
         )
@@ -1816,6 +1836,13 @@ class MemoryRepository:
         request: RetrievalRequest,
         now: datetime,
     ) -> RetrievalExclusion | None:
+        payload = record.revision.payload
+        if (
+            isinstance(payload, FactPayload)
+            and payload.subject.startswith("direct-statement:")
+            and not is_standalone_direct_memory_statement(payload.statement)
+        ):
+            return RetrievalExclusion.UNCONFIRMED
         if record.status is RecordStatus.CANDIDATE:
             if (
                 not request.include_tentative_observations

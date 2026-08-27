@@ -213,6 +213,25 @@ class MemoryCaptureTests(unittest.TestCase):
         assert street.record is not None
         self.assertEqual(street.record.sensitivity, Sensitivity.SENSITIVE)
 
+    def test_question_shaped_evidence_can_never_be_confirmed(self) -> None:
+        user_text = "have I ever lived in chicago"
+
+        result = self.coordinator.process_suggestion_batch(
+            (
+                self._suggestion(
+                    FactPayload("model residence", user_text),
+                    user_evidence=user_text,
+                    source_ref="synthetic-question-turn",
+                ),
+            ),
+            uuid4(),
+            direct_user_text=user_text,
+        ).results[0]
+
+        self.assertEqual(result.decision, CaptureDecision.CREATED_CANDIDATE)
+        assert result.record is not None
+        self.assertEqual(result.record.status, RecordStatus.CANDIDATE)
+
     def test_broad_residence_and_pet_relation_are_personal_not_sensitive(self) -> None:
         for index, user_text in enumerate(
             ("I live in Synthetic City.", "Scooby is my dog."),
@@ -303,8 +322,18 @@ class MemoryCaptureTests(unittest.TestCase):
         )
 
     def test_exact_confirmed_duplicate_is_reused_without_another_write(self) -> None:
-        first = self.coordinator.remember_explicitly(self._explicit(), uuid4())
-        second = self.coordinator.remember_explicitly(self._explicit(), uuid4())
+        first = self.coordinator.remember_explicitly(
+            self._explicit(
+                FactPayload("Synthetic Duplicate", "Synthetic statement")
+            ),
+            uuid4(),
+        )
+        second = self.coordinator.remember_explicitly(
+            self._explicit(
+                FactPayload("synthetic duplicate.", "synthetic statement.")
+            ),
+            uuid4(),
+        )
 
         assert first.record is not None
         self.assertEqual(second.decision, CaptureDecision.DUPLICATE)

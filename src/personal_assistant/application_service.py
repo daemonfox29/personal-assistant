@@ -47,6 +47,10 @@ from personal_assistant.memory_analyzer import (
     ModelMemorySuggestionAnalyzer,
     PostResponseMemoryWorker,
 )
+from personal_assistant.memory_evidence import (
+    is_standalone_direct_memory_statement,
+    memory_payload_equivalence_key,
+)
 from personal_assistant.memory_runtime import MemoryRuntime
 from personal_assistant.memory_repository import MemoryRecord
 from personal_assistant.memory_types import (
@@ -442,15 +446,30 @@ class AssistantApplicationService:
             return ()
         try:
             records = runtime.repository.list_records(uuid4())
+            selected: dict[tuple[str, ...], MemoryRecord] = {}
+            for record in records:
+                if not self._memory_inventory_visible(record):
+                    continue
+                key = memory_payload_equivalence_key(record.revision.payload) + (
+                    record.scope.type.value,
+                    "" if record.scope.id is None else str(record.scope.id),
+                    ""
+                    if record.primary_entity_id is None
+                    else str(record.primary_entity_id),
+                )
+                previous = selected.get(key)
+                if previous is None or (
+                    record.status is RecordStatus.CONFIRMED
+                    and previous.status is not RecordStatus.CONFIRMED
+                ):
+                    selected[key] = record
             return tuple(
                 self._memory_inventory_item(record)
-                for record in records
-                if record.status
-                in {
-                    RecordStatus.CONFIRMED,
-                    RecordStatus.CANDIDATE,
-                    RecordStatus.ARCHIVED,
-                }
+                for record in sorted(
+                    selected.values(),
+                    key=lambda item: (item.updated_at, str(item.record_id)),
+                    reverse=True,
+                )
             )
         except Exception as error:
             raise ApplicationOpenError(
@@ -588,6 +607,21 @@ class AssistantApplicationService:
         raise TypeError("Memory payload kind is not supported for source matching.")
 
     @staticmethod
+    def _memory_inventory_visible(record: MemoryRecord) -> bool:
+        """Show usable canonical memory, not the raw proposal/audit ledger."""
+
+        payload = record.revision.payload
+        if record.status is RecordStatus.CANDIDATE:
+            return isinstance(payload, InsightPayload)
+        if record.status is not RecordStatus.CONFIRMED:
+            return False
+        if isinstance(payload, FactPayload) and payload.subject.startswith(
+            "direct-statement:"
+        ):
+            return is_standalone_direct_memory_statement(payload.statement)
+        return True
+
+    @staticmethod
     def _memory_inventory_item(record: MemoryRecord) -> MemoryInventoryItem:
         payload = record.revision.payload
         if isinstance(payload, FactPayload):
@@ -630,6 +664,8 @@ class AssistantApplicationService:
                 " dog ",
                 " cat ",
                 " pet ",
+                " vet ",
+                " veterinarian ",
                 " partner ",
                 " spouse ",
                 " family ",

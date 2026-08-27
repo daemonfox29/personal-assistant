@@ -221,6 +221,8 @@ class NativeUiTests(unittest.TestCase):
         )
         self.assertEqual(page._memory_category.count(), 3)
         self.assertEqual(page._section_pages.currentIndex(), 0)
+        self.assertEqual(page._memory_table.item(1, 1).text(), "Observation")
+        self.assertEqual(page._memory_table.item(1, 2).text(), "Tentative")
         page._memory_search.setText("schedule")
         self.assertTrue(page._memory_table.isRowHidden(0))
         self.assertFalse(page._memory_table.isRowHidden(1))

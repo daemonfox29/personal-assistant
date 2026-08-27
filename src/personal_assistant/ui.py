@@ -524,8 +524,16 @@ class SettingsPage(QWidget):
             self._memory_table.insertRow(row)
             values = (
                 sanitize_terminal_text(memory.value),
-                memory.kind.replace("_", " ").title(),
-                memory.status.title(),
+                (
+                    "Observation"
+                    if memory.kind == "insight"
+                    else memory.kind.replace("_", " ").title()
+                ),
+                (
+                    "Tentative"
+                    if memory.status == "candidate"
+                    else memory.status.title()
+                ),
                 memory.updated_at,
             )
             for column, value in enumerate(values):
