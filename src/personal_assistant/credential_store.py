@@ -3,7 +3,9 @@
 from dataclasses import dataclass
 from hashlib import sha256
 import hmac
+import os
 from pathlib import Path
+import stat
 import sys
 from threading import Event
 from typing import Protocol, runtime_checkable
@@ -26,6 +28,10 @@ _ALLOWED_BACKEND_MODULES = frozenset(
 _MAX_RECOVERY_SECRET_CHARS = 1_024
 _MACOS_UNLOCK_PROMPT = "Unlock encrypted Personal Assistant memory"
 _MACOS_AUTHENTICATION_TIMEOUT_SECONDS = 120.0
+_TEST_ONLY_SKIP_MACOS_USER_PRESENCE_ENV = (
+    "PERSONAL_ASSISTANT_TEST_ONLY_SKIP_MACOS_USER_PRESENCE"
+)
+_TEST_ONLY_MACOS_RECOVERY_FD_ENV = "PERSONAL_ASSISTANT_TEST_ONLY_RECOVERY_FD"
 
 
 class CredentialStoreError(RuntimeError):
@@ -188,6 +194,97 @@ class MacOSUserPresenceRecoveryCredentialStore:
         )
 
 
+@dataclass(frozen=True)
+class MacOSTestOnlyPipeRecoveryCredentialStore:
+    """Consume once the test credential inherited from the signed launcher.
+
+    This deliberately read-only adapter accepts only the anonymous pipe created
+    by the native development launcher. It must never become a production
+    Keychain adapter or a credential enrollment path.
+    """
+
+    data_directory: Path
+    account: str = "primary-memory-key"
+
+    def __post_init__(self) -> None:
+        _validate_store_identity(self.data_directory, self.account)
+
+    @property
+    def service_name(self) -> str:
+        return _test_service_name(self.data_directory)
+
+    def read_recovery(self) -> str | None:
+        descriptor_text = os.environ.pop(_TEST_ONLY_MACOS_RECOVERY_FD_ENV, None)
+        if descriptor_text is None:
+            return None
+        if (
+            not isinstance(descriptor_text, str)
+            or not descriptor_text.isascii()
+            or not descriptor_text.isdecimal()
+            or len(descriptor_text) > 9
+            or descriptor_text != str(int(descriptor_text))
+        ):
+            raise CredentialStoreError("The test-only recovery pipe is invalid.")
+        descriptor = int(descriptor_text)
+        if descriptor < 3:
+            raise CredentialStoreError("The test-only recovery pipe is invalid.")
+        secret_bytes = bytearray()
+        try:
+            if not stat.S_ISFIFO(os.fstat(descriptor).st_mode):
+                raise CredentialStoreError("The test-only recovery pipe is invalid.")
+            while len(secret_bytes) <= _MAX_RECOVERY_SECRET_CHARS:
+                chunk = os.read(
+                    descriptor,
+                    _MAX_RECOVERY_SECRET_CHARS + 1 - len(secret_bytes),
+                )
+                if not chunk:
+                    break
+                secret_bytes.extend(chunk)
+        except OSError as error:
+            raise CredentialStoreError(
+                "The test-only recovery pipe is unavailable."
+            ) from error
+        finally:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+        try:
+            if not secret_bytes:
+                return None
+            if (
+                len(secret_bytes) > _MAX_RECOVERY_SECRET_CHARS
+                or b"\x00" in secret_bytes
+            ):
+                raise CredentialStoreError(
+                    "The automatic-unlock credential is invalid."
+                )
+            try:
+                secret = secret_bytes.decode("utf-8")
+            except UnicodeDecodeError as error:
+                raise CredentialStoreError(
+                    "The automatic-unlock credential is invalid."
+                ) from error
+            if not 1 <= len(secret) <= _MAX_RECOVERY_SECRET_CHARS:
+                raise CredentialStoreError(
+                    "The automatic-unlock credential is invalid."
+                )
+            return secret
+        finally:
+            for index in range(len(secret_bytes)):
+                secret_bytes[index] = 0
+
+    def write_recovery(self, recovery_passphrase: str) -> None:
+        raise CredentialStoreError(
+            "The test-only recovery pipe adapter is read-only."
+        )
+
+    def delete_recovery(self) -> None:
+        raise CredentialStoreError(
+            "The test-only recovery pipe adapter is read-only."
+        )
+
+
 class _PyObjCMacOSUserAuthenticator:
     """Use Touch ID or the Mac login password through Local Authentication."""
 
@@ -224,11 +321,24 @@ class _PyObjCMacOSUserAuthenticator:
 def default_recovery_credential_store(
     data_directory: Path,
 ) -> RecoveryCredentialStore:
-    """Choose the approved protected credential backend for this platform."""
+    """Choose the approved protected credential backend for this platform.
+
+    The macOS user-presence prompt remains mandatory unless the explicit,
+    process-local testing switch is enabled. The switch never stores, supplies,
+    or logs recovery material; it can only read an existing Keychain entry.
+    """
 
     if sys.platform == "darwin":
+        if _test_only_macos_user_presence_bypass_enabled():
+            return MacOSTestOnlyPipeRecoveryCredentialStore(data_directory)
         return MacOSUserPresenceRecoveryCredentialStore(data_directory)
     return SystemRecoveryCredentialStore(data_directory)
+
+
+def _test_only_macos_user_presence_bypass_enabled() -> bool:
+    """Return true only for the exact, opt-in local test environment value."""
+
+    return os.environ.get(_TEST_ONLY_SKIP_MACOS_USER_PRESENCE_ENV) == "1"
 
 
 def _validate_store_identity(data_directory: Path, account: str) -> None:
@@ -242,3 +352,11 @@ def _service_name(data_directory: Path) -> str:
     location = str(data_directory.resolve(strict=False)).encode("utf-8")
     location_id = sha256(location).hexdigest()[:24]
     return f"personal-assistant.memory-autounlock.{location_id}"
+
+
+def _test_service_name(data_directory: Path) -> str:
+    """Return the isolated Keychain service used only by local UI testing."""
+
+    location = str(data_directory.resolve(strict=False)).encode("utf-8")
+    location_id = sha256(location).hexdigest()[:24]
+    return f"personal-assistant.testing-autounlock.{location_id}"

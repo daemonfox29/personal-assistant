@@ -357,7 +357,8 @@ class ConversationServiceTests(unittest.TestCase):
             model.requests[1].messages[-1].content,
         )
         visible = "".join(event.text for event in events)
-        self.assertIn("Source S1 — Example", visible)
+        self.assertIn("Sources:\n[1] Example", visible)
+        self.assertNotIn("S1", visible)
         self.assertNotIn("https://example.test/current", visible)
 
     def test_search_urls_are_revealed_only_when_requested(self) -> None:
@@ -380,7 +381,8 @@ class ConversationServiceTests(unittest.TestCase):
         )
 
         visible = "".join(event.text for event in events)
-        self.assertIn("Source S1 — Example", visible)
+        self.assertIn("Sources:\n[1] Example:", visible)
+        self.assertNotIn("S1", visible)
         self.assertIn("https://example.test/current", visible)
 
     def test_destination_request_cannot_display_an_invented_url(self) -> None:
@@ -624,7 +626,8 @@ class ConversationServiceTests(unittest.TestCase):
         self.assertEqual(model.requests[0].tools, ())
         answer = "".join(event.text for event in events)
         self.assertIn("synthesized", answer)
-        self.assertIn("Source S1 — Example", answer)
+        self.assertIn("Sources:\n[1] Example", answer)
+        self.assertNotIn("S1", answer)
         self.assertNotIn("https://example.test/current", answer)
         self.assertIn(
             "Earlier conversation and saved context were omitted from this "
@@ -973,6 +976,39 @@ class ConversationServiceTests(unittest.TestCase):
         self.assertTrue(any("WEB-CONNECT-01" in text for text in notices))
         self.assertFalse(any("private failure details" in text for text in notices))
 
+    def test_irrelevant_news_results_are_reported_without_a_second_coordinator_retry(self) -> None:
+        class IrrelevantSearch:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            def search(self, _query: str):
+                self.calls += 1
+                raise WebSearchError(
+                    "private relevance details",
+                    WebSearchFailureCode.RELEVANCE,
+                )
+
+        provider = IrrelevantSearch()
+        service = ConversationService(
+            SyntheticStreamingModel(),
+            tool_executor=ToolExecutor(
+                default_tool_registry(web_search=provider),
+                InMemoryAuditSink(),
+            ),
+        )
+
+        events = tuple(service.events_for("Recent news about Iran"))
+
+        self.assertEqual(provider.calls, 1)
+        notices = [
+            event.text
+            for event in events
+            if event.kind is ConversationEventKind.NOTICE
+        ]
+        self.assertTrue(any("relevant recent sources" in text for text in notices))
+        self.assertTrue(any("WEB-RELEVANCE-01" in text for text in notices))
+        self.assertFalse(any("private relevance details" in text for text in notices))
+
     def test_disabled_explicit_provider_is_not_retried_or_called_connection_error(self) -> None:
         class DisabledSearch:
             def __init__(self) -> None:
@@ -1112,7 +1148,8 @@ class ConversationServiceTests(unittest.TestCase):
         self.assertNotIn("Useful draft", visible)
         self.assertIn("Correcting the source citations", visible)
         self.assertIn("Repaired grounded answer", visible)
-        self.assertIn("Source S1 — Example", visible)
+        self.assertIn("Sources:\n[1] Example", visible)
+        self.assertNotIn("S1", visible)
         self.assertNotIn("https://example.test/current", visible)
         self.assertIn(
             ConversationEventKind.COMPLETED,

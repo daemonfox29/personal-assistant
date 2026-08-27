@@ -5,6 +5,7 @@ use_default_settings:
       - crossref
       - duckduckgo
       - google
+      - google news
       - google scholar
       - openalex
       - pubmed

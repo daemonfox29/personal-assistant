@@ -732,7 +732,11 @@ class MemoryRepository:
         if not isinstance(draft, RecordDraft):
             raise MemoryValidationError("Memory draft is invalid.")
         terms = self._capture_terms(draft.payload)
-        expression = " AND ".join(f'"{term}"' for term in terms)
+        expression = (
+            " OR ".join(f'"{term}"' for term in terms)
+            if isinstance(draft.payload, InsightPayload)
+            else " AND ".join(f'"{term}"' for term in terms)
+        )
         with self._audited(
             correlation_id,
             AuditOperation.REPOSITORY_READ,

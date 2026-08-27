@@ -214,6 +214,51 @@ complete; the batched Linux pull-request check is its final platform gate.
 
 ## Session history
 
+### 2026-08-27 — Six-bug maintenance and unattended synthetic UI testing
+
+Completed:
+
+- Replaced offset-based audit pagination with an opaque stable event boundary
+  that remains gap- and duplicate-free across concurrent appends and rotations.
+- Removed audit-history access from session-only composition and added an
+  explicit locked-state Settings explanation.
+- Rejected transient questions, searches, tool failures, and assistant-authored
+  conclusions from automatic memory observations while preserving durable
+  first-person scenario context and semantic deduplication.
+- Kept internal search source identifiers private, rendered compact numbered
+  provenance once per answer, and exposed only verified URLs on explicit link
+  requests.
+- Added topical and 30-day temporal relevance validation for current-news
+  evidence, one refined-query retry, Google News routing, and a fixed diagnostic
+  instead of presenting unrelated results.
+- Bound the post-cancellation ready-state transition to actual worker completion
+  so partial text and the stop notice remain while the header and composer
+  recover correctly.
+- Treated the current database as synthetic test data and provisioned a separate
+  test-only Keychain item whose ACL trusts only the exact locally signed
+  development launcher. The launcher passes the recovery credential once to its
+  Python child through an anonymous inherited pipe; no secret enters arguments,
+  environment values, files, preferences, logs, or model context. The normal
+  Touch ID path remains the default outside this development launcher.
+
+Verification:
+
+- Repository whitespace, shell syntax, strict arm64 launcher compilation, and
+  Python compilation passed. The complete 496-test suite succeeded with one
+  opt-in performance test intentionally skipped.
+- The installed launcher verified its restricted Keychain credential before
+  installation completed.
+- Computer Use confirmed a fresh launch opened encrypted-memory chat without
+  Touch ID or recovery entry, then stopped generation in Private Chat and
+  observed the ready header, enabled composer, and `Stopped by you.` notice.
+- A final native-UI pass confirmed stable audit pagination from 100 to 200
+  redacted events, no memory suggestion for a transient arithmetic question,
+  compact numbered citations with raw URLs shown only when requested, relevant
+  recent-news evidence, and `WEB-RELEVANCE-01` for deliberately irrelevant
+  results.
+- An isolated temporary profile confirmed session-only Settings exposes no
+  owner audit events and instead shows the explicit unlock-required message.
+
 ### 2026-08-27 — macOS UI automation launcher repair
 
 Completed:

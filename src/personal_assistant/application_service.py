@@ -882,20 +882,15 @@ class AssistantApplicationService:
             audit_path = self._audit_path
         if audit_path is None:
             return AuditInventoryPage((), None)
-        if cursor is None:
-            offset = 0
-        elif (
+        if cursor is not None and (
             not isinstance(cursor, str)
-            or len(cursor) > 4
+            or len(cursor) != 47
             or not cursor.isascii()
-            or not cursor.isdecimal()
         ):
             raise ApplicationOpenError("The audit page cursor is invalid.")
-        else:
-            offset = int(cursor)
         try:
             page = JsonLinesAuditReader(AuditFileSettings(audit_path)).read_page(
-                offset
+                cursor
             )
             return AuditInventoryPage(
                 tuple(
@@ -908,7 +903,7 @@ class AssistantApplicationService:
                     )
                     for item in page.items
                 ),
-                None if page.next_offset is None else str(page.next_offset),
+                page.next_cursor,
             )
         except AuditError as error:
             raise ApplicationOpenError(
@@ -1936,7 +1931,11 @@ class AssistantApplicationFactory:
                     tuple(notices),
                 ),
                 None if runtime is None else runtime.conversation_history,
-                self._settings.memory.data_directory / "audit.jsonl",
+                (
+                    None
+                    if runtime is None
+                    else self._settings.memory.data_directory / "audit.jsonl"
+                ),
                 search_runtime,
                 search_provider,
             )

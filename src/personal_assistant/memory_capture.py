@@ -54,6 +54,7 @@ from personal_assistant.memory_types import (
     payload_to_data,
 )
 from personal_assistant.retrieval_language import safe_topic_key
+from personal_assistant.retrieval_language import normalized_terms
 
 
 DEFAULT_CANDIDATES_PER_SOURCE = 3
@@ -782,11 +783,74 @@ def _classify_neighbors(
     topical: list[MemoryRecord] = []
     for record in neighbors:
         stored_payload = record.revision.payload
-        if memory_payload_equivalence_key(stored_payload) == identity:
+        if (
+            memory_payload_equivalence_key(stored_payload) == identity
+            or _equivalent_observations(payload, stored_payload)
+        ):
             exact.append(record)
         elif topic is not None and _payload_topic(stored_payload) == topic:
             topical.append(record)
     return tuple(exact), tuple(topical)
+
+
+_OBSERVATION_EQUIVALENCE_STOP_WORDS = frozenset(
+    {
+        "about",
+        "and",
+        "are",
+        "been",
+        "current",
+        "for",
+        "from",
+        "have",
+        "lately",
+        "may",
+        "me",
+        "might",
+        "situation",
+        "that",
+        "the",
+        "their",
+        "they",
+        "this",
+        "user",
+        "with",
+    }
+)
+
+
+def _equivalent_observations(
+    proposed: MemoryPayload,
+    stored: MemoryPayload,
+) -> bool:
+    """Deduplicate only high-overlap tentative observations conservatively."""
+
+    if not isinstance(proposed, InsightPayload) or not isinstance(
+        stored, InsightPayload
+    ):
+        return False
+    proposed_terms = set(
+        normalized_terms(
+            proposed.observation,
+            stop_words=_OBSERVATION_EQUIVALENCE_STOP_WORDS,
+            minimum_length=3,
+            maximum_terms=64,
+        )
+    )
+    stored_terms = set(
+        normalized_terms(
+            stored.observation,
+            stop_words=_OBSERVATION_EQUIVALENCE_STOP_WORDS,
+            minimum_length=3,
+            maximum_terms=64,
+        )
+    )
+    if min(len(proposed_terms), len(stored_terms)) < 2:
+        return False
+    shared = proposed_terms & stored_terms
+    return len(shared) >= 2 and len(shared) / max(
+        len(proposed_terms), len(stored_terms)
+    ) >= 0.6
 
 
 def _payload_topic(payload: MemoryPayload) -> str | None:

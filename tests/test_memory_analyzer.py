@@ -203,6 +203,56 @@ class MemoryAnalyzerTests(unittest.TestCase):
         self.assertIn("situation, time, or context", prompt)
         self.assertIn("do not diagnose", prompt)
 
+    def test_transient_questions_searches_and_assistant_conclusions_are_not_observations(
+        self,
+    ) -> None:
+        model = Mock(spec=LanguageModel)
+        model.generate.return_value = ModelResponse(
+            json.dumps(
+                [
+                    {
+                        "type": "observation",
+                        "subject": "synthetic query intent",
+                        "content": (
+                            "The user may be interested in synthetic local "
+                            "services in the current situation"
+                        ),
+                        "sensitivity": "normal",
+                        "mention_policy": "may_mention_when_relevant",
+                    }
+                ]
+            )
+        )
+        analyzer = ModelMemorySuggestionAnalyzer(
+            model,
+            "synthetic-model-v1",
+            audit_sink=self.audit,
+        )
+
+        for user_text, assistant_text in (
+            (
+                "Can you search for a synthetic local veterinarian?",
+                "I found several synthetic local veterinarians.",
+            ),
+            (
+                "What is the capital of the synthetic country?",
+                "The user should move to the synthetic capital.",
+            ),
+            (
+                "The search tool failed; can you try again?",
+                "The user may be frustrated by the failed tool.",
+            ),
+        ):
+            suggestions = analyzer.analyze(
+                user_text,
+                assistant_text,
+                "turn:aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+                uuid4(),
+            )
+            self.assertEqual(suggestions, ())
+
+        self.assertEqual(self.repository.list_candidates(uuid4()), ())
+
     def test_exact_user_quote_can_be_confirmed_without_model_authored_content(self) -> None:
         user_text = "My name is Synthetic Person."
         model = Mock(spec=LanguageModel)

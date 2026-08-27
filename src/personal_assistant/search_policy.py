@@ -70,6 +70,12 @@ _REFERENCE_TERMS = re.compile(
     r"\b(encyclopedia|wikipedia|reference overview|background on)\b",
     re.IGNORECASE,
 )
+_CURRENT_EVENTS_TERMS = re.compile(
+    r"\b(?:current events|latest news|recent news|breaking news|news update|"
+    r"news briefing|top headlines|today'?s headlines|recent updates|"
+    r"latest updates|what(?:'s| is) happening)\b",
+    re.IGNORECASE,
+)
 _PRIVATE_CONTEXT_TERMS = re.compile(
     r"\b(my (?:health|symptoms?|diagnos(?:is|es)|medications?|condition|"
     r"history|memory|memories)|remember (?:when|what)|have i (?:ever|told)|"
@@ -137,6 +143,7 @@ class SearchPolicyError(RuntimeError):
 class SearchPlan:
     sources: tuple[SearchSource, ...]
     explicit: bool = False
+    current_events: bool = False
 
 
 def validate_search_sources(values: object) -> tuple[SearchSource, ...]:
@@ -176,17 +183,25 @@ class QualitySearchPolicy:
             raise TypeError("Search routing requires the current user message.")
         enabled = self.enabled_sources
         explicit = _explicit_source(user_text)
+        current_events = requests_current_events(user_text)
         if explicit is not None:
             if explicit not in enabled:
                 raise SearchPolicyError(
                     f"{SEARCH_SOURCE_LABELS[explicit]} is disabled in Search settings."
                 )
-            return SearchPlan((explicit,), explicit=True)
+            if current_events and explicit not in _NEWS_CAPABLE_SOURCES:
+                raise SearchPolicyError(
+                    "The selected search source cannot provide recent news."
+                )
+            return SearchPlan((explicit,), explicit=True, current_events=current_events)
         if _PRIVATE_CONTEXT_TERMS.search(user_text):
             raise SearchPolicyError(
                 "Personal-context queries require an explicit enabled source."
             )
-        if _HEALTH_TERMS.search(user_text):
+        if current_events:
+            limit = 1
+            ordered = (SearchSource.GOOGLE, SearchSource.DUCKDUCKGO)
+        elif _HEALTH_TERMS.search(user_text):
             limit = 2
             ordered = (
                 SearchSource.PUBMED,
@@ -222,8 +237,12 @@ class QualitySearchPolicy:
             :limit
         ]
         if not selected:
+            if current_events:
+                raise SearchPolicyError(
+                    "Enable Google Web to search recent news."
+                )
             selected = enabled[:1]
-        return SearchPlan(selected)
+        return SearchPlan(selected, current_events=current_events)
 
 
 def _explicit_source(user_text: str) -> SearchSource | None:
@@ -278,6 +297,17 @@ def requests_quality_search(user_text: str) -> bool:
         or _RESEARCH_TERMS.search(user_text)
         or _REFERENCE_TERMS.search(user_text)
     )
+
+
+_NEWS_CAPABLE_SOURCES = frozenset(
+    {SearchSource.GOOGLE}
+)
+
+
+def requests_current_events(user_text: str) -> bool:
+    """Return whether a request needs a recent-news provider and freshness checks."""
+
+    return isinstance(user_text, str) and bool(_CURRENT_EVENTS_TERMS.search(user_text))
 
 
 def requests_destination_search(user_text: str) -> bool:

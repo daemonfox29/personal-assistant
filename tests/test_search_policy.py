@@ -38,6 +38,17 @@ class SearchPolicyTests(unittest.TestCase):
             (SearchSource.WIKIPEDIA, SearchSource.ENCYCLOPEDIA_COM),
         )
 
+    def test_current_news_uses_an_enabled_news_capable_source(self) -> None:
+        plan = QualitySearchPolicy().plan_for("Recent news about Iran, please.")
+
+        self.assertTrue(plan.current_events)
+        self.assertEqual(plan.sources, (SearchSource.GOOGLE,))
+
+        with self.assertRaises(SearchPolicyError):
+            QualitySearchPolicy((SearchSource.PUBMED,)).plan_for(
+                "Recent news about Iran, please."
+            )
+
     def test_explicit_enabled_provider_is_the_only_source(self) -> None:
         policy = QualitySearchPolicy()
 

@@ -7,7 +7,7 @@ feature wishlist; broader ideas belong in `future-features.md`.
 ## BUG-001 — Audit pagination cursor is unstable under concurrent appends
 
 - Priority: P2
-- Status: Open; deferred until after the next Module 1.5 pull request
+- Status: Resolved locally on 2026-08-27; stable opaque cursor regressions pass
 - Area: local audit reader and native Audit trail page
 
 The current newest-first reader uses a numeric offset. If a background operation
@@ -28,7 +28,7 @@ Acceptance criteria:
 ## BUG-002 — Session-only mode can read redacted owner audit history
 
 - Priority: P2
-- Status: Open; deferred until after the next Module 1.5 pull request
+- Status: Resolved locally on 2026-08-27; session-bound authorization regressions pass
 - Area: application-service composition and native Settings authorization
 
 The application service currently receives the local audit path even when
@@ -50,7 +50,7 @@ Acceptance criteria:
 ## BUG-003 — Automatic observations capture transient query intent
 
 - Priority: P2
-- Status: Open; suitable for an overnight maintenance pass
+- Status: Resolved locally on 2026-08-27; durable-context and deduplication regressions pass
 - Area: memory extraction, observation promotion, and deduplication
 
 Live UI acceptance testing showed routine questions and search requests being
@@ -74,7 +74,7 @@ Acceptance criteria:
 ## BUG-004 — Search citations expose internal IDs and repeat source labels
 
 - Priority: P3
-- Status: Open; suitable for an overnight maintenance pass
+- Status: Resolved locally on 2026-08-27; compact provenance rendering regressions pass
 - Area: searched-answer presentation and provenance rendering
 
 Search answers currently embed strings such as `Source S1` and can repeat a long
@@ -95,7 +95,7 @@ Acceptance criteria:
 ## BUG-005 — Search can accept topically irrelevant evidence
 
 - Priority: P2
-- Status: Open; suitable for an overnight maintenance pass
+- Status: Resolved locally on 2026-08-27; relevance rejection and retry regressions pass
 - Area: automatic provider routing, result ranking, and evidence validation
 
 During live testing, a request for recent news about Iran produced unrelated
@@ -118,7 +118,7 @@ Acceptance criteria:
 ## BUG-006 — Session header remains in “stopping response…” state
 
 - Priority: P3
-- Status: Open; suitable for an overnight maintenance pass
+- Status: Resolved locally on 2026-08-27; automated and live cancellation tests pass
 - Area: native chat generation lifecycle
 
 The Stop button successfully halts generation, appends `Stopped by you.`, and

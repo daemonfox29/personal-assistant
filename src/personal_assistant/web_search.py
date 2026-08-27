@@ -1,11 +1,13 @@
 """Bounded loopback-only adapter for a separately hosted SearXNG service."""
 
 from collections.abc import Callable, Mapping
+from datetime import datetime, timedelta, timezone
 from enum import StrEnum
 import html
 from html.parser import HTMLParser
 from ipaddress import ip_address
 import json
+import re
 import unicodedata
 from typing import BinaryIO, Protocol, runtime_checkable
 from urllib.error import HTTPError, URLError
@@ -32,6 +34,15 @@ MAX_SEARCH_SNIPPET_CHARS = 240
 MAX_SEARCH_PUBLISHED_CHARS = 40
 MAX_SEARCH_URL_CHARS = 512
 MAX_SEARCH_DATA_BYTES = 1_700
+RECENT_NEWS_MAX_AGE = timedelta(days=30)
+_RELEVANCE_TOKEN = re.compile(r"[a-z0-9]{3,}", re.IGNORECASE)
+_QUERY_NOISE_WORDS = frozenset(
+    {
+        "about", "after", "before", "briefing", "current", "events", "from",
+        "happened", "happening", "latest", "news", "recent", "today",
+        "update", "updates", "what", "with",
+    }
+)
 
 
 class WebSearchFailureCode(StrEnum):
@@ -39,6 +50,7 @@ class WebSearchFailureCode(StrEnum):
     CONNECT = "WEB-CONNECT-01"
     RESPONSE = "WEB-RESPONSE-01"
     PROVIDER = "WEB-PROVIDER-01"
+    RELEVANCE = "WEB-RELEVANCE-01"
 
 
 class WebSearchError(RuntimeError):
@@ -94,6 +106,7 @@ class SearXNGSearchProvider:
         opener: SearchOpener = open_local,
         lifecycle: SearchLifecycle | None = None,
         enabled_sources: tuple[SearchSource, ...] = QUALITY_DEFAULT_SOURCES,
+        now: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
     ) -> None:
         self._base_url = validate_loopback_http_url(base_url, base_url=True)
         if (
@@ -102,7 +115,7 @@ class SearXNGSearchProvider:
             or not 0.1 <= float(timeout_seconds) <= 5.0
         ):
             raise ValueError("The search timeout is outside its safe range.")
-        if not callable(opener):
+        if not callable(opener) or not callable(now):
             raise TypeError("The search adapter requires a local opener.")
         if lifecycle is not None and not isinstance(lifecycle, SearchLifecycle):
             raise TypeError("The search adapter requires a managed lifecycle.")
@@ -110,6 +123,7 @@ class SearXNGSearchProvider:
         self._opener = opener
         self._lifecycle = lifecycle
         self._policy = QualitySearchPolicy(enabled_sources)
+        self._now = now
 
     @property
     def base_url(self) -> str:
@@ -146,6 +160,31 @@ class SearXNGSearchProvider:
             self._lifecycle.close()
 
     def _search_plan(self, query: str, plan: SearchPlan) -> Mapping[str, object]:
+        results = self._search_plan_once(query, plan)
+        if plan.current_events:
+            relevant = _recent_relevant_results(query, results, self._now())
+            if relevant:
+                return self._result_envelope(relevant, plan)
+            retry_query = _refined_news_query(query)
+            retry_results = self._search_plan_once(retry_query, plan)
+            relevant = _recent_relevant_results(
+                retry_query,
+                retry_results,
+                self._now(),
+            )
+            if not relevant:
+                raise WebSearchError(
+                    "No relevant recent sources were returned for this news request.",
+                    WebSearchFailureCode.RELEVANCE,
+                )
+            return self._result_envelope(relevant, plan)
+        return self._result_envelope(results, plan)
+
+    def _search_plan_once(
+        self,
+        query: str,
+        plan: SearchPlan,
+    ) -> list[object]:
         regular = tuple(
             source
             for source in plan.sources
@@ -153,7 +192,13 @@ class SearXNGSearchProvider:
         )
         documents: list[Mapping[str, object]] = []
         if regular:
-            documents.append(self._search(query, regular))
+            documents.append(
+                self._search(
+                    query,
+                    regular,
+                    category="news" if plan.current_events else "general",
+                )
+            )
         if SearchSource.ENCYCLOPEDIA_COM in plan.sources:
             site_filter = " site:encyclopedia.com"
             site_query = query[: MAX_SEARCH_QUERY_CHARS - len(site_filter)].rstrip()
@@ -161,11 +206,11 @@ class SearXNGSearchProvider:
                 self._search(
                     f"{site_query}{site_filter}",
                     (SearchSource.ENCYCLOPEDIA_COM,),
+                    category="general",
                 )
             )
         results: list[object] = []
         seen: set[str] = set()
-        source_values = [source.value for source in plan.sources]
         result_groups = [document["results"] for document in documents]
         result_index = 0
         while len(results) < MAX_SEARCH_RESULTS:
@@ -179,12 +224,7 @@ class SearXNGSearchProvider:
                 url = item.get("url")
                 if not isinstance(url, str) or url in seen:
                     continue
-                proposed = {
-                    "provider": "searxng",
-                    "results": [*results, item],
-                    "sources": source_values,
-                    "trust": "untrusted_web_search_results",
-                }
+                proposed = self._result_envelope([*results, item], plan)
                 if len(_compact_json(proposed)) > MAX_SEARCH_DATA_BYTES:
                     continue
                 seen.add(url)
@@ -195,10 +235,17 @@ class SearXNGSearchProvider:
             result_index += 1
             if not added and all(result_index >= len(group) for group in result_groups):
                 break
+        return results
+
+    @staticmethod
+    def _result_envelope(
+        results: list[object],
+        plan: SearchPlan,
+    ) -> Mapping[str, object]:
         return {
             "provider": "searxng",
             "results": results,
-            "sources": source_values,
+            "sources": [source.value for source in plan.sources],
             "trust": "untrusted_web_search_results",
         }
 
@@ -206,11 +253,18 @@ class SearXNGSearchProvider:
         self,
         query: str,
         sources: tuple[SearchSource, ...],
+        *,
+        category: str,
     ) -> Mapping[str, object]:
         form = urlencode(
             {
-                "categories": "general",
-                "engines": ",".join(SEARCH_ENGINE_NAMES[source] for source in sources),
+                "categories": category,
+                "engines": ",".join(
+                    "google news"
+                    if category == "news" and source is SearchSource.GOOGLE
+                    else SEARCH_ENGINE_NAMES[source]
+                    for source in sources
+                ),
                 "format": "json",
                 "language": "en",
                 "pageno": "1",
@@ -268,6 +322,64 @@ class SearXNGSearchProvider:
                 WebSearchFailureCode.RESPONSE,
             ) from error
         return _validated_search_document(document)
+
+
+def _recent_relevant_results(
+    query: str,
+    results: list[object],
+    now: datetime,
+) -> list[object]:
+    """Keep only current-news results that match the request topic and date."""
+
+    topic_tokens = {
+        token.casefold()
+        for token in _RELEVANCE_TOKEN.findall(query)
+        if token.casefold() not in _QUERY_NOISE_WORDS
+    }
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    else:
+        now = now.astimezone(timezone.utc)
+    relevant: list[object] = []
+    for item in results:
+        if not isinstance(item, dict) or not _published_is_recent(item.get("published"), now):
+            continue
+        haystack = " ".join(
+            value
+            for value in (item.get("title"), item.get("snippet"))
+            if isinstance(value, str)
+        ).casefold()
+        matched_topics = sum(
+            bool(re.search(rf"\b{re.escape(token)}\b", haystack))
+            for token in topic_tokens
+        )
+        topical_score = matched_topics / len(topic_tokens) if topic_tokens else 1.0
+        temporal_score = 1.0
+        if topical_score and temporal_score:
+            relevant.append(item)
+    return relevant
+
+
+def _published_is_recent(value: object, now: datetime) -> bool:
+    if not isinstance(value, str):
+        return False
+    try:
+        published = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    if published.tzinfo is None:
+        published = published.replace(tzinfo=timezone.utc)
+    published = published.astimezone(timezone.utc)
+    return now - RECENT_NEWS_MAX_AGE <= published <= now + timedelta(days=1)
+
+
+def _refined_news_query(query: str) -> str:
+    """Return one bounded, deterministic retry phrasing for a news search."""
+
+    suffix = " latest news"
+    if query.casefold().endswith(suffix.strip()):
+        suffix = " today"
+    return f"{query[: MAX_SEARCH_QUERY_CHARS - len(suffix)].rstrip()}{suffix}"
 
 
 def validate_search_query(value: object) -> str:

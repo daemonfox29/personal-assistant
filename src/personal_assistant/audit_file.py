@@ -2,11 +2,14 @@
 
 from dataclasses import dataclass
 from datetime import timezone
+import base64
+import hashlib
 import json
 import os
 from pathlib import Path
 import stat
 from threading import Lock
+from uuid import UUID
 
 from personal_assistant.audit import (
     AuditComponent,
@@ -28,6 +31,9 @@ MAX_RETAINED_ROTATIONS = 20
 DEFAULT_AUDIT_PAGE_SIZE = 100
 MAX_VISIBLE_AUDIT_EVENTS = 1_000
 _READ_CHUNK_BYTES = 65_536
+_CURSOR_VERSION = 1
+_CURSOR_DIGEST_BYTES = 32
+_CURSOR_COUNT_BYTES = 2
 
 
 @dataclass(frozen=True)
@@ -44,7 +50,23 @@ class AuditLogItem:
 @dataclass(frozen=True)
 class AuditLogPage:
     items: tuple[AuditLogItem, ...]
-    next_offset: int | None
+    next_cursor: str | None
+
+
+@dataclass(frozen=True)
+class _AuditLogRecord:
+    """One validated audit record with its internal pagination identity."""
+
+    item: AuditLogItem
+    event_id: UUID
+
+
+@dataclass(frozen=True)
+class _AuditPageCursor:
+    """Opaque continuation state anchored to one trusted audit event."""
+
+    boundary_digest: bytes
+    displayed_count: int
 
 
 @dataclass(frozen=True)
@@ -229,32 +251,40 @@ class JsonLinesAuditReader:
     def __init__(self, settings: AuditFileSettings) -> None:
         self._settings = settings
 
-    def read_page(self, offset: int = 0) -> AuditLogPage:
-        if isinstance(offset, bool) or not isinstance(offset, int) or offset < 0:
-            raise AuditWriteError("The audit page cursor is invalid.")
-        if offset >= MAX_VISIBLE_AUDIT_EVENTS:
+    def read_page(self, cursor: str | None = None) -> AuditLogPage:
+        """Read one stable newest-first page after an optional event boundary."""
+
+        page_cursor = self._decode_cursor(cursor)
+        if page_cursor is not None and page_cursor.displayed_count >= (
+            MAX_VISIBLE_AUDIT_EVENTS
+        ):
             return AuditLogPage((), None)
         limit = min(
             DEFAULT_AUDIT_PAGE_SIZE,
-            MAX_VISIBLE_AUDIT_EVENTS - offset,
+            MAX_VISIBLE_AUDIT_EVENTS
+            - (0 if page_cursor is None else page_cursor.displayed_count),
         )
         summaries: list[AuditLogItem] = []
-        valid_index = 0
+        boundary_found = page_cursor is None
+        last_record: _AuditLogRecord | None = None
         has_more = False
         try:
             for path in self._newest_files():
                 for encoded in self._reverse_lines(path):
-                    item = self._safe_item(encoded)
-                    if item is None:
+                    record = self._safe_record(encoded)
+                    if record is None:
                         raise AuditWriteError(
                             "Audit history contains an invalid entry."
                         )
-                    if valid_index < offset:
-                        valid_index += 1
+                    if not boundary_found:
+                        if self._boundary_digest(record.event_id) == (
+                            page_cursor.boundary_digest
+                        ):
+                            boundary_found = True
                         continue
                     if len(summaries) < limit:
-                        summaries.append(item)
-                        valid_index += 1
+                        summaries.append(record.item)
+                        last_record = record
                         continue
                     has_more = True
                     break
@@ -264,8 +294,21 @@ class JsonLinesAuditReader:
             raise
         except OSError as error:
             raise AuditWriteError("Audit history could not be read safely.") from error
-        next_offset = offset + len(summaries) if has_more else None
-        return AuditLogPage(tuple(summaries), next_offset)
+        if not boundary_found:
+            raise AuditWriteError("The audit page cursor is no longer available.")
+        displayed_count = (
+            0 if page_cursor is None else page_cursor.displayed_count
+        ) + len(
+            summaries
+        )
+        next_cursor = (
+            self._encode_cursor(last_record.event_id, displayed_count)
+            if has_more
+            and last_record is not None
+            and displayed_count < MAX_VISIBLE_AUDIT_EVENTS
+            else None
+        )
+        return AuditLogPage(tuple(summaries), next_cursor)
 
     def _newest_files(self) -> tuple[Path, ...]:
         paths = [self._settings.path]
@@ -302,7 +345,7 @@ class JsonLinesAuditReader:
         finally:
             os.close(descriptor)
 
-    def _safe_item(self, encoded: bytes) -> AuditLogItem | None:
+    def _safe_record(self, encoded: bytes) -> _AuditLogRecord | None:
         if len(encoded) > self._settings.max_event_bytes:
             return None
         try:
@@ -316,12 +359,58 @@ class JsonLinesAuditReader:
             operation = AuditOperation(document["operation"])
             outcome = AuditOutcome(document["outcome"])
             reason = AuditReasonCode(document["reason_code"])
-            return AuditLogItem(
-                timestamp,
-                component.value,
-                operation.value,
-                outcome.value,
-                reason.value,
+            event_id = UUID(document["event_id"])
+            return _AuditLogRecord(
+                AuditLogItem(
+                    timestamp,
+                    component.value,
+                    operation.value,
+                    outcome.value,
+                    reason.value,
+                ),
+                event_id,
             )
-        except (KeyError, UnicodeError, json.JSONDecodeError, ValueError, TypeError):
+        except (
+            AttributeError,
+            KeyError,
+            UnicodeError,
+            json.JSONDecodeError,
+            ValueError,
+            TypeError,
+        ):
             return None
+
+    @staticmethod
+    def _boundary_digest(event_id: UUID) -> bytes:
+        return hashlib.sha256(b"audit-page-boundary-v1\0" + event_id.bytes).digest()
+
+    @classmethod
+    def _encode_cursor(cls, event_id: UUID, displayed_count: int) -> str:
+        encoded = bytes((_CURSOR_VERSION,)) + displayed_count.to_bytes(
+            _CURSOR_COUNT_BYTES,
+            "big",
+        ) + cls._boundary_digest(event_id)
+        return base64.urlsafe_b64encode(encoded).decode("ascii").rstrip("=")
+
+    @classmethod
+    def _decode_cursor(cls, cursor: str | None) -> _AuditPageCursor | None:
+        if cursor is None:
+            return None
+        if not isinstance(cursor, str) or len(cursor) != 47 or not cursor.isascii():
+            raise AuditWriteError("The audit page cursor is invalid.")
+        try:
+            encoded = base64.b64decode(cursor + "=", altchars=b"-_", validate=True)
+        except (ValueError, TypeError):
+            raise AuditWriteError("The audit page cursor is invalid.") from None
+        if (
+            len(encoded) != 1 + _CURSOR_COUNT_BYTES + _CURSOR_DIGEST_BYTES
+            or encoded[0] != _CURSOR_VERSION
+        ):
+            raise AuditWriteError("The audit page cursor is invalid.")
+        displayed_count = int.from_bytes(encoded[1 : 1 + _CURSOR_COUNT_BYTES], "big")
+        if not 0 < displayed_count <= MAX_VISIBLE_AUDIT_EVENTS:
+            raise AuditWriteError("The audit page cursor is invalid.")
+        return _AuditPageCursor(
+            encoded[1 + _CURSOR_COUNT_BYTES :],
+            displayed_count,
+        )

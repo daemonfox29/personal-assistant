@@ -12,6 +12,15 @@ class MacOSLauncherTests(unittest.TestCase):
 
         self.assertIn(".venv/bin/personal-assistant-ui", source)
         self.assertIn("execl(entry_point, entry_point", source)
+        self.assertIn(
+            '"PERSONAL_ASSISTANT_TEST_ONLY_SKIP_MACOS_USER_PRESENCE"',
+            source,
+        )
+        self.assertIn("<Security/Security.h>", source)
+        self.assertIn("SecKeychainFindGenericPassword", source)
+        self.assertIn('"PERSONAL_ASSISTANT_TEST_ONLY_RECOVERY_FD"', source)
+        self.assertIn("clear_memory(contents, length)", source)
+        self.assertNotIn('"/usr/bin/security"', source)
         self.assertNotIn('"run", "--locked"', source)
 
     def test_installer_synchronizes_the_locked_environment(self) -> None:
@@ -22,6 +31,10 @@ class MacOSLauncherTests(unittest.TestCase):
         self.assertIn(
             '"$uv_path" --directory "$project_dir" sync --locked', source
         )
+        self.assertIn("-framework Security", source)
+        self.assertIn("/usr/bin/awk '{ print; print }'", source)
+        self.assertIn('-T "" -T "$launcher" -w', source)
+        self.assertIn("--verify-testing-credential", source)
 
 
 if __name__ == "__main__":
