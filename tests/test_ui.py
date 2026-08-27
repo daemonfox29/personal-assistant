@@ -46,6 +46,7 @@ from personal_assistant.runtime_preferences import RuntimePreferences  # noqa: E
 from personal_assistant.ui import (  # noqa: E402
     AssistantWindow,
     ChatPage,
+    CONTEXT_WINDOW_PRESETS,
     SettingsPage,
     UI_FONT_FAMILY,
     WelcomePage,
@@ -198,6 +199,29 @@ class NativeUiTests(unittest.TestCase):
             [(32_768, 800, 1_600, "system", "system", 13)],
         )
         self.assertEqual(page._maximum_response_tokens.maximum(), 2_000)
+
+    def test_settings_context_window_uses_exact_presets(self) -> None:
+        page = SettingsPage()
+        page.set_preferences(RuntimePreferences(context_tokens=64_512))
+        saved: list[tuple[int, int, int]] = []
+        page.save_requested.connect(lambda *values: saved.append(values))
+
+        self.assertFalse(page._context_tokens.isEditable())
+        self.assertEqual(
+            [
+                (
+                    page._context_tokens.itemText(index),
+                    page._context_tokens.itemData(index),
+                )
+                for index in range(page._context_tokens.count())
+            ],
+            list(CONTEXT_WINDOW_PRESETS),
+        )
+        self.assertEqual(page._context_tokens.currentData(), 65_536)
+
+        page._save()
+
+        self.assertEqual(saved[0][0], 65_536)
 
     def test_settings_communication_style_is_bounded_and_emits_save(self) -> None:
         page = SettingsPage()

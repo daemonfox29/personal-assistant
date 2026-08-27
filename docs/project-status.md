@@ -239,6 +239,8 @@ Completed:
   may use at most half of the post-response request budget. Fixed page/result
   security ceilings remain unchanged, while 8K, 16K, and larger configured
   windows preserve room for their own prompt and trusted instructions.
+- Replaced the free-form context-window field with exact 8K, 16K, 32K, 64K,
+  and 128K UI presets. The selected label persists its exact token value.
 - Added a hard caller deadline and four-worker ceiling around public page
   fetching. Per-socket timeouts remain in place, while a hostile slow-drip
   server can no longer hold the conversation open indefinitely.
