@@ -179,7 +179,14 @@ class ToolRegistry:
             (tool.max_result_bytes for tool in self._tools.values()),
             reverse=True,
         )
-        return sum(limits[:3])
+        # The conversation coordinator permits at most three ordinary bounded
+        # results, but page reading is a terminal tool step: after page text is
+        # returned, the model must synthesize its answer without another tool.
+        # Reserve for the larger of those two real paths instead of three
+        # maximum-sized page results that can never occur in one request.
+        ordinary_three_step_reserve = 3 * MAX_TOOL_RESULT_BYTES
+        search_then_page_reserve = sum(limits[:2])
+        return max(ordinary_three_step_reserve, search_then_page_reserve)
 
     def resolve(self, name: str) -> RegisteredTool | None:
         if not isinstance(name, str):

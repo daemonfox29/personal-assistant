@@ -350,6 +350,12 @@ class ConversationService:
             ordered_calls = tuple(calls[index] for index in sorted(calls))
             if not ordered_calls:
                 return limit_reached
+            if not request.tools:
+                yield ConversationEvent(
+                    ConversationEventKind.NOTICE,
+                    "No further tool requests are allowed after public page reading.",
+                )
+                return limit_reached
             if len(ordered_calls) != 1:
                 yield ConversationEvent(
                     ConversationEventKind.NOTICE,
@@ -415,6 +421,7 @@ class ConversationService:
                 )
             )
             tool_steps += 1
+            final_answer_only = call.name == "read_current_search_results"
             if (
                 call.name == "search_public_web"
                 and result.status is ToolExecutionStatus.SUCCEEDED
@@ -447,10 +454,11 @@ class ConversationService:
                 )
                 seen_calls.add((page_call.name, ""))
                 tool_steps += 1
+                final_answer_only = True
             request = ModelRequest(
                 tuple(messages),
                 max(1, response_limit - visible_tokens),
-                request.tools,
+                () if final_answer_only else request.tools,
             )
 
     def close(self) -> None:

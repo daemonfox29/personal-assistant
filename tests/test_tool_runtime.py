@@ -270,7 +270,7 @@ class ToolRuntimeTests(unittest.TestCase):
         self.assertEqual(fetched, ["https://example.com/current"])
         self.assertIn("untrusted_public_page_text", read.content)
         self.assertGreaterEqual(executor.max_result_bytes, 7_500)
-        self.assertGreaterEqual(executor.context_reserve_bytes, 11_500)
+        self.assertEqual(executor.context_reserve_bytes, 9_548)
         audit_text = repr(self.audit.events)
         self.assertNotIn("https://example.com/current", audit_text)
         self.assertNotIn("Current public report text", audit_text)

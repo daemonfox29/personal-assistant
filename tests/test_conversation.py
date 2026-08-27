@@ -418,6 +418,7 @@ class ConversationServiceTests(unittest.TestCase):
         model = ReadingModel()
         service = ConversationService(
             model,
+            communication_style=CommunicationStyle("a" * 2_000),
             tool_executor=ToolExecutor(
                 default_tool_registry(
                     web_search=provider,
@@ -435,9 +436,60 @@ class ConversationServiceTests(unittest.TestCase):
             "untrusted_public_page_text",
             model.requests[1].messages[-1].content,
         )
+        self.assertEqual(model.requests[1].tools, ())
         answer = "".join(event.text for event in events)
         self.assertIn("synthesized", answer)
         self.assertIn("https://example.test/current", answer)
+
+    def test_page_read_is_a_coordinator_enforced_terminal_tool_step(self) -> None:
+        class ExtraToolModel:
+            def __init__(self) -> None:
+                self.requests: list[ModelRequest] = []
+
+            def generate(self, request: ModelRequest) -> ModelResponse:
+                self.requests.append(request)
+                if request.messages[-1].role is MessageRole.USER:
+                    return ModelResponse(
+                        "",
+                        (ModelToolCall.create("search_public_web", {}),),
+                    )
+                return ModelResponse(
+                    "",
+                    (
+                        ModelToolCall.create(
+                            "calculate",
+                            {"operator": "add", "left": 1, "right": 1},
+                        ),
+                    ),
+                )
+
+        provider = SearchProvider()
+        model = ExtraToolModel()
+        service = ConversationService(
+            model,
+            tool_executor=ToolExecutor(
+                default_tool_registry(
+                    web_search=provider,
+                    web_page_reader=PublicWebPageReader(
+                        fetcher=lambda _url, _timeout: (
+                            "text/plain",
+                            "utf-8",
+                            b"Current public report.",
+                        )
+                    ),
+                ),
+                InMemoryAuditSink(),
+            ),
+        )
+
+        events = tuple(service.events_for("Update me on current events today."))
+
+        self.assertEqual(len(model.requests), 2)
+        self.assertEqual(model.requests[1].tools, ())
+        self.assertIn(
+            "No further tool requests are allowed after public page reading.",
+            tuple(event.text for event in events),
+        )
 
     def test_duplicate_web_search_is_stopped_after_first_attempt(self) -> None:
         class DuplicateSearchModel:

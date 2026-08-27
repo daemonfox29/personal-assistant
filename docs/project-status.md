@@ -228,6 +228,10 @@ Completed:
 - Added deterministic broad-current-events recognition. After a successful
   search, code automatically reads the first three available results before the
   model's final turn, avoiding reliance on Qwen to request the reader.
+- Corrected the 16K context reservation to cover the real search-then-read path
+  instead of three impossible maximum-sized page results. Page reading is now a
+  coordinator-enforced terminal tool step, leaving room for the final answer and
+  the maximum configured communication-style preference.
 
 Verification:
 
@@ -239,7 +243,7 @@ Verification:
   reading as succeeded, returned a synthesized five-item update with exact HTTPS
   source links, emitted no error notice, and closed the managed runtime cleanly.
 - `uv lock --check`, source/test compilation, and whitespace validation passed.
-  The complete local suite passed 417 tests in 13.678 seconds, with only the
+  The complete local suite passed 418 tests in 13.746 seconds, with only the
   intentionally opt-in 100,000-record memory benchmark skipped.
 
 ### 2026-08-26 — Module 2.1 open-source read-only search boundary
