@@ -163,6 +163,8 @@ class ColimaSearchRuntime:
             if self._closed:
                 raise SearchRuntimeError("The local search runtime is closed.")
             self._cancel_timer_locked()
+            if self._running and not self._health_is_ready():
+                self._running = False
             if not self._running:
                 self._start_locked()
             self._active += 1
@@ -290,20 +292,28 @@ class ColimaSearchRuntime:
 
     def _wait_for_health(self) -> bool:
         deadline = self._monotonic() + MAX_SEARCH_STARTUP_SECONDS
+        while self._monotonic() < deadline:
+            if self._health_is_ready():
+                return True
+            self._sleeper(0.25)
+        return False
+
+    def _health_is_ready(self) -> bool:
+        """Perform one bounded liveness check without trusting cached state."""
+
         request = Request(
             "http://127.0.0.1:8888/healthz",
             headers={"Accept": "text/plain"},
             method="GET",
         )
-        while self._monotonic() < deadline:
-            try:
-                with self._health_opener(request, 1.0) as response:
-                    if getattr(response, "status", None) == 200:
-                        return response.read(16).strip() == b"OK"
-            except (HTTPError, URLError, OSError, TimeoutError):
-                pass
-            self._sleeper(0.25)
-        return False
+        try:
+            with self._health_opener(request, 1.0) as response:
+                return (
+                    getattr(response, "status", None) == 200
+                    and response.read(16).strip() == b"OK"
+                )
+        except (HTTPError, URLError, OSError, TimeoutError):
+            return False
 
     def _schedule_stop_locked(self) -> None:
         self._cancel_timer_locked()

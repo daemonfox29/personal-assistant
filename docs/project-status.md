@@ -235,6 +235,9 @@ Completed:
   prompt now states the exact-copy rule, and a denied search returns bounded
   retry guidance so the model can correct the query once without weakening the
   validator.
+- Added a pre-search liveness check so cached in-process runtime state cannot
+  outlive the actual VM or container. If the dedicated service was stopped
+  externally, the app now re-establishes the bounded runtime before searching.
 
 Verification:
 
@@ -243,7 +246,7 @@ Verification:
 - A literal 125-second observation confirmed the dedicated runtime stopped after
   its 120-second inactivity threshold.
 - `uv lock --check` passed, all source and test modules compiled, and the full
-  local suite passed: 404 tests in 13.687 seconds, with only the intentionally
+  local suite passed: 405 tests in 13.618 seconds, with only the intentionally
   opt-in 100,000-record memory benchmark skipped.
 
 Next:

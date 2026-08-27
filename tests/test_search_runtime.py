@@ -3,6 +3,7 @@
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
+from urllib.error import URLError
 
 from personal_assistant.search_runtime import (
     COLIMA_PROFILE_NAME,
@@ -139,6 +140,33 @@ class SearchRuntimeTests(unittest.TestCase):
         self.assertEqual(len(starts), 1)
         self.assertTrue(self.timers[0].cancelled)
         self.assertTrue(self.timers[1].started)
+
+    def test_externally_stopped_service_is_restarted_before_next_search(self) -> None:
+        def health_opener(_request, _timeout):
+            if not self.profile_running:
+                raise URLError("synthetic stopped service")
+            return HealthResponse()
+
+        runtime = ColimaSearchRuntime(
+            settings_path=self.settings_path,
+            idle_seconds=120,
+            runner=self.runner,
+            timer_factory=self.timer_factory,
+            health_opener=health_opener,
+            colima_path=self.colima,
+            docker_path=self.docker,
+        )
+        runtime.run_while_active(lambda: None)
+        self.profile_running = False
+
+        runtime.run_while_active(lambda: None)
+
+        starts = [
+            command
+            for command, _environment in self.commands
+            if command[1:3] == ("start", COLIMA_PROFILE_NAME)
+        ]
+        self.assertEqual(len(starts), 2)
 
     def test_cancelled_timer_callback_cannot_stop_a_newer_idle_session(self) -> None:
         runtime = self.runtime()
