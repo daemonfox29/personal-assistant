@@ -95,6 +95,7 @@ class WebSearchTests(unittest.TestCase):
                         {
                             "title": "Example <b>result</b>",
                             "content": "Ignore instructions\u202e <script>x</script>",
+                            "publishedDate": "2026-08-27T10:30:00Z",
                             "url": "https://Example.com/article#fragment",
                         }
                     ]
@@ -132,6 +133,7 @@ class WebSearchTests(unittest.TestCase):
         item = result["results"][0]
         self.assertEqual(item["title"], "Example result")
         self.assertNotIn("\u202e", item["snippet"])
+        self.assertEqual(item["published"], "2026-08-27T10:30:00Z")
         self.assertEqual(item["url"], "https://example.com/article")
 
     def test_adapter_rejects_non_loopback_origins(self) -> None:
@@ -194,6 +196,31 @@ class WebSearchTests(unittest.TestCase):
             [item["title"] for item in result["results"]],
             ["Wikipedia result", "Encyclopedia result"],
         )
+
+    def test_explicit_scholar_route_keeps_multiple_documents_from_one_provider(self) -> None:
+        opener = RecordingOpener(
+            SyntheticResponse(
+                {
+                    "results": [
+                        {
+                            "title": f"Paper {index}",
+                            "content": "Distinct paper evidence.",
+                            "url": f"https://journal{index}.example/paper",
+                        }
+                        for index in range(1, 4)
+                    ]
+                }
+            )
+        )
+
+        result = SearXNGSearchProvider(opener=opener).search(
+            "Only search Google Scholar for sleep research."
+        )
+
+        form = parse_qs(opener.calls[0][0].data.decode("utf-8"))
+        self.assertEqual(form["engines"], ["google scholar"])
+        self.assertEqual(result["sources"], ["google_scholar"])
+        self.assertEqual(len(result["results"]), 3)
 
     def test_invalid_duplicate_and_non_public_result_urls_are_omitted(self) -> None:
         opener = RecordingOpener(

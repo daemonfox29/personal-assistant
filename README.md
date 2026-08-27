@@ -84,6 +84,15 @@ The chat Stop button cooperatively cancels streaming output, leaves already
 visible partial text in place, records `Stopped by you`, and keeps the
 incomplete exchange out of session history and automatic memory analysis.
 
+Search-backed answers are held until their HTTPS citations are verified against
+the current correlated results. The model is instructed to compare distinct
+documents, qualify unsupported details, and disclose conflicts, stale evidence,
+or a point supported by only one relevant document. Selecting one provider does
+not limit comparison to one document: a Google Scholar-only search can still
+read and compare up to three separate Scholar results. Add `double-check`,
+`verify this`, or `check your work` to the same search question to request one
+additional tool-free model review before the final answer is shown.
+
 ## Set up the project
 
 The project uses `uv` 0.12.5 for locked, cross-platform dependency management.

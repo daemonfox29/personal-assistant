@@ -29,6 +29,7 @@ MAX_SEARCH_RESPONSE_BYTES = 65_536
 MAX_SEARCH_RESULTS = 5
 MAX_SEARCH_TITLE_CHARS = 120
 MAX_SEARCH_SNIPPET_CHARS = 240
+MAX_SEARCH_PUBLISHED_CHARS = 40
 MAX_SEARCH_URL_CHARS = 512
 MAX_SEARCH_DATA_BYTES = 1_700
 
@@ -320,6 +321,12 @@ def _validated_search_document(value: object) -> Mapping[str, object]:
             "title": title,
             "url": source_url,
         }
+        published = _plain_text(
+            item.get("publishedDate", item.get("published_date")),
+            MAX_SEARCH_PUBLISHED_CHARS,
+        )
+        if published:
+            candidate["published"] = published
         proposed = {
             "provider": "searxng",
             "results": [*results, candidate],

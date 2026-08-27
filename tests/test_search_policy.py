@@ -7,6 +7,7 @@ from personal_assistant.search_policy import (
     SearchPolicyError,
     SearchSource,
     requests_quality_search,
+    requests_search_verification,
 )
 
 
@@ -78,6 +79,12 @@ class SearchPolicyTests(unittest.TestCase):
                 "Only search PubMed for research about my condition."
             )
         )
+
+    def test_second_pass_requires_explicit_owner_wording(self) -> None:
+        self.assertTrue(requests_search_verification("Double-check those sources."))
+        self.assertTrue(requests_search_verification("Please verify this."))
+        self.assertTrue(requests_search_verification("Check your work."))
+        self.assertFalse(requests_search_verification("Tell me the latest update."))
 
 
 if __name__ == "__main__":

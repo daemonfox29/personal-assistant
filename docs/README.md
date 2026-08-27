@@ -25,6 +25,9 @@ This folder holds human-readable notes about the assistant's design, decisions, 
 - [Module 2.3 quality search controls](module-2-3-search-controls-spec.md):
   quality-first source routing, trusted lifecycle settings, retry diagnostics,
   and owner-controlled response cancellation.
+- [Module 2.4 search verification](module-2-4-search-verification-spec.md):
+  multi-document grounding, current-result citation validation, and an explicit
+  owner-requested second model pass.
 - [Encrypted SQLite provider spike](encrypted-database-spike.md): SQLCipher
   selection, verified guarantees, tradeoffs, and remaining platform checks.
 - [Typed memory repository](memory-repository.md): validated payloads,

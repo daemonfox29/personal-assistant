@@ -77,6 +77,11 @@ _PRIVATE_CONTEXT_TERMS = re.compile(
     r"saved (?:context|memory|memories))\b",
     re.IGNORECASE,
 )
+_VERIFICATION_TERMS = re.compile(
+    r"\b(double[- ]check|verify (?:this|that|your answer|the answer)|"
+    r"check (?:your work|the sources|the evidence))\b",
+    re.IGNORECASE,
+)
 _EXPLICIT_PATTERNS: tuple[tuple[SearchSource, tuple[str, ...]], ...] = (
     (SearchSource.GOOGLE_SCHOLAR, ("google scholar", "scholar")),
     (SearchSource.SEMANTIC_SCHOLAR, ("semantic scholar",)),
@@ -223,3 +228,9 @@ def requests_quality_search(user_text: str) -> bool:
         or _RESEARCH_TERMS.search(user_text)
         or _REFERENCE_TERMS.search(user_text)
     )
+
+
+def requests_search_verification(user_text: str) -> bool:
+    """Return whether the owner explicitly requested a second evidence pass."""
+
+    return isinstance(user_text, str) and bool(_VERIFICATION_TERMS.search(user_text))

@@ -208,8 +208,45 @@ complete; the batched Linux pull-request check is its final platform gate.
 - [x] Module 2.3: add persistent quality-source routing, trusted search lifecycle
   controls, exact single-provider commands, one safe retry with fixed diagnostic
   codes, configurable idle shutdown, and cooperative generation cancellation.
+- [x] Module 2.4: ground searched answers across distinct current documents,
+  validate exact current-request citation provenance, and add an explicit
+  owner-requested tool-free second model review.
 
 ## Session history
+
+### 2026-08-27 — Module 2.4 evidence-grounded search verification
+
+Completed:
+
+- Clarified provider versus evidence-source semantics. A Scholar-only route uses
+  one discovery provider while retaining several distinct papers or documents
+  for comparison.
+- Strengthened every searched answer's instructions to prefer primary or
+  authoritative material, map important claims to exact citations, remove or
+  qualify unsupported precision, and disclose conflicts, freshness limits, or
+  single-document support.
+- Added deterministic current-request citation provenance validation. Searched
+  answers are buffered and rejected rather than presented as verified when they
+  contain no current citation, cite an unknown URL, or have no usable results.
+- Added explicit `double-check`, `verify this`, and `check your work` handling.
+  The first answer remains an unshown draft; one tool-free second pass receives
+  only the current question, bounded current evidence, and draft. Only its
+  validated final answer reaches history and memory processing.
+- Preserved bounded published-date metadata when SearXNG supplies it, as well as
+  response cancellation during either generation pass.
+
+Verification:
+
+- All source and test modules compiled, repository whitespace checks passed,
+  and 448 local tests passed in 13.701 seconds with one intentionally opt-in
+  benchmark skipped.
+- A real Google Scholar-only double-check compared current evidence and produced
+  a completed reviewed answer with three exact citations from distinct papers.
+  Managed close stopped the dedicated Colima profile afterward.
+
+Next:
+
+- Owner UI test before updating the existing feature pull request workflow.
 
 ### 2026-08-27 — Module 2.3 quality search controls and cancellation
 
