@@ -400,8 +400,7 @@ class ConversationServiceTests(unittest.TestCase):
                 last = request.messages[-1]
                 if last.role is MessageRole.USER:
                     return ModelResponse(
-                        "",
-                        (ModelToolCall.create("search_public_web", {}),),
+                        "I cannot access current information. Check these links."
                     )
                 return ModelResponse(
                     "The current update is synthesized from the report "
@@ -434,12 +433,12 @@ class ConversationServiceTests(unittest.TestCase):
         events = tuple(service.events_for("Tell me some recent news about Iran."))
 
         self.assertEqual(provider.queries, ["Tell me some recent news about Iran."])
-        self.assertEqual(len(model.requests), 2)
+        self.assertEqual(len(model.requests), 1)
         self.assertIn(
             "untrusted_public_page_text",
-            model.requests[1].messages[-1].content,
+            model.requests[0].messages[-1].content,
         )
-        self.assertEqual(model.requests[1].tools, ())
+        self.assertEqual(model.requests[0].tools, ())
         answer = "".join(event.text for event in events)
         self.assertIn("synthesized", answer)
         self.assertIn("https://example.test/current", answer)
@@ -531,8 +530,8 @@ class ConversationServiceTests(unittest.TestCase):
 
         events = tuple(service.events_for("Update me on current events today."))
 
-        self.assertEqual(len(model.requests), 2)
-        self.assertEqual(model.requests[1].tools, ())
+        self.assertEqual(len(model.requests), 1)
+        self.assertEqual(model.requests[0].tools, ())
         self.assertIn(
             "No further tool requests are allowed after public page reading.",
             tuple(event.text for event in events),

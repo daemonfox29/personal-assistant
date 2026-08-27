@@ -226,8 +226,9 @@ Completed:
   page-borne directions, synthesize evidence, cite exact result URLs, compare
   sources, and disclose evidence limits.
 - Added deterministic broad-current-events recognition. After a successful
-  search, code automatically reads the first three available results before the
-  model's final turn, avoiding reliance on Qwen to request the reader.
+  code now performs search and reads the first three available results before
+  Qwen's first generation turn. Current-news retrieval therefore does not rely
+  on Qwen recognizing that it lacks current knowledge or requesting either tool.
 - Corrected the 16K context reservation to cover the real search-then-read path
   instead of three impossible maximum-sized page results. Page reading is now a
   coordinator-enforced terminal tool step, leaving room for the final answer and
@@ -247,13 +248,14 @@ Verification:
   “Update me on major current events today,” audited both search and public-page
   reading as succeeded, returned a synthesized five-item update with exact HTTPS
   source links, emitted no error notice, and closed the managed runtime cleanly.
-- The live 64K model stack processed “Tell me some recent news about Iran,”
-  automatically read bounded public pages, and returned concrete cited updates
-  rather than a list of search-result links.
+- The live 64K model stack processed both “Tell me some recent news about Iran”
+  and “Give me some current events on Iran,” automatically searched and read
+  bounded public pages before generation, and returned concrete cited updates
+  rather than a real-time-access refusal or list of search-result links.
 - `uv lock --check`, source/test compilation, and whitespace validation passed.
-  The non-UI suite passed 399 tests in 13.472 seconds (one intentional
+  The non-UI suite passed 399 tests in 13.663 seconds (one intentional
   100,000-record benchmark skip), and the native UI suite passed 21 tests in
-  0.172 seconds. They are run separately because the combined Qt runner can
+  0.171 seconds. They are run separately because the combined Qt runner can
   intermittently hang in unrelated worker-thread cleanup.
 
 ### 2026-08-26 — Module 2.1 open-source read-only search boundary

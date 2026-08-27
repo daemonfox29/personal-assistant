@@ -308,6 +308,73 @@ class ConversationService:
         tool_steps = 0
         seen_calls: set[tuple[str, str]] = set()
         limit_reached = False
+        if (
+            request.tools
+            and self._tool_executor is not None
+            and _is_broad_current_events_request(user_text)
+            and self._tool_executor.has_tool("search_public_web")
+        ):
+            # Current-news retrieval is a deterministic coordinator decision.
+            # Local models are not reliable enough to decide whether they have
+            # current knowledge, and may otherwise answer with a stale refusal
+            # plus remembered links without ever invoking the search tool.
+            search_call = ModelToolCall.create("search_public_web", {})
+            search_result = self._tool_executor.execute(
+                search_call,
+                correlation_id,
+                execution_context=ToolExecutionContext(user_text),
+            )
+            messages.append(
+                ModelMessage(
+                    MessageRole.ASSISTANT,
+                    "",
+                    tool_calls=(search_call,),
+                )
+            )
+            messages.append(
+                ModelMessage(
+                    MessageRole.TOOL,
+                    search_result.content,
+                    tool_name=search_result.tool_name,
+                )
+            )
+            seen_calls.add((search_call.name, ""))
+            tool_steps += 1
+            if (
+                search_result.status is ToolExecutionStatus.SUCCEEDED
+                and self._tool_executor.has_tool("read_current_search_results")
+                and tool_steps < 3
+            ):
+                page_call = ModelToolCall.create(
+                    "read_current_search_results",
+                    {"result_numbers": [1, 2, 3]},
+                )
+                page_result = self._tool_executor.execute(
+                    page_call,
+                    correlation_id,
+                    execution_context=ToolExecutionContext(user_text),
+                )
+                messages.append(
+                    ModelMessage(
+                        MessageRole.ASSISTANT,
+                        "",
+                        tool_calls=(page_call,),
+                    )
+                )
+                messages.append(
+                    ModelMessage(
+                        MessageRole.TOOL,
+                        page_result.content,
+                        tool_name=page_result.tool_name,
+                    )
+                )
+                seen_calls.add((page_call.name, ""))
+                tool_steps += 1
+            request = ModelRequest(
+                tuple(messages),
+                response_limit,
+                (),
+            )
         while True:
             step_parts: list[str] = []
             calls: dict[int, ModelToolCall] = {}
