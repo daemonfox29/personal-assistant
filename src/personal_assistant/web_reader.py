@@ -24,6 +24,7 @@ MAX_PAGE_TITLE_CHARS = 120
 MAX_PAGE_READING_DATA_BYTES = 5_000
 MAX_READING_SESSIONS = 8
 MAX_DNS_RESOLVERS = 4
+MAX_PAGE_FETCHERS = 4
 ALLOWED_PAGE_CONTENT_TYPES = frozenset(
     {"application/xhtml+xml", "text/html", "text/plain"}
 )
@@ -34,6 +35,7 @@ class WebPageReadError(RuntimeError):
 
 
 _DNS_RESOLVER_SLOTS = BoundedSemaphore(MAX_DNS_RESOLVERS)
+_PAGE_FETCHER_SLOTS = BoundedSemaphore(MAX_PAGE_FETCHERS)
 
 
 class _ArticleTextParser(HTMLParser):
@@ -150,6 +152,43 @@ def _public_addresses(
 
 
 def _fetch_public_https(url: str, timeout_seconds: float) -> tuple[str, str, bytes]:
+    """Return within one hard caller deadline even if a server slow-drips data."""
+
+    approved_url = validate_public_https_url(url)
+    if not _PAGE_FETCHER_SLOTS.acquire(blocking=False):
+        raise WebPageReadError("Public page reading is at capacity.")
+    result: Queue[
+        tuple[tuple[str, str, bytes] | None, Exception | None]
+    ] = Queue(maxsize=1)
+
+    def fetch() -> None:
+        try:
+            result.put(
+                (_fetch_public_https_blocking(approved_url, timeout_seconds), None)
+            )
+        except Exception as error:
+            result.put((None, error))
+        finally:
+            _PAGE_FETCHER_SLOTS.release()
+
+    Thread(target=fetch, name="public-page-fetch", daemon=True).start()
+    try:
+        fetched, fetch_error = result.get(timeout=timeout_seconds)
+    except Empty as error:
+        raise WebPageReadError("The public page read timed out.") from error
+    if fetch_error is not None:
+        if isinstance(fetch_error, WebPageReadError):
+            raise fetch_error
+        raise WebPageReadError("The public page could not be read.") from fetch_error
+    if fetched is None:
+        raise WebPageReadError("The public page could not be read.")
+    return fetched
+
+
+def _fetch_public_https_blocking(
+    url: str,
+    timeout_seconds: float,
+) -> tuple[str, str, bytes]:
     approved_url = validate_public_https_url(url)
     parsed = urlsplit(approved_url)
     hostname = parsed.hostname

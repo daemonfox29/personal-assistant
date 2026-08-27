@@ -32,6 +32,7 @@ class AppSettingsTests(unittest.TestCase):
                 "PERSONAL_ASSISTANT_CONTEXT_TOKENS": "2048",
                 "PERSONAL_ASSISTANT_HISTORY_TOKENS": "1000",
                 "PERSONAL_ASSISTANT_LONG_RESPONSE_TOKENS": "900",
+                "PERSONAL_ASSISTANT_MAX_RESPONSE_TOKENS": "1000",
             }
         )
 
@@ -101,16 +102,20 @@ class AppSettingsTests(unittest.TestCase):
         with self.assertRaises(LocalConnectionError):
             OllamaSettings(base_url="http://localhost:11434")
 
-    def test_context_window_can_be_increased_for_another_machine(self) -> None:
+    def test_context_window_accepts_the_full_128k_ceiling(self) -> None:
         settings = load_settings(
-            {"PERSONAL_ASSISTANT_CONTEXT_TOKENS": "32768"}
+            {"PERSONAL_ASSISTANT_CONTEXT_TOKENS": "131072"}
         )
 
-        self.assertEqual(settings.ollama.context_tokens, 32768)
+        self.assertEqual(settings.ollama.context_tokens, 131072)
 
     def test_context_window_rejects_unbounded_resource_values(self) -> None:
         with self.assertRaises(ValueError):
             load_settings({"PERSONAL_ASSISTANT_CONTEXT_TOKENS": "131073"})
+
+    def test_context_window_must_leave_room_for_the_response_ceiling(self) -> None:
+        with self.assertRaises(ValueError):
+            load_settings({"PERSONAL_ASSISTANT_CONTEXT_TOKENS": "2048"})
 
     def test_default_response_limit_cannot_exceed_hard_ceiling(self) -> None:
         with self.assertRaises(ValueError):

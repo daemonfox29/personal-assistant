@@ -41,10 +41,13 @@ including redirects.
 
 Only `text/html`, `application/xhtml+xml`, and `text/plain` are accepted.
 Compressed responses are refused. At most a 512-KiB prefix is transferred from
-each selected page, at most 1,800 normalized visible characters are returned per
+each selected page, at most 1,200 normalized visible characters are returned per
 page, and at most three pages are attempted sequentially. Script, style,
 template, SVG, and noscript content is discarded. The complete tool result is
-bounded to 7,500 bytes.
+bounded to 5,500 bytes. Each page attempt has a hard caller deadline in addition
+to socket timeouts, and at most four page-fetch workers may remain active, so a
+slow-drip server cannot block the conversation indefinitely or create
+unbounded background work.
 
 ## Prompt-injection handling
 
@@ -58,13 +61,15 @@ instructions. The reader never acts on text found in a page.
 
 The normal broad-current-events flow is:
 
-1. the model proposes `search_public_web` with no query arguments;
-2. deterministic code derives the query from the current user message;
+1. deterministic coordinator code recognizes current-news phrasing;
+2. it invokes `search_public_web`, which derives the query from the current user
+   message and accepts no model-authored query;
 3. search returns up to five bounded results and stores only their public URLs
    under the current request correlation ID;
 4. the coordinator calls `read_current_search_results` for result numbers 1–3;
 5. the reader returns any successfully extracted pages and consumes the URL set;
-6. the model synthesizes the current evidence and cites exact returned URLs.
+6. the model's first generation turn synthesizes the current evidence and cites
+   exact returned URLs, with further tools disabled for that turn.
 
 Other factual searches may use snippets directly. If they are insufficient, the
 model may propose one page-read call using current result numbers. Search and

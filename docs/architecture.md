@@ -118,6 +118,12 @@ structured call → registry resolves the exact name → validator bounds argume
 executor invokes only the registered callable → bounded untrusted tool result →
 model produces the user-facing response
 
+Recognized current-news requests take a narrower deterministic route: before
+the model's first generation turn, the coordinator invokes the same registered,
+validated, permission-checked, and audited search and page-read tools using only
+the bounded current user message. The model then receives inert evidence with
+further tools disabled and can only produce the local user-facing response.
+
 The model never receives a callable, audit sink, approval authority, credential,
 or general execution primitive. The initial registry contains current local
 date/time and bounded decimal arithmetic. Module 2.1 optionally adds a read-only
@@ -139,7 +145,8 @@ Only result numbers from the current correlated search can resolve to URLs.
 DNS must contain exclusively global addresses; the socket is pinned to one
 validated address while TLS remains verified for the original hostname. The
 reader rejects redirects, proxies, cookies, authentication, compressed or
-non-text responses, and returns only bounded inert text labeled untrusted.
+non-text responses, and returns only bounded inert text labeled untrusted. A
+hard caller deadline and four-worker ceiling contain slow-drip public servers.
 
 ## Initial scope
 

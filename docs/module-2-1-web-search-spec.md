@@ -69,13 +69,14 @@ enablement of this narrow search action. Under the user-derived-query rule,
 memory-derived searches, or adding any other destination requires a new review
 and trusted per-action approval design.
 
-The model should propose search automatically, without asking for permission or
-requiring explicit search phrasing, when a public factual question depends on
+For recognized current-news phrasing, deterministic coordinator code searches
+before the model's first generation turn, without asking for permission or
+requiring the model to recognize that its knowledge is stale. For other public
+factual questions, the model should propose search when the answer depends on
 information it does not know confidently or that may have changed. It should
 not search casual conversation, creative work, private-memory questions, or
-facts already established by trusted context. Deciding whether search is useful
-is a model proposal inside the deterministic authority boundary; constructing
-the query is not.
+facts already established by trusted context. Constructing the outbound query
+is always deterministic: neither path permits the model to author or expand it.
 
 ## Inputs and outputs
 

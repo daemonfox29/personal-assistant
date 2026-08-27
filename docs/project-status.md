@@ -226,9 +226,10 @@ Completed:
   page-borne directions, synthesize evidence, cite exact result URLs, compare
   sources, and disclose evidence limits.
 - Added deterministic broad-current-events recognition. After a successful
-  code now performs search and reads the first three available results before
-  Qwen's first generation turn. Current-news retrieval therefore does not rely
-  on Qwen recognizing that it lacks current knowledge or requesting either tool.
+  classification, code performs search and reads the first three available
+  results before Qwen's first generation turn. Current-news retrieval therefore
+  does not rely on Qwen recognizing that it lacks current knowledge or
+  requesting either tool.
 - Corrected the 16K context reservation to cover the real search-then-read path
   instead of three impossible maximum-sized page results. Page reading is now a
   coordinator-enforced terminal tool step, leaving room for the final answer and
@@ -238,6 +239,11 @@ Completed:
   may use at most half of the post-response request budget. Fixed page/result
   security ceilings remain unchanged, while 8K, 16K, and larger configured
   windows preserve room for their own prompt and trusted instructions.
+- Added a hard caller deadline and four-worker ceiling around public page
+  fetching. Per-socket timeouts remain in place, while a hostile slow-drip
+  server can no longer hold the conversation open indefinitely.
+- Aligned environment and desktop resource validation so every context/response
+  combination preserves at least 1,024 tokens for model input.
 
 Verification:
 
@@ -248,15 +254,15 @@ Verification:
   “Update me on major current events today,” audited both search and public-page
   reading as succeeded, returned a synthesized five-item update with exact HTTPS
   source links, emitted no error notice, and closed the managed runtime cleanly.
-- The live 64K model stack processed both “Tell me some recent news about Iran”
-  and “Give me some current events on Iran,” automatically searched and read
-  bounded public pages before generation, and returned concrete cited updates
-  rather than a real-time-access refusal or list of search-result links.
-- `uv lock --check`, source/test compilation, and whitespace validation passed.
-  The non-UI suite passed 399 tests in 13.663 seconds (one intentional
-  100,000-record benchmark skip), and the native UI suite passed 21 tests in
-  0.171 seconds. They are run separately because the combined Qt runner can
-  intermittently hang in unrelated worker-thread cleanup.
+- The live approximately 64K model stack processed both “Tell me some recent
+  news about Iran” and “Give me some current events on Iran,” automatically
+  searched and read bounded public pages before generation, and returned
+  concrete cited updates rather than a real-time-access refusal or list of
+  search-result links.
+- `uv lock --check`, source/test compilation, Git object integrity, credential
+  signature review, and whitespace validation passed. The complete local suite
+  passed 422 tests in 13.676 seconds, with only the intentionally opt-in
+  100,000-record memory benchmark skipped.
 
 ### 2026-08-26 — Module 2.1 open-source read-only search boundary
 

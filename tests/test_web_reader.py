@@ -4,6 +4,7 @@ from email.message import Message
 import json
 import socket
 from threading import Event
+from time import monotonic
 from unittest.mock import patch
 import unittest
 from uuid import uuid4
@@ -175,6 +176,27 @@ class WebReaderTests(unittest.TestCase):
             FakeConnection,
         ), self.assertRaises(WebPageReadError):
             _fetch_public_https("https://example.com/redirect", 2.0)
+
+    def test_fetcher_has_a_hard_caller_deadline_for_slow_pages(self) -> None:
+        release = Event()
+        finished = Event()
+
+        def blocked_fetch(_url: str, _timeout: float):
+            release.wait(timeout=0.5)
+            finished.set()
+            return "text/plain", "utf-8", b"late page"
+
+        started = monotonic()
+        with patch(
+            "personal_assistant.web_reader._fetch_public_https_blocking",
+            side_effect=blocked_fetch,
+        ), self.assertRaises(WebPageReadError):
+            _fetch_public_https("https://example.com/slow", 0.02)
+        elapsed = monotonic() - started
+
+        self.assertLess(elapsed, 0.25)
+        release.set()
+        self.assertTrue(finished.wait(timeout=0.5))
 
     def test_search_session_reads_only_selected_current_result_urls(self) -> None:
         fetched: list[str] = []

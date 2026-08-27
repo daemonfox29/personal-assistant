@@ -10,6 +10,7 @@ from personal_assistant.model import validate_response_token_limit
 from personal_assistant.runtime_preferences import (
     MAX_CONTEXT_TOKENS,
     MIN_CONTEXT_TOKENS,
+    MIN_INPUT_TOKENS,
     PREFERENCES_FILENAME,
     RuntimePreferences,
     RuntimePreferencesStore,
@@ -132,6 +133,13 @@ class AppSettings:
             raise ValueError(
                 "The default response limit cannot exceed the maximum response "
                 "limit."
+            )
+        if (
+            self.ollama.context_tokens - self.chat.maximum_response_tokens
+            < MIN_INPUT_TOKENS
+        ):
+            raise ValueError(
+                "The context window must reserve at least 1,024 tokens for input."
             )
 
 
