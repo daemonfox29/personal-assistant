@@ -105,6 +105,29 @@ class RepositorySafetyTests(unittest.TestCase):
         self.assertIn("persist-credentials: false", workflow)
         self.assertIn("permissions:\n  contents: read", workflow)
 
+    def test_searxng_deployment_is_pinned_and_loopback_only(self) -> None:
+        compose = (
+            REPOSITORY_ROOT / "deploy" / "searxng" / "compose.yaml"
+        ).read_text()
+        settings = (
+            REPOSITORY_ROOT / "deploy" / "searxng" / "settings.yml"
+        ).read_text()
+
+        self.assertIn('"127.0.0.1:8888:8080"', compose)
+        self.assertRegex(
+            compose,
+            r"image: ghcr\.io/searxng/searxng:[^\s]+@sha256:[0-9a-f]{64}",
+        )
+        self.assertNotIn(":latest", compose)
+        self.assertIn("read_only: true", compose)
+        self.assertIn("no-new-privileges:true", compose)
+        self.assertIn("keep_only:", settings)
+        self.assertIn("safe_search: 1", settings)
+        self.assertIn("autocomplete: \"\"", settings)
+        self.assertIn("method: \"POST\"", settings)
+        self.assertIn("- json", settings)
+        self.assertNotIn("- html", settings)
+
 
 if __name__ == "__main__":
     unittest.main()

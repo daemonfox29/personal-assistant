@@ -6,6 +6,7 @@ from personal_assistant.config import (
     ChatSettings,
     MemorySettings,
     OllamaSettings,
+    SearchSettings,
     load_settings,
 )
 from personal_assistant.local_http import LocalConnectionError
@@ -22,6 +23,7 @@ class AppSettingsTests(unittest.TestCase):
         self.assertEqual(settings.chat.session_history_tokens, 6000)
         self.assertTrue(settings.memory.enabled)
         self.assertEqual(settings.memory.context_tokens, 2000)
+        self.assertEqual(settings.search.base_url, "http://127.0.0.1:8888")
 
     def test_environment_can_override_machine_local_settings(self) -> None:
         settings = load_settings(
@@ -37,6 +39,20 @@ class AppSettingsTests(unittest.TestCase):
         self.assertEqual(settings.ollama.context_tokens, 2048)
         self.assertEqual(settings.chat.session_history_tokens, 1000)
         self.assertEqual(settings.chat.long_response_tokens, 900)
+
+    def test_search_override_must_remain_numeric_loopback(self) -> None:
+        settings = load_settings(
+            {"PERSONAL_ASSISTANT_SEARXNG_URL": "http://[::1]:9999"}
+        )
+        self.assertEqual(settings.search.base_url, "http://[::1]:9999")
+
+        for value in (
+            "http://localhost:8888",
+            "http://192.168.1.2:8888",
+            "https://127.0.0.1:8888",
+        ):
+            with self.subTest(value=value), self.assertRaises(LocalConnectionError):
+                SearchSettings(base_url=value)
 
     def test_memory_paths_and_enablement_are_machine_local(self) -> None:
         settings = load_settings(

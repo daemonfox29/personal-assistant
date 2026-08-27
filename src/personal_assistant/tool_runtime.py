@@ -27,6 +27,11 @@ from personal_assistant.authorization import (
 )
 from personal_assistant.model import ModelToolCall, ModelToolDefinition
 from personal_assistant.permissions import ActionKind
+from personal_assistant.web_search import (
+    WebSearchProvider,
+    query_is_derived_from_user_text,
+    validate_search_query,
+)
 
 
 MAX_TOOL_RESULT_BYTES = 2_048
@@ -57,8 +62,23 @@ class ToolExecutionResult:
     content: str
 
 
+@dataclass(frozen=True)
+class ToolExecutionContext:
+    """Request-scoped data used only by deterministic contextual validators."""
+
+    user_text: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.user_text, str):
+            raise TypeError("Tool execution context requires current user text.")
+
+
 ToolValidator = Callable[[Mapping[str, object]], dict[str, object]]
 ToolHandler = Callable[[Mapping[str, object]], Mapping[str, object]]
+ToolContextValidator = Callable[
+    [Mapping[str, object], ToolExecutionContext],
+    None,
+]
 
 
 @dataclass(frozen=True)
@@ -69,6 +89,8 @@ class RegisteredTool:
     action: ActionKind
     validator: ToolValidator
     handler: ToolHandler
+    context_validator: ToolContextValidator | None = None
+    repeat_allowed: bool = True
 
     def __post_init__(self) -> None:
         if not isinstance(self.definition, ModelToolDefinition):
@@ -77,6 +99,12 @@ class RegisteredTool:
             raise TypeError("A registered tool requires an explicit action kind.")
         if not callable(self.validator) or not callable(self.handler):
             raise TypeError("A registered tool requires validator and handler callables.")
+        if self.context_validator is not None and not callable(
+            self.context_validator
+        ):
+            raise TypeError("A registered tool context validator must be callable.")
+        if not isinstance(self.repeat_allowed, bool):
+            raise TypeError("A registered tool repeat policy must be a boolean.")
 
 
 class ToolRegistry:
@@ -101,6 +129,10 @@ class ToolRegistry:
             return None
         return self._tools.get(name)
 
+    def repeat_allowed(self, name: str) -> bool:
+        tool = self.resolve(name)
+        return bool(tool is not None and tool.repeat_allowed)
+
 
 class ToolExecutor:
     """Validate, authorize, audit, and invoke registered callables only."""
@@ -117,11 +149,15 @@ class ToolExecutor:
     def definitions(self) -> tuple[ModelToolDefinition, ...]:
         return self._registry.definitions
 
+    def repeat_allowed(self, name: str) -> bool:
+        return self._registry.repeat_allowed(name)
+
     def execute(
         self,
         call: ModelToolCall,
         correlation_id: UUID,
         *,
+        execution_context: ToolExecutionContext | None = None,
         approval_receipt: ApprovalReceipt | None = None,
         approval_authority: ApprovalAuthority | None = None,
     ) -> ToolExecutionResult:
@@ -150,6 +186,10 @@ class ToolExecutor:
         )
         try:
             arguments = tool.validator(call.arguments())
+            if tool.context_validator is not None:
+                if execution_context is None:
+                    raise ToolInputError("Request context is required.")
+                tool.context_validator(arguments, execution_context)
         except (ToolInputError, TypeError, ValueError):
             self._audit(
                 correlation_id,
@@ -286,8 +326,12 @@ class ToolExecutor:
 def default_tool_registry(
     *,
     clock: Callable[[], datetime] = lambda: datetime.now().astimezone(),
+    web_search: WebSearchProvider | None = None,
 ) -> ToolRegistry:
-    """Build the reviewed Module 2.0 registry from code-owned definitions."""
+    """Build the reviewed registry from code-owned narrow capabilities."""
+
+    if web_search is not None and not isinstance(web_search, WebSearchProvider):
+        raise TypeError("The tool registry requires a web search provider.")
 
     def validate_time(arguments: Mapping[str, object]) -> dict[str, object]:
         if dict(arguments):
@@ -348,51 +392,101 @@ def default_tool_registry(
             raise ToolInputError("The calculation result is outside its limit.")
         return {"result": rendered}
 
-    return ToolRegistry(
-        (
-            RegisteredTool(
-                ModelToolDefinition.create(
-                    "get_current_datetime",
-                    "Get the current local date, time, timezone, and UTC offset.",
-                    {
-                        "additionalProperties": False,
-                        "properties": {},
-                        "type": "object",
-                    },
-                ),
-                ActionKind.READ_SYSTEM_TIME,
-                validate_time,
-                current_time,
+    def validate_web_search(arguments: Mapping[str, object]) -> dict[str, object]:
+        if set(arguments) != {"query"}:
+            raise ToolInputError("Search fields are invalid.")
+        try:
+            query = validate_search_query(arguments["query"])
+        except ValueError as error:
+            raise ToolInputError("The search query is invalid.") from error
+        return {"query": query}
+
+    def validate_web_search_context(
+        arguments: Mapping[str, object],
+        context: ToolExecutionContext,
+    ) -> None:
+        if not query_is_derived_from_user_text(
+            str(arguments["query"]),
+            context.user_text,
+        ):
+            raise ToolInputError("The search query was not supplied by the user.")
+
+    def search_web(arguments: Mapping[str, object]) -> Mapping[str, object]:
+        if web_search is None:
+            raise ToolRuntimeError("Web search is unavailable.")
+        return web_search.search(str(arguments["query"]))
+
+    tools = [
+        RegisteredTool(
+            ModelToolDefinition.create(
+                "get_current_datetime",
+                "Get the current local date, time, timezone, and UTC offset.",
+                {
+                    "additionalProperties": False,
+                    "properties": {},
+                    "type": "object",
+                },
             ),
+            ActionKind.READ_SYSTEM_TIME,
+            validate_time,
+            current_time,
+        ),
+        RegisteredTool(
+            ModelToolDefinition.create(
+                "calculate",
+                "Perform one bounded decimal arithmetic operation.",
+                {
+                    "additionalProperties": False,
+                    "properties": {
+                        "left": {"type": "number"},
+                        "operator": {
+                            "enum": [
+                                "add",
+                                "subtract",
+                                "multiply",
+                                "divide",
+                            ],
+                            "type": "string",
+                        },
+                        "right": {"type": "number"},
+                    },
+                    "required": ["operator", "left", "right"],
+                    "type": "object",
+                },
+            ),
+            ActionKind.CALCULATE,
+            validate_calculation,
+            calculate,
+        ),
+    ]
+    if web_search is not None:
+        tools.append(
             RegisteredTool(
                 ModelToolDefinition.create(
-                    "calculate",
-                    "Perform one bounded decimal arithmetic operation.",
+                    "search_public_web",
+                    "Search current public web results using words from the "
+                    "user's current message.",
                     {
                         "additionalProperties": False,
                         "properties": {
-                            "left": {"type": "number"},
-                            "operator": {
-                                "enum": [
-                                    "add",
-                                    "subtract",
-                                    "multiply",
-                                    "divide",
-                                ],
+                            "query": {
+                                "maxLength": 256,
+                                "minLength": 2,
                                 "type": "string",
-                            },
-                            "right": {"type": "number"},
+                            }
                         },
-                        "required": ["operator", "left", "right"],
+                        "required": ["query"],
                         "type": "object",
                     },
                 ),
-                ActionKind.CALCULATE,
-                validate_calculation,
-                calculate,
-            ),
+                ActionKind.WEB_SEARCH,
+                validate_web_search,
+                search_web,
+                context_validator=validate_web_search_context,
+                repeat_allowed=False,
+            )
         )
-    )
+    return ToolRegistry(tuple(tools))
 
 
 def _bounded_decimal(value: object) -> Decimal:

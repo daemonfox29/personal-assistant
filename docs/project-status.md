@@ -54,11 +54,16 @@ This document is the handoff point between coding sessions. At the end of each s
 - The local permission policy is implemented and covered by automated tests.
 - Module 2.0 has a code-owned deterministic tool registry and executor shared by
   native and recovery-terminal composition. Ollama receives native structured
-  definitions for only current local date/time and bounded decimal arithmetic.
+  definitions for current local date/time and bounded decimal arithmetic.
   Every proposed execution is schema-validated, policy-checked, content-free
   audited, result-bounded, returned as untrusted tool-role data, and capped at
-  three serial steps. No web, browser, file, credential, shell, or arbitrary-code
-  tool is enabled.
+  three serial steps. Module 2.1 now adds an optional read-only search definition
+  backed only by numeric-loopback SearXNG. Its query must be copied from the
+  current user message, result URLs are never fetched, and returned snippets are
+  bounded untrusted data. Browser, file, credential, shell, arbitrary URL fetch,
+  and arbitrary-code tools remain disabled. The pinned SearXNG deployment is
+  checked in but cannot yet be runtime-verified because no container runtime is
+  installed on the current Mac.
 - GitHub Actions is configured to test pull requests targeting `main` before
   merge. The public repository has an active ruleset requiring the `test`
   check and blocking force pushes and deletion. Non-draft pull requests from
@@ -79,10 +84,11 @@ This document is the handoff point between coding sessions. At the end of each s
   confirmed persistent records, intercepts explicit remember instructions, and
   deterministically commits reviewed clear exact low-risk statements before the
   response while analyzing other completed turns asynchronously into
-  quarantined candidates. It has only the two reviewed local Module 2.0
-  utilities and no browser access, broad credential access, or web capability; the
-  native composition alone receives a narrow automatic-unlock credential
-  adapter that is never exposed to the model or widgets.
+  quarantined candidates. It has the two reviewed local Module 2.0 utilities and
+  the optional bounded SearXNG search path, with no browser access, broad
+  credential access, page retrieval, or general network capability; the native
+  composition alone receives a narrow automatic-unlock credential adapter that
+  is never exposed to the model or widgets.
 - Conversation policy is documented separately from the action-permission policy.
 - `docs/security-principles.md` is the governing threat model and review
   checklist for every future capability; design decisions should explicitly
@@ -185,11 +191,51 @@ complete; the batched Linux pull-request check is its final platform gate.
 - [x] Module 2.0: define and implement the assistant's first code-owned tool
   registry, native Ollama tool-call protocol, deterministic permission and audit
   path, bounded executor, and safe local time and calculator tools.
-- [ ] Module 2.0 portability gate: pass the full Linux pull-request workflow for
-  the new model-call and executor path before beginning Module 2.1.
-- [ ] Add a web/search tool only behind the tool registry and approval layer.
+- [ ] Deferred at owner direction: run the Module 2.0/2.1 Linux pull-request
+  portability workflow. Do not describe it as verified meanwhile.
+- [x] Module 2.1 code boundary: add user-derived read-only public search through
+  fixed numeric-loopback SearXNG, with bounded inert results, citations,
+  timeouts, duplicate suppression, policy enforcement, and content-free audit.
+- [ ] Module 2.1 runtime gate: install an approved container runtime, start the
+  pinned loopback-only SearXNG deployment, and verify one real search. Docker is
+  not currently installed on this Mac.
 
 ## Session history
+
+### 2026-08-26 — Module 2.1 open-source read-only search boundary
+
+Completed:
+
+- Chose self-hosted SearXNG instead of a paid/proprietary search API or a broad
+  scraping library. Kept a replaceable provider protocol so the local search
+  implementation can change without changing model or executor contracts.
+- Added a fixed numeric-loopback JSON adapter with no proxy discovery, redirect
+  following, cookies, page retrieval, result URL fetching, credentials, or
+  arbitrary destination selection. The adapter bounds timeout, response bytes,
+  JSON shape, result count, title, snippet, and HTTPS URLs.
+- Added a deterministic contextual validator: an outbound query must be a
+  normalized contiguous phrase from the current user message. The model cannot
+  append memory values or other model-authored text to the search request.
+- Labeled all results as untrusted web data, strengthened the system instruction
+  against result-borne prompt injection, required exact returned source URLs for
+  search-supported claims, and stopped duplicate exact search attempts.
+- Added a pinned, loopback-published, read-only SearXNG container definition with
+  a small reviewed engine set, moderate safe search, JSON-only responses, no
+  autocomplete or image proxy, short upstream timeouts, and no retries.
+
+Verification:
+
+- The complete local suite passes: 393 tests passed with one opt-in performance
+  test skipped. Bytecode compilation, lockfile validation, and whitespace checks
+  also pass.
+- The real SearXNG container remains unverified because Docker is not installed
+  on this Mac; absence of the service fails safely.
+
+Next:
+
+- Install or select an approved container runtime before the separate real-search
+  gate. Later add native SearXNG setup, start/stop, health, and update controls so
+  routine use does not require a terminal.
 
 ### 2026-08-26 — Module 2.0 bounded local tool foundation
 

@@ -87,6 +87,25 @@ class RepeatingToolModel:
         )
 
 
+class SearchProvider:
+    def __init__(self) -> None:
+        self.queries: list[str] = []
+
+    def search(self, query: str):
+        self.queries.append(query)
+        return {
+            "provider": "searxng",
+            "results": [
+                {
+                    "title": "Example",
+                    "snippet": "Current public information.",
+                    "url": "https://example.test/current",
+                }
+            ],
+            "trust": "untrusted_web_search_results",
+        }
+
+
 class RecordingMemoryHandler:
     def __init__(self) -> None:
         self.calls: list[tuple[str, UUID]] = []
@@ -268,6 +287,85 @@ class ConversationServiceTests(unittest.TestCase):
         self.assertFalse(
             any(message.role is MessageRole.TOOL for message in next_turn_messages)
         )
+
+    def test_web_search_uses_current_user_query_and_returns_citation_data(self) -> None:
+        class SearchModel:
+            def __init__(self) -> None:
+                self.requests: list[ModelRequest] = []
+
+            def generate(self, request: ModelRequest) -> ModelResponse:
+                self.requests.append(request)
+                if request.messages[-1].role is MessageRole.TOOL:
+                    return ModelResponse(
+                        "Example reports current information "
+                        "(https://example.test/current)."
+                    )
+                return ModelResponse(
+                    "",
+                    (
+                        ModelToolCall.create(
+                            "search_public_web",
+                            {"query": "latest SearXNG release"},
+                        ),
+                    ),
+                )
+
+        provider = SearchProvider()
+        model = SearchModel()
+        service = ConversationService(
+            model,
+            tool_executor=ToolExecutor(
+                default_tool_registry(web_search=provider),
+                InMemoryAuditSink(),
+            ),
+        )
+
+        events = tuple(
+            service.events_for("Please search for the latest SearXNG release.")
+        )
+
+        self.assertEqual(provider.queries, ["latest SearXNG release"])
+        self.assertIn(
+            "untrusted_web_search_results",
+            model.requests[1].messages[-1].content,
+        )
+        self.assertIn(
+            "https://example.test/current",
+            "".join(event.text for event in events),
+        )
+
+    def test_duplicate_web_search_is_stopped_after_first_attempt(self) -> None:
+        class DuplicateSearchModel:
+            def __init__(self) -> None:
+                self.requests = 0
+
+            def generate(self, request: ModelRequest) -> ModelResponse:
+                self.requests += 1
+                return ModelResponse(
+                    "",
+                    (
+                        ModelToolCall.create(
+                            "search_public_web",
+                            {"query": "current public result"},
+                        ),
+                    ),
+                )
+
+        provider = SearchProvider()
+        model = DuplicateSearchModel()
+        service = ConversationService(
+            model,
+            tool_executor=ToolExecutor(
+                default_tool_registry(web_search=provider),
+                InMemoryAuditSink(),
+            ),
+        )
+
+        events = tuple(service.events_for("Find the current public result."))
+
+        self.assertEqual(provider.queries, ["current public result"])
+        self.assertEqual(model.requests, 2)
+        self.assertTrue(any("already attempted" in event.text for event in events))
     def test_pre_response_memory_notice_precedes_model_and_skips_duplicate_queue(self) -> None:
         model = SyntheticStreamingModel()
         worker = RecordingPostResponseWorker()

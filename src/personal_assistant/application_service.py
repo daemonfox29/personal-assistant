@@ -100,6 +100,7 @@ from personal_assistant.runtime_preferences import (
     RuntimePreferencesStore,
 )
 from personal_assistant.tool_runtime import ToolExecutor, default_tool_registry
+from personal_assistant.web_search import SearXNGSearchProvider
 
 
 class ApplicationServiceError(RuntimeError):
@@ -1734,7 +1735,12 @@ class AssistantApplicationFactory:
                     )
                 ),
                 tool_executor=ToolExecutor(
-                    default_tool_registry(),
+                    default_tool_registry(
+                        web_search=SearXNGSearchProvider(
+                            self._settings.search.base_url,
+                            timeout_seconds=self._settings.search.timeout_seconds,
+                        )
+                    ),
                     self._audit_sink() if runtime is None else runtime.audit_sink,
                 ),
             )

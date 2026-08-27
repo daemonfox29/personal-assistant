@@ -1,0 +1,18 @@
+services:
+  searxng:
+    image: ghcr.io/searxng/searxng:2026.8.20-8d3dd0cd4@sha256:3cb8eba87bb347613fab9dfe87d448c21300b8f0648295c93b85f4246e93ae73
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8888:8080"
+    environment:
+      SEARXNG_SECRET: "${SEARXNG_SECRET:?Set a random SearXNG secret before starting}"
+    volumes:
+      - ./settings.yml:/etc/searxng/settings.yml:ro
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+      - /var/cache/searxng:size=32m,mode=0750
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL

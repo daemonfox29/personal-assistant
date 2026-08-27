@@ -31,37 +31,41 @@ def validate_loopback_http_url(url: str, *, base_url: bool = False) -> str:
         port = parsed.port
     except ValueError as error:
         raise LocalConnectionError(
-            "The Ollama URL must be a valid loopback HTTP address."
+            "The local service URL must be a valid loopback HTTP address."
         ) from error
 
     if parsed.scheme != "http":
-        raise LocalConnectionError("The Ollama URL must use plain HTTP.")
+        raise LocalConnectionError("The local service URL must use plain HTTP.")
     if parsed.username is not None or parsed.password is not None:
-        raise LocalConnectionError("The Ollama URL must not contain credentials.")
+        raise LocalConnectionError("The local service URL must not contain credentials.")
     if parsed.hostname is None or port is None:
         raise LocalConnectionError(
-            "The Ollama URL must contain an explicit IP address and port."
+            "The local service URL must contain an explicit IP address and port."
         )
     if port == 0:
-        raise LocalConnectionError("The Ollama URL port must be between 1 and 65535.")
+        raise LocalConnectionError(
+            "The local service URL port must be between 1 and 65535."
+        )
 
     try:
         address = ip_address(parsed.hostname)
     except ValueError as error:
         raise LocalConnectionError(
-            "The Ollama URL must use a numeric loopback IP address."
+            "The local service URL must use a numeric loopback IP address."
         ) from error
 
     if not address.is_loopback:
         raise LocalConnectionError(
-            "The Ollama URL must use a loopback IP address."
+            "The local service URL must use a loopback IP address."
         )
     if parsed.query or parsed.fragment:
         raise LocalConnectionError(
-            "The Ollama URL must not contain a query string or fragment."
+            "The local service URL must not contain a query string or fragment."
         )
     if base_url and parsed.path not in {"", "/"}:
-        raise LocalConnectionError("The Ollama base URL must not contain a path.")
+        raise LocalConnectionError(
+            "The local service base URL must not contain a path."
+        )
 
     return url.rstrip("/") if base_url else url
 

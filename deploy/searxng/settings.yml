@@ -1,0 +1,33 @@
+use_default_settings:
+  engines:
+    keep_only:
+      - brave
+      - duckduckgo
+      - qwant
+      - wikipedia
+
+general:
+  debug: false
+  instance_name: "Personal Assistant Search"
+
+search:
+  safe_search: 1
+  autocomplete: ""
+  default_lang: "en"
+  max_page: 1
+  formats:
+    - json
+
+server:
+  limiter: false
+  image_proxy: false
+  method: "POST"
+
+outgoing:
+  request_timeout: 3.0
+  max_request_timeout: 3.0
+  retries: 0
+  pool_connections: 8
+  pool_maxsize: 4
+  enable_http2: true
+  max_redirects: 3

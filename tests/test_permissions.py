@@ -22,7 +22,11 @@ class PermissionPolicyTests(unittest.TestCase):
         self.assertIs(result.decision, PermissionDecision.ALLOW)
 
     def test_safe_local_utilities_are_explicitly_allowed(self) -> None:
-        for action in (ActionKind.READ_SYSTEM_TIME, ActionKind.CALCULATE):
+        for action in (
+            ActionKind.READ_SYSTEM_TIME,
+            ActionKind.CALCULATE,
+            ActionKind.WEB_SEARCH,
+        ):
             with self.subTest(action=action):
                 self.assertIs(
                     evaluate_action(action).decision,

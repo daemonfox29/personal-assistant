@@ -9,9 +9,10 @@ of open questions.
 ## Tool registry and tool execution
 
 The initial registry, native model-call protocol, validation, permission, audit,
-and executor path are now implemented in Module 2.0. Revisit the trusted UI
-pause-and-resume experience before registering the first approval-required tool,
-and keep web search behind its separate Module 2.1 security gate.
+and executor path are implemented in Module 2.0. Module 2.1 uses a separate local
+SearXNG boundary. Revisit native container installation, start/stop, health,
+update review, and provider selection controls after the MVP; also revisit the
+trusted UI pause-and-resume experience before the first approval-required tool.
 
 ## Model interface and protocols
 

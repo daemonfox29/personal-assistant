@@ -10,6 +10,7 @@ from personal_assistant.model import ModelToolCall, ModelToolDefinition
 from personal_assistant.permissions import ActionKind
 from personal_assistant.tool_runtime import (
     RegisteredTool,
+    ToolExecutionContext,
     ToolExecutionStatus,
     ToolExecutor,
     ToolInputError,
@@ -130,6 +131,101 @@ class ToolRuntimeTests(unittest.TestCase):
         )
 
         self.assertIs(result.status, ToolExecutionStatus.DENIED)
+        self.assertEqual(calls, [])
+
+    def test_web_search_requires_query_from_current_user_message(self) -> None:
+        class SearchProvider:
+            def __init__(self) -> None:
+                self.queries: list[str] = []
+
+            def search(self, query: str):
+                self.queries.append(query)
+                return {
+                    "provider": "searxng",
+                    "results": [],
+                    "trust": "untrusted_web_search_results",
+                }
+
+        provider = SearchProvider()
+        executor = ToolExecutor(default_tool_registry(web_search=provider), self.audit)
+        call = ModelToolCall.create(
+            "search_public_web",
+            {"query": "latest SearXNG release"},
+        )
+
+        allowed = executor.execute(
+            call,
+            uuid4(),
+            execution_context=ToolExecutionContext(
+                "Please search for the latest SearXNG release."
+            ),
+        )
+        refused = executor.execute(
+            ModelToolCall.create(
+                "search_public_web",
+                {"query": "latest SearXNG release private memory value"},
+            ),
+            uuid4(),
+            execution_context=ToolExecutionContext(
+                "Please search for the latest SearXNG release."
+            ),
+        )
+
+        self.assertIs(allowed.status, ToolExecutionStatus.SUCCEEDED)
+        self.assertIs(refused.status, ToolExecutionStatus.DENIED)
+        self.assertEqual(provider.queries, ["latest SearXNG release"])
+        self.assertFalse(executor.repeat_allowed("search_public_web"))
+        self.assertTrue(executor.repeat_allowed("calculate"))
+
+    def test_web_search_query_is_not_written_to_audit(self) -> None:
+        class SearchProvider:
+            def search(self, query: str):
+                return {
+                    "provider": "searxng",
+                    "results": [],
+                    "trust": "untrusted_web_search_results",
+                }
+
+        secret_query = "synthetic-personal-search-phrase"
+        executor = ToolExecutor(
+            default_tool_registry(web_search=SearchProvider()),
+            self.audit,
+        )
+        executor.execute(
+            ModelToolCall.create("search_public_web", {"query": secret_query}),
+            uuid4(),
+            execution_context=ToolExecutionContext(secret_query),
+        )
+
+        self.assertNotIn(secret_query, repr(self.audit.events))
+
+    def test_web_search_does_not_start_when_initial_audit_fails(self) -> None:
+        calls: list[str] = []
+
+        class SearchProvider:
+            def search(self, query: str):
+                calls.append(query)
+                return {"results": []}
+
+        class FailingAuditSink:
+            def write(self, _event) -> None:
+                raise AuditWriteError("synthetic audit failure")
+
+        executor = ToolExecutor(
+            default_tool_registry(web_search=SearchProvider()),
+            FailingAuditSink(),
+        )
+
+        with self.assertRaises(AuditWriteError):
+            executor.execute(
+                ModelToolCall.create(
+                    "search_public_web",
+                    {"query": "current public result"},
+                ),
+                uuid4(),
+                execution_context=ToolExecutionContext("current public result"),
+            )
+
         self.assertEqual(calls, [])
 
     def test_audit_events_exclude_arguments_results_and_exception_text(self) -> None:

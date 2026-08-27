@@ -28,6 +28,7 @@ from personal_assistant.portable_security import (
     PortableSecuritySettings,
 )
 from personal_assistant.tool_runtime import ToolExecutor, default_tool_registry
+from personal_assistant.web_search import SearXNGSearchProvider
 
 
 def startup_message() -> str:
@@ -74,7 +75,12 @@ def main() -> None:
                     explicit_memory_handler=memory_runtime,
                     post_response_worker=memory_worker,
                     tool_executor=ToolExecutor(
-                        default_tool_registry(),
+                        default_tool_registry(
+                            web_search=SearXNGSearchProvider(
+                                settings.search.base_url,
+                                timeout_seconds=settings.search.timeout_seconds,
+                            )
+                        ),
                         (
                             memory_runtime.audit_sink
                             if memory_runtime is not None

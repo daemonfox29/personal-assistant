@@ -33,7 +33,30 @@ protected automatic unlock for later native-app launches. Module 2.0 adds only
 two code-owned, read-only local tools: current date/time and bounded decimal
 arithmetic. The model can propose these calls, but a deterministic registry,
 permission policy, audit boundary, and three-step ceiling control execution.
-No web, browser, filesystem, credential, shell, or arbitrary-code tool is enabled.
+Module 2.1 adds an optional read-only public-search proposal backed by a separate
+local open-source SearXNG service. The main app contacts only numeric loopback;
+it cannot visit result pages or make arbitrary internet requests. Browser,
+filesystem, credential, shell, and arbitrary-code tools remain disabled.
+
+## Optional open-source web search
+
+The assistant can search only when the reviewed SearXNG service in
+`deploy/searxng` is running locally. The service is version-and-digest pinned,
+published only on `127.0.0.1:8888`, uses no paid API key, and has no access to
+assistant memory, conversations, databases, model state, or credentials.
+
+SearXNG requires a container runtime such as Docker or Podman. It is not bundled
+into the Python process and is not currently installed automatically. If the
+service is absent, search fails safely while chat, memory, time, and calculator
+features continue normally. The checked-in deployment guide explains the
+current manual setup; native setup and service-health controls remain future UI
+work.
+
+An outbound query is still visible to SearXNG's configured upstream search
+engines. Deterministic code therefore permits only a bounded phrase copied from
+the user's current message—the model cannot append private memory to a query.
+Only inert titles, snippets, and HTTPS source URLs return to the model, labeled
+as untrusted data. Result URLs are never fetched automatically.
 
 ## Set up the project
 
@@ -380,10 +403,12 @@ govern future model, memory, browser, tool, data, interface, and audit choices.
 - Runtime personal data stays local and is excluded from Git.
 - The Ollama adapter can connect only to an explicit loopback address.
 - Every model request is limited to at most 2,000 response tokens.
-- The model has no web, browser, file, raw database, key, shell, or arbitrary
-  tool access. It may propose only the two reviewed Module 2.0 local utilities;
-  deterministic code decides whether either runs. The application otherwise
-  exposes only the bounded memory adapter described above.
+- The model has no browser, file, raw database, key, shell, or arbitrary tool
+  access. It may propose two reviewed local utilities and one bounded read-only
+  public search. Deterministic code decides whether any proposal runs. Search
+  can contact only local SearXNG with a query copied from the current user
+  message; it cannot fetch returned URLs. The application otherwise exposes
+  only the bounded memory adapter described above.
 
 A local passcode meaningfully reduces accidental or conversational misuse, but
 it is not a defense against an attacker who already controls the same operating-
