@@ -8,10 +8,10 @@ of open questions.
 
 ## Tool registry and tool execution
 
-- How does the Python program define the set of tools available to the LLM?
-- How is that approved tool list shown to the LLM?
-- How does an LLM request a tool rather than directly performing an action?
-- How does Python validate the request, check permissions, ask for approval, and only then run the real tool?
+The initial registry, native model-call protocol, validation, permission, audit,
+and executor path are now implemented in Module 2.0. Revisit the trusted UI
+pause-and-resume experience before registering the first approval-required tool,
+and keep web search behind its separate Module 2.1 security gate.
 
 ## Model interface and protocols
 

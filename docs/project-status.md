@@ -52,6 +52,13 @@ This document is the handoff point between coding sessions. At the end of each s
   handoff barrier. Explicit prior-chat recall uses a bounded encrypted FTS index;
   ordinary prompts still do not load other transcripts.
 - The local permission policy is implemented and covered by automated tests.
+- Module 2.0 has a code-owned deterministic tool registry and executor shared by
+  native and recovery-terminal composition. Ollama receives native structured
+  definitions for only current local date/time and bounded decimal arithmetic.
+  Every proposed execution is schema-validated, policy-checked, content-free
+  audited, result-bounded, returned as untrusted tool-role data, and capped at
+  three serial steps. No web, browser, file, credential, shell, or arbitrary-code
+  tool is enabled.
 - GitHub Actions is configured to test pull requests targeting `main` before
   merge. The public repository has an active ruleset requiring the `test`
   check and blocking force pushes and deletion. Non-draft pull requests from
@@ -72,8 +79,8 @@ This document is the handoff point between coding sessions. At the end of each s
   confirmed persistent records, intercepts explicit remember instructions, and
   deterministically commits reviewed clear exact low-risk statements before the
   response while analyzing other completed turns asynchronously into
-  quarantined candidates. It has
-  no tools, browser access, broad credential access, or web capability; the
+  quarantined candidates. It has only the two reviewed local Module 2.0
+  utilities and no browser access, broad credential access, or web capability; the
   native composition alone receives a narrow automatic-unlock credential
   adapter that is never exposed to the model or widgets.
 - Conversation policy is documented separately from the action-permission policy.
@@ -136,7 +143,7 @@ complete; the batched Linux pull-request check is its final platform gate.
   persistent personal-data operations are enabled.
 - [x] Module 1: select SQLCipher behind a replaceable encrypted SQLite and key-
   provider boundary; verify it locally on macOS ARM64 using synthetic data.
-- [ ] Module 1 portability: confirm the pinned SQLCipher boundary in the batched
+- [x] Module 1 portability: confirm the pinned SQLCipher boundary in the batched
   Linux GitHub Actions run. Windows verification remains a documented release
   gate before distributing a packaged Windows build.
 - [x] Module 1: implement and test the checksummed migration runner and initial
@@ -175,10 +182,47 @@ complete; the batched Linux pull-request check is its final platform gate.
 - [ ] Deferred release gate: package and sign the macOS app and verify packaged
   recovery and shutdown. Keep Windows packaging and runtime verification as a
   required later gate.
-- [ ] Define the assistant's first tool registry and permission-enforcement path before adding any tool.
+- [x] Module 2.0: define and implement the assistant's first code-owned tool
+  registry, native Ollama tool-call protocol, deterministic permission and audit
+  path, bounded executor, and safe local time and calculator tools.
+- [ ] Module 2.0 portability gate: pass the full Linux pull-request workflow for
+  the new model-call and executor path before beginning Module 2.1.
 - [ ] Add a web/search tool only behind the tool registry and approval layer.
 
 ## Session history
+
+### 2026-08-26 — Module 2.0 bounded local tool foundation
+
+Completed:
+
+- Specified the first model-to-tool boundary before enabling capability. The
+  initial scope contains only local current date/time and bounded decimal
+  arithmetic; web, browser, files, credentials, shell, and arbitrary evaluation
+  remain explicitly excluded.
+- Extended the replaceable model contract and Ollama adapter with bounded native
+  tool definitions, structured calls, assistant call messages, and distinct
+  tool-result roles. Ordinary no-tool responses retain streaming behavior.
+- Added a code-owned registry and executor that resolve exact names, validate
+  canonical arguments, apply the existing permission policy, fail closed when
+  start auditing is unavailable, and return only bounded JSON labeled as
+  untrusted tool data.
+- Added one-call-per-step and three-step-per-request coordinator ceilings.
+  Parallel, malformed, conflicting-index, unknown, unauthorized, excessive, and
+  invalid calls cannot reach a handler. Internal tool messages are not retained
+  as ordinary conversation history.
+- Wired the same executor into native and recovery-terminal session composition
+  without exposing registry, audit, approval, model, or database authority to
+  widgets.
+- Verified all 380 local tests; one opt-in performance test remained skipped.
+  Focused tool/model tests, source and test compilation, dependency-lock
+  consistency, and diff whitespace checks also passed.
+
+Next:
+
+- Commit the locally verified Module 2.0 milestone, then use one batched pull
+  request for its Linux portability gate when ready.
+- Design Module 2.1 read-only web search as a separate network, redirect,
+  provenance, prompt-injection, citation, cancellation, and approval gate.
 
 ### 2026-08-26 — Pre-PR blocker remediation
 

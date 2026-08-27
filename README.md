@@ -29,7 +29,11 @@ repainting, and background output cannot be rendered into a different chat.
 Native Settings also provides paginated memory inventory,
 encrypted backup creation and guided restore, a content-minimized audit viewer,
 and keyboard-accessible owner controls. A verified recovery entry can enroll
-protected automatic unlock for later native-app launches. Tools are not enabled.
+protected automatic unlock for later native-app launches. Module 2.0 adds only
+two code-owned, read-only local tools: current date/time and bounded decimal
+arithmetic. The model can propose these calls, but a deterministic registry,
+permission policy, audit boundary, and three-step ceiling control execution.
+No web, browser, filesystem, credential, shell, or arbitrary-code tool is enabled.
 
 ## Set up the project
 
@@ -376,8 +380,10 @@ govern future model, memory, browser, tool, data, interface, and audit choices.
 - Runtime personal data stays local and is excluded from Git.
 - The Ollama adapter can connect only to an explicit loopback address.
 - Every model request is limited to at most 2,000 response tokens.
-- The model has no web, browser, file, raw database, key, or tool access. The
-  application exposes only the bounded memory adapter described above.
+- The model has no web, browser, file, raw database, key, shell, or arbitrary
+  tool access. It may propose only the two reviewed Module 2.0 local utilities;
+  deterministic code decides whether either runs. The application otherwise
+  exposes only the bounded memory adapter described above.
 
 A local passcode meaningfully reduces accidental or conversational misuse, but
 it is not a defense against an attacker who already controls the same operating-

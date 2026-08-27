@@ -99,6 +99,7 @@ from personal_assistant.runtime_preferences import (
     RuntimePreferencesError,
     RuntimePreferencesStore,
 )
+from personal_assistant.tool_runtime import ToolExecutor, default_tool_registry
 
 
 class ApplicationServiceError(RuntimeError):
@@ -1731,6 +1732,10 @@ class AssistantApplicationFactory:
                     else runtime.assistant_preferences.load_communication_style(
                         uuid4()
                     )
+                ),
+                tool_executor=ToolExecutor(
+                    default_tool_registry(),
+                    self._audit_sink() if runtime is None else runtime.audit_sink,
                 ),
             )
             return AssistantApplicationService(

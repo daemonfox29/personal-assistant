@@ -8,6 +8,8 @@ class ActionKind(StrEnum):
     """Actions the assistant may eventually request."""
 
     READ_PROJECT_FILE = "read_project_file"
+    READ_SYSTEM_TIME = "read_system_time"
+    CALCULATE = "calculate"
     READ_PERSONAL_DATA = "read_personal_data"
     WRITE_LOCAL_FILE = "write_local_file"
     BROWSER_NAVIGATION = "browser_navigation"
@@ -40,6 +42,14 @@ POLICY_BY_ACTION: dict[ActionKind, PermissionResult] = {
     ActionKind.READ_PROJECT_FILE: PermissionResult(
         PermissionDecision.ALLOW,
         "Reading project source files is allowed.",
+    ),
+    ActionKind.READ_SYSTEM_TIME: PermissionResult(
+        PermissionDecision.ALLOW,
+        "Reading the local system time is allowed.",
+    ),
+    ActionKind.CALCULATE: PermissionResult(
+        PermissionDecision.ALLOW,
+        "Bounded deterministic arithmetic is allowed.",
     ),
     ActionKind.READ_PERSONAL_DATA: PermissionResult(
         PermissionDecision.REQUIRE_APPROVAL,

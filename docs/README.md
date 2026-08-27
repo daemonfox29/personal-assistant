@@ -14,6 +14,8 @@ This folder holds human-readable notes about the assistant's design, decisions, 
   contract.
 - [Module 1.5 native UI](module-1-5-ui-spec.md): lean PySide6 presentation
   boundary, setup/unlock/chat slice, and desktop release gates.
+- [Module 2 tool registry](module-2-tools-spec.md): deterministic registry,
+  executor, safe local tools, limits, auditing, and the web-search gate.
 - [Encrypted SQLite provider spike](encrypted-database-spike.md): SQLCipher
   selection, verified guarantees, tradeoffs, and remaining platform checks.
 - [Typed memory repository](memory-repository.md): validated payloads,

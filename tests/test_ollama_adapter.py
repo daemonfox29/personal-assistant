@@ -9,6 +9,8 @@ from personal_assistant.model import (
     ModelMessage,
     ModelRequest,
     ModelStreamChunk,
+    ModelToolCall,
+    ModelToolDefinition,
     ModelNotFoundError,
     ModelUnavailableError,
     response_instruction,
@@ -147,6 +149,110 @@ class OllamaAdapterTests(unittest.TestCase):
             payload["options"],
             {"num_ctx": 16384, "num_predict": 400},
         )
+
+    def test_native_tool_schema_call_and_result_role_round_trip(self) -> None:
+        sender = Mock(
+            side_effect=(
+                {
+                    "message": {
+                        "content": "",
+                        "tool_calls": [
+                            {
+                                "type": "function",
+                                "function": {
+                                    "index": 0,
+                                    "name": "synthetic_tool",
+                                    "arguments": {"value": 2},
+                                },
+                            }
+                        ],
+                    }
+                },
+                {"message": {"content": "The result is two."}},
+            )
+        )
+        model = OllamaModel(send_json=sender, ensure_service=Mock())
+        definition = ModelToolDefinition.create(
+            "synthetic_tool",
+            "Return one synthetic number.",
+            {
+                "additionalProperties": False,
+                "properties": {"value": {"type": "number"}},
+                "required": ["value"],
+                "type": "object",
+            },
+        )
+        first_request = ModelRequest(
+            chat_request("Use the tool").messages,
+            400,
+            (definition,),
+        )
+
+        first = model.generate(first_request)
+        call = first.tool_calls[0]
+        second_request = ModelRequest(
+            first_request.messages
+            + (
+                ModelMessage(MessageRole.ASSISTANT, "", tool_calls=(call,)),
+                ModelMessage(
+                    MessageRole.TOOL,
+                    '{"ok":true,"data":{"value":2}}',
+                    tool_name="synthetic_tool",
+                ),
+            ),
+            400,
+            (definition,),
+        )
+        second = model.generate(second_request)
+
+        self.assertEqual(call.arguments(), {"value": 2})
+        self.assertEqual(second.text, "The result is two.")
+        first_payload = sender.call_args_list[0].args[1]
+        self.assertEqual(
+            first_payload["tools"][0]["function"]["name"],
+            "synthetic_tool",
+        )
+        second_payload = sender.call_args_list[1].args[1]
+        self.assertEqual(second_payload["messages"][-1]["role"], "tool")
+        self.assertEqual(
+            second_payload["messages"][-1]["tool_name"],
+            "synthetic_tool",
+        )
+        self.assertEqual(
+            second_payload["messages"][-2]["tool_calls"][0]["function"][
+                "arguments"
+            ],
+            {"value": 2},
+        )
+
+    def test_streaming_tool_call_is_typed_without_becoming_text(self) -> None:
+        stream_json = Mock(
+            return_value=iter(
+                [
+                    {
+                        "message": {
+                            "content": "",
+                            "tool_calls": [
+                                {
+                                    "function": {
+                                        "index": 0,
+                                        "name": "synthetic_tool",
+                                        "arguments": {},
+                                    }
+                                }
+                            ],
+                        }
+                    },
+                    {"done": True},
+                ]
+            )
+        )
+        model = OllamaModel(stream_json=stream_json, ensure_service=Mock())
+
+        chunks = list(model.stream_generate(chat_request("Use a tool")))
+
+        self.assertEqual(chunks[0].text, "")
+        self.assertEqual(chunks[0].tool_calls[0].name, "synthetic_tool")
 
     def test_explicit_long_request_uses_its_response_cap(self) -> None:
         sender = Mock(return_value={"message": {"content": "A longer reply"}})

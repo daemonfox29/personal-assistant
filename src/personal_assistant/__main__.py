@@ -27,6 +27,7 @@ from personal_assistant.portable_security import (
     PortableSecurityManager,
     PortableSecuritySettings,
 )
+from personal_assistant.tool_runtime import ToolExecutor, default_tool_registry
 
 
 def startup_message() -> str:
@@ -72,6 +73,18 @@ def main() -> None:
                     ),
                     explicit_memory_handler=memory_runtime,
                     post_response_worker=memory_worker,
+                    tool_executor=ToolExecutor(
+                        default_tool_registry(),
+                        (
+                            memory_runtime.audit_sink
+                            if memory_runtime is not None
+                            else JsonLinesAuditSink(
+                                AuditFileSettings(
+                                    settings.memory.data_directory / "audit.jsonl"
+                                )
+                            )
+                        ),
+                    ),
                 ).run()
             finally:
                 if memory_worker is not None:

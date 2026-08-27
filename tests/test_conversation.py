@@ -6,6 +6,7 @@ from unittest.mock import Mock
 from uuid import UUID
 
 from personal_assistant.assistant_preferences import CommunicationStyle
+from personal_assistant.audit import InMemoryAuditSink
 from personal_assistant.conversation import (
     ConversationEventKind,
     ConversationService,
@@ -16,8 +17,10 @@ from personal_assistant.model import (
     ModelRequest,
     ModelResponse,
     ModelStreamChunk,
+    ModelToolCall,
     ModelUnavailableError,
 )
+from personal_assistant.tool_runtime import ToolExecutor, default_tool_registry
 
 
 class SyntheticStreamingModel:
@@ -47,6 +50,41 @@ class BlockingModel:
         self.started.set()
         self.release.wait(timeout=2)
         return ModelResponse("finished")
+
+
+class ToolCallingStreamingModel:
+    def __init__(self) -> None:
+        self.requests: list[ModelRequest] = []
+
+    def generate(self, request: ModelRequest) -> ModelResponse:
+        return ModelResponse("synthetic full response")
+
+    def stream_generate(self, request: ModelRequest):  # type: ignore[no-untyped-def]
+        self.requests.append(request)
+        if request.messages[-1].role is MessageRole.TOOL:
+            yield ModelStreamChunk("The calculated result is 5.")
+            return
+        yield ModelStreamChunk(
+            "",
+            tool_calls=(
+                ModelToolCall.create(
+                    "calculate",
+                    {"operator": "add", "left": 2, "right": 3},
+                ),
+            ),
+        )
+
+
+class RepeatingToolModel:
+    def __init__(self) -> None:
+        self.requests: list[ModelRequest] = []
+
+    def generate(self, request: ModelRequest) -> ModelResponse:
+        self.requests.append(request)
+        return ModelResponse(
+            "",
+            (ModelToolCall.create("get_current_datetime", {}),),
+        )
 
 
 class RecordingMemoryHandler:
@@ -107,6 +145,129 @@ class BlockingHandoffMemoryWorker(RecordingPostResponseWorker):
 
 
 class ConversationServiceTests(unittest.TestCase):
+    def test_registered_tool_result_returns_through_tool_role_before_final_text(
+        self,
+    ) -> None:
+        model = ToolCallingStreamingModel()
+        executor = ToolExecutor(default_tool_registry(), InMemoryAuditSink())
+        service = ConversationService(model, tool_executor=executor)
+
+        events = tuple(service.events_for("What is two plus three?"))
+
+        self.assertEqual(len(model.requests), 2)
+        self.assertEqual(len(model.requests[0].tools), 2)
+        self.assertIn("Tool calls are proposals only", model.requests[0].messages[0].content)
+        tool_message = model.requests[1].messages[-1]
+        self.assertIs(tool_message.role, MessageRole.TOOL)
+        self.assertEqual(tool_message.tool_name, "calculate")
+        self.assertIn('"result":"5"', tool_message.content)
+        self.assertEqual(
+            "".join(
+                event.text
+                for event in events
+                if event.kind is ConversationEventKind.ASSISTANT_CHUNK
+            ),
+            "The calculated result is 5.",
+        )
+
+    def test_parallel_tool_calls_are_refused_without_execution(self) -> None:
+        class ParallelModel:
+            def generate(self, request: ModelRequest) -> ModelResponse:
+                return ModelResponse(
+                    "",
+                    (
+                        ModelToolCall.create("get_current_datetime", {}, index=0),
+                        ModelToolCall.create(
+                            "calculate",
+                            {"operator": "add", "left": 1, "right": 2},
+                            index=1,
+                        ),
+                    ),
+                )
+
+        audit = InMemoryAuditSink()
+        service = ConversationService(
+            ParallelModel(),
+            tool_executor=ToolExecutor(default_tool_registry(), audit),
+        )
+
+        events = tuple(service.events_for("Use two tools"))
+
+        self.assertTrue(
+            any("Parallel tool requests" in event.text for event in events)
+        )
+        self.assertEqual(audit.events, ())
+
+    def test_conflicting_nonstream_tool_indexes_are_rejected(self) -> None:
+        class ConflictingModel:
+            def generate(self, request: ModelRequest) -> ModelResponse:
+                return ModelResponse(
+                    "",
+                    (
+                        ModelToolCall.create("get_current_datetime", {}, index=0),
+                        ModelToolCall.create(
+                            "calculate",
+                            {"operator": "add", "left": 1, "right": 2},
+                            index=0,
+                        ),
+                    ),
+                )
+
+        audit = InMemoryAuditSink()
+        service = ConversationService(
+            ConflictingModel(),
+            tool_executor=ToolExecutor(default_tool_registry(), audit),
+        )
+
+        events = tuple(service.events_for("Use a tool"))
+
+        self.assertTrue(any("unreadable response" in event.text for event in events))
+        self.assertEqual(audit.events, ())
+
+    def test_tool_loop_stops_after_three_executions(self) -> None:
+        model = RepeatingToolModel()
+        audit = InMemoryAuditSink()
+        service = ConversationService(
+            model,
+            tool_executor=ToolExecutor(default_tool_registry(), audit),
+        )
+
+        events = tuple(service.events_for("Keep checking the time"))
+
+        self.assertEqual(len(model.requests), 4)
+        self.assertEqual(
+            sum(event.outcome.value == "succeeded" for event in audit.events),
+            3,
+        )
+        self.assertTrue(any("tool-step limit" in event.text for event in events))
+
+    def test_tool_messages_are_not_persisted_into_the_next_user_turn(self) -> None:
+        class FirstToolThenTextModel:
+            def __init__(self) -> None:
+                self.requests: list[ModelRequest] = []
+
+            def generate(self, request: ModelRequest) -> ModelResponse:
+                self.requests.append(request)
+                if len(self.requests) == 1:
+                    return ModelResponse(
+                        "",
+                        (ModelToolCall.create("get_current_datetime", {}),),
+                    )
+                return ModelResponse("done")
+
+        model = FirstToolThenTextModel()
+        service = ConversationService(
+            model,
+            tool_executor=ToolExecutor(default_tool_registry(), InMemoryAuditSink()),
+        )
+
+        tuple(service.events_for("What time is it?"))
+        tuple(service.events_for("Thanks"))
+
+        next_turn_messages = model.requests[-1].messages
+        self.assertFalse(
+            any(message.role is MessageRole.TOOL for message in next_turn_messages)
+        )
     def test_pre_response_memory_notice_precedes_model_and_skips_duplicate_queue(self) -> None:
         model = SyntheticStreamingModel()
         worker = RecordingPostResponseWorker()

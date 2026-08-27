@@ -110,9 +110,19 @@ retrieval; direct-only, never-mention, restricted, and unconfirmed records do
 not. Natural explicit prior-discussion language triggers bounded transcript
 search immediately rather than asking whether to search.
 
-Future action flow:
+Current Module 2.0 action flow:
 
-User request → coordinator → model and/or tools → permission layer → approved action → result returned to user
+User request → coordinator advertises code-owned schemas → model proposes a
+structured call → registry resolves the exact name → validator bounds arguments
+→ permission layer evaluates the registered action → audit records the start →
+executor invokes only the registered callable → bounded untrusted tool result →
+model produces the user-facing response
+
+The model never receives a callable, audit sink, approval authority, credential,
+or general execution primitive. The initial registry contains only current
+local date/time and bounded decimal arithmetic. Calls are serial, request-scoped,
+and limited to three tool steps. Web, browser, file, credential, shell, and
+arbitrary-code capabilities remain disabled.
 
 ## Initial scope
 
