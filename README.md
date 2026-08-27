@@ -22,7 +22,11 @@ portable recovery, encrypted backup and guided restore, and a bounded chat-
 context adapter. A new installation stays session-only until the owner completes
 the trusted local setup. A lean native Module 1.5 interface now provides local
 setup, recovery unlock, session-only use, and streaming chat without a browser
-or UI web server. Native Settings also provides paginated memory inventory,
+or UI web server. While a response is generating, the owner can open Settings
+or view another saved chat; only the composer remains locked until the active
+turn is durably finished. Rapid model chunks are batched for responsive native
+repainting, and background output cannot be rendered into a different chat.
+Native Settings also provides paginated memory inventory,
 encrypted backup creation and guided restore, a content-minimized audit viewer,
 and keyboard-accessible owner controls. A verified recovery entry can enroll
 protected automatic unlock for later native-app launches. Tools are not enabled.

@@ -504,7 +504,9 @@ class AssistantApplicationService:
             self._active_conversation_id = None
             self._private_chat = private
 
-    def open_conversation(self, conversation_id: UUID) -> StoredConversation:
+    def view_conversation(self, conversation_id: UUID) -> StoredConversation:
+        """Load one saved conversation without changing the active model context."""
+
         with self._lock:
             if self._closed:
                 raise ApplicationOpenError("This assistant session is closed.")
@@ -514,7 +516,15 @@ class AssistantApplicationService:
                 "Saved conversations require encrypted memory."
             )
         try:
-            stored = repository.load_conversation(conversation_id, uuid4())
+            return repository.load_conversation(conversation_id, uuid4())
+        except ConversationHistoryError as error:
+            raise ApplicationOpenError(
+                "The saved conversation could not be opened safely."
+            ) from error
+
+    def open_conversation(self, conversation_id: UUID) -> StoredConversation:
+        stored = self.view_conversation(conversation_id)
+        try:
             self._conversation.replace_history(
                 stored.completed_turns(),
                 wait_for_memory=True,

@@ -904,12 +904,17 @@ class ApplicationServiceTests(unittest.TestCase):
                 first.close()
 
                 second = factory.open(RECOVERY)
+                viewed = second.view_conversation(
+                    summaries[0].conversation_id
+                )
+                self.assertIsNone(second.active_conversation_id)
                 reopened = second.open_conversation(
                     summaries[0].conversation_id
                 )
                 tuple(second.iter_events("What is my dog's name?"))
                 second.close()
 
+            self.assertEqual(viewed.messages[0].content, "My dog is Scooby")
             self.assertEqual(reopened.messages[0].content, "My dog is Scooby")
             second_chat_requests = [
                 request

@@ -5,6 +5,7 @@ from pathlib import Path
 import re
 import sys
 from threading import Event
+from time import monotonic
 from uuid import UUID
 
 from PySide6.QtCore import QDate, QObject, QThread, QTimer, Qt, Signal, Slot
@@ -83,6 +84,8 @@ from personal_assistant.terminal_output import sanitize_terminal_text
 
 
 WINDOW_TITLE = "Personal Assistant"
+CHAT_RENDER_INTERVAL_SECONDS = 0.04
+CHAT_RENDER_BATCH_CHARS = 256
 UI_FONT_FAMILY = (
     "Helvetica Neue"
     if sys.platform == "darwin"
@@ -1548,17 +1551,26 @@ class ChatPage(QWidget):
         self._input.setEnabled(not busy)
         self._send.setEnabled(not busy)
         self._limit.setEnabled(not busy)
-        self._settings.setEnabled(not busy)
-        self._new_chat.setEnabled(not busy)
-        self._private_chat.setEnabled(not busy)
-        self._conversation_list.setEnabled(not busy)
+        self._settings.setEnabled(True)
+        self._new_chat.setEnabled(True)
+        self._private_chat.setEnabled(True)
+        self._conversation_list.setEnabled(True)
         self._delete_chat.setEnabled(not busy)
         if not busy:
             self._input.setFocus()
 
     def show_closing(self) -> None:
         self.set_busy(True)
+        self._settings.setEnabled(False)
+        self._new_chat.setEnabled(False)
+        self._private_chat.setEnabled(False)
+        self._conversation_list.setEnabled(False)
         self._status.setText("Finishing the response and saving before close…")
+
+    def show_background_generation(self) -> None:
+        self._status.setText(
+            f"{self._base_status} · another response is finishing in the background"
+        )
 
     def append_user(self, text: str, *, record: bool = True) -> None:
         self._append_role("You")
@@ -2015,15 +2027,45 @@ class _ChatWorker(QObject):
 
     @Slot()
     def run(self) -> None:
+        pending_chunks: list[str] = []
+        pending_chars = 0
+        last_emit = 0.0
+
+        def emit_pending() -> None:
+            nonlocal pending_chars, last_emit
+            if not pending_chunks:
+                return
+            self.event_ready.emit(
+                ConversationEvent(
+                    ConversationEventKind.ASSISTANT_CHUNK,
+                    "".join(pending_chunks),
+                )
+            )
+            pending_chunks.clear()
+            pending_chars = 0
+            last_emit = monotonic()
+
         try:
             for event in self._service.iter_events(
                 self._text,
                 max_response_tokens=self._response_limit,
             ):
-                self.event_ready.emit(event)
+                if event.kind is ConversationEventKind.ASSISTANT_CHUNK:
+                    pending_chunks.append(event.text)
+                    pending_chars += len(event.text)
+                    if (
+                        monotonic() - last_emit >= CHAT_RENDER_INTERVAL_SECONDS
+                        or pending_chars >= CHAT_RENDER_BATCH_CHARS
+                    ):
+                        emit_pending()
+                else:
+                    emit_pending()
+                    self.event_ready.emit(event)
         except ApplicationServiceError as error:
+            emit_pending()
             self.failed.emit(str(error))
         finally:
+            emit_pending()
             self._text = ""
             self.finished.emit()
 
@@ -2087,6 +2129,7 @@ class AssistantWindow(QMainWindow):
         self._startup_worker: _StartupWorker | None = None
         self._chat_thread: QThread | None = None
         self._chat_worker: _ChatWorker | None = None
+        self._deferred_chat_destination: tuple[str, UUID | bool] | None = None
         self._backup_thread: QThread | None = None
         self._backup_worker: _BackupWorker | None = None
         self._backup_action: str | None = None
@@ -2254,12 +2297,13 @@ class AssistantWindow(QMainWindow):
     def _start_message(self, text: str, response_limit: int) -> None:
         if self._service is None or self._chat_thread is not None:
             return
+        self._deferred_chat_destination = None
         self._chat.set_busy(True)
         thread = QThread(self)
         worker = _ChatWorker(self._service, text, response_limit)
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
-        worker.event_ready.connect(self._chat.apply_event)
+        worker.event_ready.connect(self._chat_event_ready)
         worker.failed.connect(self._chat_failure)
         worker.finished.connect(thread.quit)
         worker.finished.connect(worker.deleteLater)
@@ -2268,11 +2312,19 @@ class AssistantWindow(QMainWindow):
         self._chat_worker = worker
         thread.start()
 
+    @Slot(object)
+    def _chat_event_ready(self, event: ConversationEvent) -> None:
+        if self._deferred_chat_destination is None:
+            self._chat.apply_event(event)
+
     @Slot(str)
     def _chat_failure(self, message: str) -> None:
-        self._chat.apply_event(
-            ConversationEvent(ConversationEventKind.NOTICE, message)
-        )
+        if self._deferred_chat_destination is None:
+            self._chat.apply_event(
+                ConversationEvent(ConversationEventKind.NOTICE, message)
+            )
+        else:
+            self._show_safe_error(message)
 
     @Slot()
     def _chat_finished(self) -> None:
@@ -2281,9 +2333,31 @@ class AssistantWindow(QMainWindow):
         self._chat_thread = None
         self._chat_worker = None
         if not self._closing:
-            self._refresh_history()
+            self._activate_deferred_chat_destination()
             self._chat.set_busy(False)
         self._finish_close_if_ready()
+
+    def _activate_deferred_chat_destination(self) -> None:
+        destination = self._deferred_chat_destination
+        self._deferred_chat_destination = None
+        if self._service is None:
+            return
+        if destination is None:
+            self._refresh_history()
+            return
+        kind, value = destination
+        try:
+            if kind == "new":
+                self._service.new_conversation(private=bool(value))
+                self._chat.show_new_conversation(
+                    private=self._service.private_chat
+                )
+            elif kind == "stored" and isinstance(value, UUID):
+                conversation = self._service.open_conversation(value)
+                self._chat.show_stored_conversation(conversation)
+        except ApplicationOpenError as error:
+            self._show_safe_error(str(error))
+        self._refresh_history()
 
     @Slot()
     def _show_settings(self) -> None:
@@ -2677,7 +2751,13 @@ class AssistantWindow(QMainWindow):
 
     @Slot(bool)
     def _new_chat(self, private: bool) -> None:
-        if self._service is None or self._chat_thread is not None:
+        if self._service is None:
+            return
+        if self._chat_thread is not None:
+            self._deferred_chat_destination = ("new", private)
+            self._chat.show_new_conversation(private=private)
+            self._chat.set_busy(True)
+            self._chat.show_background_generation()
             return
         try:
             self._service.new_conversation(private=private)
@@ -2689,10 +2769,15 @@ class AssistantWindow(QMainWindow):
 
     @Slot(str)
     def _open_conversation(self, identifier: str) -> None:
-        if self._service is None or self._chat_thread is not None:
+        if self._service is None:
             return
         try:
-            conversation = self._service.open_conversation(UUID(identifier))
+            conversation_id = UUID(identifier)
+            if self._chat_thread is not None:
+                conversation = self._service.view_conversation(conversation_id)
+                self._deferred_chat_destination = ("stored", conversation_id)
+            else:
+                conversation = self._service.open_conversation(conversation_id)
         except (ValueError, ApplicationOpenError) as error:
             message = (
                 str(error)
@@ -2702,7 +2787,11 @@ class AssistantWindow(QMainWindow):
             self._show_safe_error(message)
             return
         self._chat.show_stored_conversation(conversation)
-        self._refresh_history()
+        if self._chat_thread is not None:
+            self._chat.set_busy(True)
+            self._chat.show_background_generation()
+        else:
+            self._refresh_history()
 
     @Slot(str)
     def _delete_conversation(self, identifier: str) -> None:
@@ -2747,7 +2836,7 @@ class AssistantWindow(QMainWindow):
     @Slot()
     def _return_to_chat(self) -> None:
         self._pages.setCurrentWidget(self._chat)
-        self._chat.set_busy(False)
+        self._chat.set_busy(self._chat_thread is not None)
 
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802
         self._closing = True

@@ -196,10 +196,15 @@ Completed:
 - Made native shutdown wait for an active backup operation to complete before
   closing the encrypted runtime. Conflicting Settings controls remain disabled
   while the worker owns the operation.
+- Kept Settings, New chat, Private chat, and saved-chat navigation available
+  while a response streams. A read-only conversation view prevents background
+  navigation from replacing the active model context; the requested destination
+  becomes active only after the current turn commits. Stream events are routed
+  away from unrelated transcripts and rapid token chunks are repaint-batched.
 - Added `docs/open-bugs.md` for two deliberately deferred P2 defects: unstable
   audit offset pagination under concurrent appends and session-only visibility
   of content-minimized owner audit history.
-- Verified all 362 local tests; one opt-in performance test remained skipped.
+- Verified all 363 local tests; one opt-in performance test remained skipped.
   Dependency consistency and compile checks also passed.
 
 Next:

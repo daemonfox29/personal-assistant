@@ -1,7 +1,7 @@
 """Headless tests for secret handling and inert native rendering."""
 
 import os
-from threading import get_ident
+from threading import Event, get_ident
 import unittest
 from unittest.mock import patch
 from datetime import datetime, timezone
@@ -498,6 +498,143 @@ class NativeUiTests(unittest.TestCase):
         self.assertFalse(page._input.isEnabled())
         self.assertFalse(page._send.isEnabled())
         self.assertFalse(page._limit.isEnabled())
+        self.assertTrue(page._settings.isEnabled())
+        self.assertTrue(page._new_chat.isEnabled())
+        self.assertTrue(page._private_chat.isEnabled())
+        self.assertTrue(page._conversation_list.isEnabled())
+        self.assertFalse(page._delete_chat.isEnabled())
+
+    def test_generation_allows_navigation_without_mixing_chat_output(self) -> None:
+        started = Event()
+        release = Event()
+        first_id = uuid4()
+        second_id = uuid4()
+        opened: list[object] = []
+        first_summary = ConversationSummary(
+            first_id,
+            "First synthetic chat",
+            datetime(2026, 1, 1, tzinfo=timezone.utc),
+        )
+        second_summary = ConversationSummary(
+            second_id,
+            "Second synthetic chat",
+            datetime(2026, 1, 2, tzinfo=timezone.utc),
+        )
+        second_conversation = StoredConversation(
+            second_summary,
+            (
+                StoredConversationMessage(
+                    ConversationRole.USER,
+                    "Second chat question",
+                    1,
+                ),
+                StoredConversationMessage(
+                    ConversationRole.ASSISTANT,
+                    "Second chat answer",
+                    2,
+                ),
+            ),
+        )
+
+        class Factory:
+            runtime_preferences = RuntimePreferences()
+
+            @staticmethod
+            def launch_state() -> ApplicationLaunchState:
+                return ApplicationLaunchState.SESSION_ONLY
+
+        class Service:
+            communication_style = ""
+            info = ApplicationSessionInfo(
+                "synthetic",
+                False,
+                400,
+                1_200,
+                2_000,
+            )
+            active_conversation_id = first_id
+            private_chat = False
+
+            @staticmethod
+            def iter_events(_text, *, max_response_tokens=None):
+                started.set()
+                yield ConversationEvent(
+                    ConversationEventKind.ASSISTANT_CHUNK,
+                    "First chat partial output",
+                )
+                release.wait(2.0)
+                yield ConversationEvent(
+                    ConversationEventKind.ASSISTANT_CHUNK,
+                    " and completion",
+                )
+                yield ConversationEvent(ConversationEventKind.COMPLETED)
+
+            @staticmethod
+            def view_conversation(identifier):
+                self.assertEqual(identifier, second_id)
+                return second_conversation
+
+            @staticmethod
+            def open_conversation(identifier):
+                opened.append(identifier)
+                Service.active_conversation_id = identifier
+                return second_conversation
+
+            @staticmethod
+            def list_conversations():
+                return (second_summary, first_summary)
+
+            @staticmethod
+            def list_memories_page():
+                return MemoryInventoryPage((), None)
+
+            @staticmethod
+            def list_audit_events():
+                return AuditInventoryPage((), None)
+
+            @staticmethod
+            def close() -> None:
+                pass
+
+        window = AssistantWindow(Factory())
+        window._service = Service()
+        window._show_safe_error = self.fail
+        window._chat.append_user("First chat question")
+        window._start_message("First chat question", 400)
+        for _ in range(100):
+            self.app.processEvents()
+            if started.is_set() and "partial output" in window._chat.transcript_text():
+                break
+            QTest.qWait(5)
+
+        self.assertTrue(started.is_set())
+        self.assertTrue(window._chat._settings.isEnabled())
+        window._chat._settings.click()
+        self.assertIs(window._pages.currentWidget(), window._settings)
+        window._return_to_chat()
+        self.assertIs(window._pages.currentWidget(), window._chat)
+        self.assertFalse(window._chat._input.isEnabled())
+
+        window._open_conversation(str(second_id))
+        self.assertIn("Second chat answer", window._chat.transcript_text())
+        self.assertNotIn("First chat partial output", window._chat.transcript_text())
+        self.assertFalse(window._chat._input.isEnabled())
+        self.assertIn("finishing in the background", window._chat._status.text())
+
+        release.set()
+        for _ in range(200):
+            self.app.processEvents()
+            if window._chat_thread is None:
+                break
+            QTest.qWait(5)
+
+        self.assertIsNone(window._chat_thread)
+        self.assertEqual(opened, [second_id])
+        self.assertIn("Second chat answer", window._chat.transcript_text())
+        self.assertNotIn("First chat partial output", window._chat.transcript_text())
+        self.assertTrue(window._chat._input.isEnabled())
+        window._service = None
+        window.hide()
 
     def test_missing_backup_drive_does_not_block_settings(self) -> None:
         class Factory:
