@@ -146,6 +146,8 @@ class EncryptedBackupManagerTests(unittest.TestCase):
         self.destination.rmdir()
 
         with self.assertRaises(BackupUnavailableError):
+            manager.validate_destination()
+        with self.assertRaises(BackupUnavailableError):
             manager.create_snapshot(uuid4())
 
         with self.live.connect(uuid4()) as connection:

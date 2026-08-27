@@ -216,7 +216,11 @@ opaque cursor and explicit **Load more** control for larger inventories.
 Settings also lets the owner choose an existing backup folder, create a verified
 encrypted snapshot, list managed snapshots, and restore one through exact
 `RESTORE` confirmation plus the high-risk passcode. Restore never accepts an
-arbitrary file from the UI. The Audit trail page shows only allowlisted time,
+arbitrary file from the UI. Expensive destination checks, integrity hashing,
+creation, and restore run outside the presentation thread; the app waits for an
+active backup operation to finish safely before closing. A missing external
+drive reports an isolated backup error without blocking the rest of Settings.
+The Audit trail page shows only allowlisted time,
 component, action, outcome, and reason fields, newest first, with explicit paging
 and a hard 1,000-event display ceiling. It excludes chat text, memory values,
 prompts, paths, identifiers, and arbitrary audit metadata.

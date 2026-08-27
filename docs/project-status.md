@@ -180,6 +180,34 @@ complete; the batched Linux pull-request check is its final platform gate.
 
 ## Session history
 
+### 2026-08-26 — Pre-PR blocker remediation
+
+Completed:
+
+- Converted passcode verification and lockout failures during native restore
+  into fixed application-service errors, so they remain inside the trusted UI
+  boundary instead of escaping through the Qt event loop.
+- Isolated memory, audit, and backup Settings loading. A missing or disconnected
+  external backup destination now leaves Settings open and provides a replacement
+  folder path instead of trapping the owner outside configuration.
+- Validated a new backup destination before persisting it or replacing the live
+  manager. Moved destination checks, full ciphertext hashing, snapshot creation,
+  and guided restore to a dedicated Qt worker thread.
+- Made native shutdown wait for an active backup operation to complete before
+  closing the encrypted runtime. Conflicting Settings controls remain disabled
+  while the worker owns the operation.
+- Added `docs/open-bugs.md` for two deliberately deferred P2 defects: unstable
+  audit offset pagination under concurrent appends and session-only visibility
+  of content-minimized owner audit history.
+- Verified all 362 local tests; one opt-in performance test remained skipped.
+  Dependency consistency and compile checks also passed.
+
+Next:
+
+- Review the blocker fixes locally, then open the batched Linux pull request.
+- Keep the two documented P2 audit defects visible for the following maintenance
+  pass.
+
 ### 2026-08-26 — Module 1.5 owner controls and usability gate
 
 Completed:

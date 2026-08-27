@@ -87,6 +87,7 @@ from personal_assistant.model import (
     ModelUnavailableError,
 )
 from personal_assistant.portable_security import (
+    PasscodeVerificationError,
     PortableSecurityManager,
     PortableSecuritySettings,
     RecoveryUnlockError,
@@ -821,11 +822,16 @@ class AssistantApplicationService:
             with self._lock:
                 self._active_conversation_id = None
                 self._private_chat = False
-        except (ApplicationOpenError, BackupError) as error:
-            if isinstance(error, ApplicationOpenError):
-                raise
+        except ApplicationOpenError:
+            raise
+        except PasscodeVerificationError as error:
             raise ApplicationOpenError(
-                "The encrypted backup could not be restored. Check the passcode."
+                "High-risk authentication failed. Check the passcode or wait "
+                "for the temporary lockout to end."
+            ) from error
+        except BackupError as error:
+            raise ApplicationOpenError(
+                "The encrypted backup could not be restored safely."
             ) from error
         finally:
             self._request_lock.release()

@@ -176,6 +176,11 @@ class EncryptedBackupManager:
                 return None
         return self.create_snapshot(correlation_id)
 
+    def validate_destination(self) -> None:
+        """Verify that the configured destination is a present real directory."""
+
+        self._validate_destination()
+
     def list_snapshots(self) -> tuple[Path, ...]:
         """Return managed snapshot paths without opening or exposing content."""
 

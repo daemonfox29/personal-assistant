@@ -1140,6 +1140,20 @@ class SettingsPage(QWidget):
     def show_backup_result(self, text: str) -> None:
         self._backup_status.setText(text)
 
+    def show_backup_loading(self, directory: str, text: str) -> None:
+        self._backup_directory.setText(directory)
+        self._backup_table.setRowCount(0)
+        self._backup_create.setEnabled(False)
+        self._backup_restore.setEnabled(False)
+        self._backup_status.setText(text)
+
+    def show_backup_error(self, directory: str, text: str) -> None:
+        self._backup_directory.setText(directory)
+        self._backup_table.setRowCount(0)
+        self._backup_create.setEnabled(False)
+        self._backup_restore.setEnabled(False)
+        self._backup_status.setText(text)
+
     def set_audit_events(
         self,
         page: AuditInventoryPage,
@@ -2014,6 +2028,56 @@ class _ChatWorker(QObject):
             self.finished.emit()
 
 
+class _BackupWorker(QObject):
+    """Run slow encrypted-backup operations outside the Qt presentation thread."""
+
+    succeeded = Signal(object)
+    failed = Signal(str)
+    finished = Signal()
+
+    def __init__(
+        self,
+        factory: AssistantApplicationFactory,
+        service: AssistantApplicationService,
+        operation: str,
+        arguments: tuple[str, ...] = (),
+    ) -> None:
+        super().__init__()
+        self._factory = factory
+        self._service = service
+        self._operation = operation
+        self._arguments = arguments
+
+    @Slot()
+    def run(self) -> None:
+        try:
+            if self._operation == "status":
+                overview = self._service.list_backups()
+            elif self._operation == "configure":
+                destination = Path(self._arguments[0])
+                self._service.configure_backup_directory(destination)
+                self._factory.save_backup_directory(destination)
+                overview = self._service.list_backups()
+            elif self._operation == "create":
+                self._service.create_backup()
+                overview = self._service.list_backups()
+            elif self._operation == "restore":
+                self._service.restore_backup(
+                    self._arguments[0],
+                    self._arguments[1],
+                    self._arguments[2],
+                )
+                overview = self._service.list_backups()
+            else:
+                raise ApplicationOpenError("The backup operation is invalid.")
+            self.succeeded.emit(overview)
+        except ApplicationServiceError as error:
+            self.failed.emit(str(error))
+        finally:
+            self._arguments = ()
+            self.finished.emit()
+
+
 class AssistantWindow(QMainWindow):
     def __init__(self, factory: AssistantApplicationFactory) -> None:
         super().__init__()
@@ -2023,6 +2087,9 @@ class AssistantWindow(QMainWindow):
         self._startup_worker: _StartupWorker | None = None
         self._chat_thread: QThread | None = None
         self._chat_worker: _ChatWorker | None = None
+        self._backup_thread: QThread | None = None
+        self._backup_worker: _BackupWorker | None = None
+        self._backup_action: str | None = None
         self._closing = False
         self._appearance_preferences = factory.runtime_preferences
         self.setWindowTitle(WINDOW_TITLE)
@@ -2222,6 +2289,7 @@ class AssistantWindow(QMainWindow):
     def _show_settings(self) -> None:
         self._settings.set_preferences(self._factory.runtime_preferences)
         self._settings.show_memory_page()
+        self._pages.setCurrentWidget(self._settings)
         if self._service is not None:
             self._settings.set_communication_style(
                 self._service.communication_style,
@@ -2233,14 +2301,23 @@ class AssistantWindow(QMainWindow):
                     page.items,
                     next_cursor=page.next_cursor,
                 )
-                self._settings.set_backups(self._service.list_backups())
+            except ApplicationOpenError as error:
+                self._show_safe_error(str(error))
+            try:
                 self._settings.set_audit_events(
                     self._service.list_audit_events()
                 )
             except ApplicationOpenError as error:
                 self._show_safe_error(str(error))
-                return
-        self._pages.setCurrentWidget(self._settings)
+            if self._service.info.persistent_memory:
+                directory = self._factory.runtime_preferences.backup_directory
+                self._settings.show_backup_loading(
+                    directory,
+                    "Checking encrypted backup status…",
+                )
+                self._start_backup_task("status")
+            else:
+                self._settings.set_backups(BackupOverview("", ()))
 
     def _candidate_passcode(self, action: str) -> str | None:
         passcode, accepted = QInputDialog.getText(
@@ -2379,29 +2456,20 @@ class AssistantWindow(QMainWindow):
     def _configure_backup_directory(self, selected: str) -> None:
         if self._service is None:
             return
-        destination = Path(selected)
-        try:
-            self._factory.save_backup_directory(destination)
-            self._service.configure_backup_directory(destination)
-            self._settings.set_backups(self._service.list_backups())
-            self._settings.show_backup_result(
-                "Encrypted backup destination saved and active."
-            )
-        except (ApplicationSettingsError, ApplicationOpenError) as error:
-            self._show_safe_error(str(error))
+        self._settings.show_backup_loading(
+            selected,
+            "Validating the backup destination…",
+        )
+        self._start_backup_task("configure", (selected,))
 
     @Slot()
     def _create_backup(self) -> None:
         if self._service is None:
             return
-        try:
-            self._service.create_backup()
-            self._settings.set_backups(self._service.list_backups())
-            self._settings.show_backup_result(
-                "Encrypted backup created and metadata verified."
-            )
-        except ApplicationOpenError as error:
-            self._show_safe_error(str(error))
+        self._settings.show_backup_result(
+            "Creating and verifying the encrypted backup…"
+        )
+        self._start_backup_task("create")
 
     @Slot(str)
     def _restore_backup(self, snapshot_name: str) -> None:
@@ -2419,23 +2487,93 @@ class AssistantWindow(QMainWindow):
         if passcode is None:
             confirmation = ""
             return
-        try:
-            self._service.restore_backup(snapshot_name, confirmation, passcode)
-            self._settings.set_backups(self._service.list_backups())
-            page = self._service.list_memories_page()
-            self._settings.set_memories(
-                page.items,
-                next_cursor=page.next_cursor,
-            )
-            self._refresh_history()
-            self._settings.show_backup_result(
+        self._settings.show_backup_result(
+            "Verifying and restoring the encrypted backup…"
+        )
+        self._start_backup_task(
+            "restore",
+            (snapshot_name, confirmation, passcode),
+        )
+        confirmation = ""
+        passcode = ""
+
+    def _start_backup_task(
+        self,
+        operation: str,
+        arguments: tuple[str, ...] = (),
+    ) -> None:
+        if self._service is None or self._backup_thread is not None:
+            return
+        self._settings.setEnabled(False)
+        thread = QThread(self)
+        worker = _BackupWorker(
+            self._factory,
+            self._service,
+            operation,
+            arguments,
+        )
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.succeeded.connect(self._backup_succeeded)
+        worker.failed.connect(self._backup_failed)
+        worker.finished.connect(thread.quit)
+        worker.finished.connect(worker.deleteLater)
+        thread.finished.connect(self._backup_finished)
+        self._backup_action = operation
+        self._backup_thread = thread
+        self._backup_worker = worker
+        thread.start()
+
+    @Slot(object)
+    def _backup_succeeded(self, overview: BackupOverview) -> None:
+        action = self._backup_action
+        self._settings.set_backups(overview)
+        messages = {
+            "status": (
+                "No managed snapshots yet."
+                if not overview.snapshots
+                else f"{len(overview.snapshots)} managed snapshot(s) available."
+            ),
+            "configure": "Encrypted backup destination saved and active.",
+            "create": "Encrypted backup created and fully verified.",
+            "restore": (
                 "Encrypted backup restored. Conversation and memory views refreshed."
-            )
-        except ApplicationOpenError as error:
-            self._show_safe_error(str(error))
-        finally:
-            confirmation = ""
-            passcode = ""
+            ),
+        }
+        self._settings.show_backup_result(
+            messages.get(action or "", "Encrypted backup status updated.")
+        )
+        if action == "restore" and self._service is not None:
+            try:
+                page = self._service.list_memories_page()
+                self._settings.set_memories(
+                    page.items,
+                    next_cursor=page.next_cursor,
+                )
+                self._refresh_history()
+            except ApplicationOpenError as error:
+                self._show_safe_error(str(error))
+
+    @Slot(str)
+    def _backup_failed(self, message: str) -> None:
+        directory = self._factory.runtime_preferences.backup_directory
+        self._settings.show_backup_error(
+            directory,
+            "Backup operation unavailable. Choose a present local or external "
+            "folder and try again.",
+        )
+        self._show_safe_error(message)
+
+    @Slot()
+    def _backup_finished(self) -> None:
+        if self._backup_thread is not None:
+            self._backup_thread.deleteLater()
+        self._backup_thread = None
+        self._backup_worker = None
+        self._backup_action = None
+        if not self._closing:
+            self._settings.setEnabled(True)
+        self._finish_close_if_ready()
 
     @Slot(str)
     def _load_next_audit_page(self, cursor: str) -> None:
@@ -2615,10 +2753,19 @@ class AssistantWindow(QMainWindow):
         self._closing = True
         if self._startup_worker is not None:
             self._startup_worker.cancel()
-        if self._startup_thread is not None or self._chat_thread is not None:
+        if (
+            self._startup_thread is not None
+            or self._chat_thread is not None
+            or self._backup_thread is not None
+        ):
             if self._chat_thread is not None:
                 self._pages.setCurrentWidget(self._chat)
                 self._chat.show_closing()
+            elif self._backup_thread is not None:
+                self._pages.setCurrentWidget(self._settings)
+                self._settings.show_backup_result(
+                    "Finishing the backup operation safely before closing…"
+                )
             event.ignore()
             return
         self._close_service()
@@ -2630,6 +2777,7 @@ class AssistantWindow(QMainWindow):
             self._closing
             and self._startup_thread is None
             and self._chat_thread is None
+            and self._backup_thread is None
         ):
             self._close_service()
             self.hide()

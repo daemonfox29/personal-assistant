@@ -1,6 +1,7 @@
 """Headless tests for secret handling and inert native rendering."""
 
 import os
+from threading import get_ident
 import unittest
 from unittest.mock import patch
 from datetime import datetime, timezone
@@ -20,11 +21,14 @@ from PySide6.QtWidgets import (  # noqa: E402
 
 from personal_assistant.application_service import (  # noqa: E402
     ApplicationLaunchState,
+    ApplicationOpenError,
+    ApplicationSessionInfo,
     AuditInventoryItem,
     AuditInventoryPage,
     BackupInventoryItem,
     BackupOverview,
     MemoryInventoryItem,
+    MemoryInventoryPage,
     MemoryReviewItem,
     MemoryReviewRelatedItem,
 )
@@ -494,6 +498,138 @@ class NativeUiTests(unittest.TestCase):
         self.assertFalse(page._input.isEnabled())
         self.assertFalse(page._send.isEnabled())
         self.assertFalse(page._limit.isEnabled())
+
+    def test_missing_backup_drive_does_not_block_settings(self) -> None:
+        class Factory:
+            runtime_preferences = RuntimePreferences(
+                backup_directory="/Volumes/Synthetic Missing Drive"
+            )
+
+            @staticmethod
+            def launch_state() -> ApplicationLaunchState:
+                return ApplicationLaunchState.SESSION_ONLY
+
+        class Service:
+            communication_style = ""
+            info = ApplicationSessionInfo(
+                "synthetic",
+                True,
+                400,
+                1_200,
+                2_000,
+            )
+
+            @staticmethod
+            def list_memories_page() -> MemoryInventoryPage:
+                return MemoryInventoryPage((), None)
+
+            @staticmethod
+            def list_audit_events() -> AuditInventoryPage:
+                return AuditInventoryPage((), None)
+
+            @staticmethod
+            def list_backups() -> BackupOverview:
+                raise ApplicationOpenError(
+                    "Encrypted backup status could not be read safely."
+                )
+
+            @staticmethod
+            def close() -> None:
+                pass
+
+        window = AssistantWindow(Factory())
+        window._service = Service()
+        errors: list[str] = []
+        window._show_safe_error = errors.append
+
+        window._show_settings()
+
+        self.assertIs(window._pages.currentWidget(), window._settings)
+        for _ in range(100):
+            self.app.processEvents()
+            if window._backup_thread is None:
+                break
+            QTest.qWait(5)
+        self.assertIsNone(window._backup_thread)
+        self.assertTrue(window._settings.isEnabled())
+        self.assertEqual(
+            window._settings._backup_directory.text(),
+            "/Volumes/Synthetic Missing Drive",
+        )
+        self.assertIn("Backup operation unavailable", window._settings._backup_status.text())
+        self.assertEqual(
+            errors,
+            ["Encrypted backup status could not be read safely."],
+        )
+        window._service = None
+        window.hide()
+
+    def test_backup_work_runs_off_ui_thread_and_validates_before_persisting(
+        self,
+    ) -> None:
+        calls: list[tuple[str, int]] = []
+
+        class Factory:
+            runtime_preferences = RuntimePreferences()
+
+            @staticmethod
+            def launch_state() -> ApplicationLaunchState:
+                return ApplicationLaunchState.SESSION_ONLY
+
+            def save_backup_directory(self, path) -> None:
+                calls.append(("factory-save", get_ident()))
+                self.runtime_preferences = RuntimePreferences(
+                    backup_directory=str(path)
+                )
+
+        class Service:
+            @staticmethod
+            def create_backup() -> None:
+                calls.append(("service-create", get_ident()))
+
+            @staticmethod
+            def configure_backup_directory(_path) -> None:
+                calls.append(("service-configure", get_ident()))
+
+            @staticmethod
+            def list_backups() -> BackupOverview:
+                calls.append(("service-list", get_ident()))
+                return BackupOverview("/tmp/synthetic-backups", ())
+
+            @staticmethod
+            def close() -> None:
+                pass
+
+        factory = Factory()
+        window = AssistantWindow(factory)
+        window._service = Service()
+        window._show_safe_error = self.fail
+        ui_thread = get_ident()
+
+        window._create_backup()
+        self.assertIsNotNone(window._backup_thread)
+        for _ in range(100):
+            self.app.processEvents()
+            if window._backup_thread is None:
+                break
+            QTest.qWait(5)
+        self.assertEqual([name for name, _ in calls], ["service-create", "service-list"])
+        self.assertTrue(all(thread_id != ui_thread for _, thread_id in calls))
+
+        calls.clear()
+        window._configure_backup_directory("/tmp/synthetic-backups")
+        for _ in range(100):
+            self.app.processEvents()
+            if window._backup_thread is None:
+                break
+            QTest.qWait(5)
+        self.assertEqual(
+            [name for name, _ in calls],
+            ["service-configure", "factory-save", "service-list"],
+        )
+        self.assertTrue(all(thread_id != ui_thread for _, thread_id in calls))
+        window._service = None
+        window.hide()
 
     def test_window_shutdown_closes_the_application_service(self) -> None:
         class Factory:

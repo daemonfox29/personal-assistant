@@ -1233,6 +1233,15 @@ class ApplicationServiceTests(unittest.TestCase):
                         "RESTORE",
                         PASSCODE,
                     )
+                with self.assertRaisesRegex(
+                    ApplicationOpenError,
+                    "High-risk authentication failed",
+                ):
+                    service.restore_backup(
+                        created.snapshot_name,
+                        "RESTORE",
+                        "incorrect-synthetic-passcode",
+                    )
 
                 runtime = service._runtime
                 self.assertIsNotNone(runtime)

@@ -255,7 +255,7 @@ class MemoryRuntime:
         if not isinstance(destination, Path) or not destination.is_absolute():
             raise ValueError("Backup destination must be an explicit absolute path.")
         migrations = PackageMigrationSource()
-        self.backup_manager = EncryptedBackupManager(
+        manager = EncryptedBackupManager(
             BackupSettings(
                 self.settings.data_directory / "memory.db",
                 destination,
@@ -269,6 +269,8 @@ class MemoryRuntime:
             migration_source=migrations,
             audit_sink=self.audit_sink,
         )
+        manager.validate_destination()
+        self.backup_manager = manager
 
     def confirm_candidate(
         self,
