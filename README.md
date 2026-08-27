@@ -142,8 +142,11 @@ uv run --locked personal-assistant-ui
 On Apple-silicon macOS, `launchers/install-macos-launcher.sh` builds a tiny
 native development launcher in `~/Applications`. It opens the same live `uv`
 checkout without Terminal, so Spotlight can launch **Personal Assistant** and
-the app can be pinned to the Dock. This is a development convenience, not the
-future signed and self-contained package.
+the app can be pinned to the Dock. The installer synchronizes the locked
+environment, and the launcher then executes its UI entry point directly so the
+registered macOS app and Qt window share one process for accessibility and UI
+automation. Re-run the installer after dependency or lockfile changes. This is
+a development convenience, not the future signed and self-contained package.
 
 The native app guides first-run encrypted-memory setup or recovery unlock, then
 starts Ollama and opens streaming chat. After one verified recovery entry, later

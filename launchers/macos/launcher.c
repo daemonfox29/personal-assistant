@@ -15,29 +15,31 @@ int main(void) {
     }
 
     char project[PATH_MAX];
-    char user_uv[PATH_MAX];
+    char entry_point[PATH_MAX];
     if (snprintf(
             project,
             sizeof(project),
             "%s/Projects/Local-assistant/personal-assistant",
             home
         ) >= (int)sizeof(project)
-        || snprintf(user_uv, sizeof(user_uv), "%s/.local/bin/uv", home)
-            >= (int)sizeof(user_uv)) {
+        || snprintf(
+            entry_point,
+            sizeof(entry_point),
+            "%s/.venv/bin/personal-assistant-ui",
+            project
+        ) >= (int)sizeof(entry_point)) {
         return 1;
     }
 
-    const char *uv = executable(user_uv)
-        ? user_uv
-        : executable("/opt/homebrew/bin/uv")
-        ? "/opt/homebrew/bin/uv"
-        : executable("/usr/local/bin/uv")
-        ? "/usr/local/bin/uv"
-        : NULL;
-    if (uv == NULL || chdir(project) != 0) {
+    if (!executable(entry_point) || chdir(project) != 0) {
         return 1;
     }
 
-    execl(uv, uv, "run", "--locked", "personal-assistant-ui", (char *)NULL);
+    /*
+     * Keep the LaunchServices-registered process and the Qt window in the same
+     * PID. `uv run` otherwise stays registered while Qt opens in child Python,
+     * preventing macOS accessibility clients from resolving the app reliably.
+     */
+    execl(entry_point, entry_point, (char *)NULL);
     return 1;
 }

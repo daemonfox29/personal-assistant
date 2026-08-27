@@ -214,6 +214,34 @@ complete; the batched Linux pull-request check is its final platform gate.
 
 ## Session history
 
+### 2026-08-27 — macOS UI automation launcher repair
+
+Completed:
+
+- Reproduced a Computer Use timeout that affected Personal Assistant while the
+  same controller could inspect Calculator normally.
+- Confirmed the Qt main event loop was responsive and isolated the failure to
+  the development launcher process boundary: LaunchServices registered the
+  long-lived `uv` parent while the visible Qt window belonged to child Python.
+- Changed the launcher installer to synchronize the locked environment once,
+  then made the bundle execute `.venv/bin/personal-assistant-ui` directly. The
+  registered process now owns the Qt window instead of hiding it behind `uv`.
+- Added launcher regression coverage and documented that the installer must be
+  rerun after dependency or lockfile changes.
+
+Verification:
+
+- The native launcher compiled for arm64, and 26 focused launcher and UI tests
+  passed.
+- The complete locked local suite passed: 474 tests in 13.520 seconds, with one
+  intentionally opt-in performance test skipped.
+- Computer Use discovered the real Personal Assistant accessibility tree,
+  entered and submitted a prompt, observed streaming through completion, read
+  the final answer, and navigated to Settings.
+- The unpackaged development window is exposed to automation under Python's
+  bundle identity. The later signed packaging gate should give it a standalone
+  native identity; this does not prevent current UI automation.
+
 ### 2026-08-27 — Module 2.4 evidence-grounded search verification
 
 Completed:
