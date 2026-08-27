@@ -18,6 +18,10 @@ from personal_assistant.audit import (
     AuditReasonCode,
 )
 from personal_assistant.audit_file import AuditFileSettings, JsonLinesAuditSink
+from personal_assistant.assistant_preferences import (
+    AssistantPreferenceError,
+    CommunicationStyle,
+)
 from personal_assistant.backup import BackupError
 from personal_assistant.config import AppSettings
 from personal_assistant.conversation import (
@@ -172,6 +176,46 @@ class AssistantApplicationService:
     @property
     def info(self) -> ApplicationSessionInfo:
         return self._info
+
+    @property
+    def communication_style(self) -> str:
+        """Return the validated style currently applied to model requests."""
+
+        return self._conversation.communication_style.text
+
+    def save_communication_style(self, text: str) -> None:
+        """Append one encrypted style revision and apply it immediately."""
+
+        try:
+            style = CommunicationStyle(text)
+        except ValueError as error:
+            raise ApplicationSettingsError(str(error)) from error
+        if not self._request_lock.acquire(blocking=False):
+            raise ApplicationSettingsError(
+                "Wait for the current response before changing communication style."
+            )
+        try:
+            with self._lock:
+                if self._closed:
+                    raise ApplicationSettingsError(
+                        "This assistant session is closed."
+                    )
+                runtime = self._runtime
+            if runtime is None:
+                raise ApplicationSettingsError(
+                    "Saving communication style requires encrypted memory."
+                )
+            runtime.assistant_preferences.save_communication_style(
+                style,
+                uuid4(),
+            )
+            self._conversation.set_communication_style(style)
+        except (AssistantPreferenceError, RuntimeError, TypeError) as error:
+            raise ApplicationSettingsError(
+                "Communication style could not be saved safely."
+            ) from error
+        finally:
+            self._request_lock.release()
 
     def events_for(
         self,
@@ -965,6 +1009,13 @@ class AssistantApplicationFactory:
                 ),
                 explicit_memory_handler=runtime,
                 post_response_worker=worker,
+                communication_style=(
+                    CommunicationStyle()
+                    if runtime is None
+                    else runtime.assistant_preferences.load_communication_style(
+                        uuid4()
+                    )
+                ),
             )
             return AssistantApplicationService(
                 conversation,

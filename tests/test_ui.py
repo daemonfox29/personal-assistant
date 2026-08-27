@@ -183,6 +183,24 @@ class NativeUiTests(unittest.TestCase):
         )
         self.assertEqual(page._maximum_response_tokens.maximum(), 2_000)
 
+    def test_settings_communication_style_is_bounded_and_emits_save(self) -> None:
+        page = SettingsPage()
+        saved: list[str] = []
+        page.communication_style_save_requested.connect(saved.append)
+        page.set_communication_style(
+            "Be warm and use plain language.",
+            persistent=True,
+        )
+        page._section_list.setCurrentRow(1)
+
+        page._communication_save.click()
+
+        self.assertEqual(saved, ["Be warm and use plain language."])
+        self.assertEqual(page._section_pages.currentIndex(), 1)
+        self.assertEqual(page._section_list.count(), 3)
+        page._communication_style.setPlainText("x" * 2_001)
+        self.assertFalse(page._communication_save.isEnabled())
+
     def test_settings_memory_table_is_compact_filterable_and_emits_row_actions(
         self,
     ) -> None:

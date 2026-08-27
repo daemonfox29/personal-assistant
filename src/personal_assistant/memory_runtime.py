@@ -6,6 +6,9 @@ from typing import Protocol, runtime_checkable
 from uuid import UUID, uuid4
 
 from personal_assistant.audit import AuditSink
+from personal_assistant.assistant_preferences import (
+    EncryptedAssistantPreferenceStore,
+)
 from personal_assistant.authorization import authorize_action
 from personal_assistant.audit_file import AuditFileSettings, JsonLinesAuditSink
 from personal_assistant.backup import (
@@ -73,6 +76,7 @@ class MemoryRuntime:
     database: EncryptedDatabase
     repository: MemoryRepository
     conversation_history: ConversationHistoryRepository
+    assistant_preferences: EncryptedAssistantPreferenceStore
     capture: MemoryCaptureCoordinator
     context_provider: RepositoryMemoryContextProvider
     approval_gate: PasscodeApprovalGate
@@ -123,6 +127,10 @@ class MemoryRuntime:
                 audit_sink=sink,
             )
             conversation_history = ConversationHistoryRepository(database, sink)
+            assistant_preferences = EncryptedAssistantPreferenceStore(
+                database,
+                sink,
+            )
             repository.expire_candidates(uuid4())
             capture = MemoryCaptureCoordinator(repository, sink)
             context = RepositoryMemoryContextProvider(
@@ -155,6 +163,7 @@ class MemoryRuntime:
                 database,
                 repository,
                 conversation_history,
+                assistant_preferences,
                 capture,
                 context,
                 approval_gate,

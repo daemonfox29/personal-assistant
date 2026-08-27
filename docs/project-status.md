@@ -187,6 +187,10 @@ Completed:
   as facts and model-generated background facts or trivia without exact
   standalone user evidence are discarded. Retrieval independently excludes
   legacy invalid direct statements and equivalent duplicate content.
+- Added a global Communication Style settings panel. Free-form style text is
+  bounded, validated, encrypted, append-only revisioned, content-free audited,
+  and applied immediately to subsequent replies through a style-only system-data
+  envelope that cannot grant authority or weaken safety rules.
 - Linked newly created chat-derived memories to the exact opaque encrypted user
   message ID. View source resolves the ID directly, opens the correct saved
   conversation, and highlights the exact sequence even when text is duplicated.
@@ -197,7 +201,7 @@ Completed:
   inferred, deleted, and imported sources are never guessed.
 - Kept memory deletion recoverable: the row leaves ordinary retrieval while its
   revision history and content-free audit event remain.
-- Verified all 335 local tests under the locked `uv` environment; one opt-in
+- Verified all 340 local tests under the locked `uv` environment; one opt-in
   performance test remained skipped.
 
 Next:

@@ -80,7 +80,9 @@ The first usable slice includes:
 5. A settings screen that atomically persists bounded context-window, default-
    response, response-ceiling, code-owned system/light/dark theme, installed
    font-family, and font-size values. Version-one preferences migrate to safe
-   appearance defaults.
+   appearance defaults. A separate Communication Style panel stores up to 2,000
+   characters of owner-authored tone, verbosity, formatting, and conversational
+   preferences in the encrypted database with append-only revision history.
 6. An encrypted conversation sidebar with automatic saving, deterministic local
    titles, new-chat and Private Chat controls, reopen-and-continue behavior, and
    confirmed permanent deletion from the live database.
@@ -98,6 +100,15 @@ Candidate confirmation/rejection, backup/restore, pagination beyond the initial
 bounded inventory, and the bounded audit viewer follow as additional panels over
 service methods. They must not be implemented by exposing repository objects to
 widgets.
+
+Communication style is applied immediately to subsequent replies across all
+chats, including Private Chat, because it is a global owner preference rather
+than conversation memory. It is encoded in a bounded code-owned system envelope
+as style-only data. The envelope explicitly cannot modify truthfulness, safety,
+permission policy, tool authority, or instruction priority. Credential-related
+and unsafe-control text is rejected, audit events contain no preference content,
+and an empty revision restores the default style. The ordinary unencrypted
+appearance/preferences JSON never receives this free-form personal text.
 
 ## Conversation-history retention amendment
 

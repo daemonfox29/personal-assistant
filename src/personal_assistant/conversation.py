@@ -7,6 +7,10 @@ from threading import Lock
 from typing import Protocol
 from uuid import UUID, uuid4
 
+from personal_assistant.assistant_preferences import (
+    CommunicationStyle,
+    communication_style_system_context,
+)
 from personal_assistant.config import ChatSettings
 from personal_assistant.memory_context import MemoryContextError, MemoryContextProvider
 from personal_assistant.model import (
@@ -99,6 +103,7 @@ class ConversationService:
         memory_context_provider: MemoryContextProvider | None = None,
         explicit_memory_handler: ExplicitMemoryHandler | None = None,
         post_response_worker: PostResponseWorker | None = None,
+        communication_style: CommunicationStyle = CommunicationStyle(),
     ) -> None:
         if not isinstance(model, LanguageModel):
             raise TypeError("Conversation service requires a language model.")
@@ -113,6 +118,9 @@ class ConversationService:
         self._memory_context_provider = memory_context_provider
         self._explicit_memory_handler = explicit_memory_handler
         self._post_response_worker = post_response_worker
+        if not isinstance(communication_style, CommunicationStyle):
+            raise TypeError("Conversation service requires a communication style.")
+        self._communication_style = communication_style
         self._memory = SessionConversationMemory(settings.session_history_tokens)
         self._request_lock = Lock()
         self._lifecycle_lock = Lock()
@@ -120,6 +128,21 @@ class ConversationService:
         self._wait_for_memory_before_next_request = False
         self._last_completed_user_text: str | None = None
         self._memory_handoff_query: str | None = None
+
+    @property
+    def communication_style(self) -> CommunicationStyle:
+        with self._lifecycle_lock:
+            return self._communication_style
+
+    def set_communication_style(self, style: CommunicationStyle) -> None:
+        """Apply a validated style to subsequent requests in this session."""
+
+        if not isinstance(style, CommunicationStyle):
+            raise TypeError("A validated communication style is required.")
+        with self._lifecycle_lock:
+            if self._closed:
+                raise RuntimeError("This conversation service is closed.")
+            self._communication_style = style
 
     def events_for(
         self,
@@ -271,6 +294,7 @@ class ConversationService:
             if self._closed:
                 return
             self._closed = True
+            self._communication_style = CommunicationStyle()
         if self._post_response_worker is not None:
             self._wait_for_post_response_memory()
             self._post_response_worker.close()
@@ -420,6 +444,11 @@ class ConversationService:
             )
         input_token_limit = self._context_window_tokens - response_limit
         base_system_text = response_instruction(response_limit)
+        with self._lifecycle_lock:
+            communication_style = self._communication_style
+        trusted_system_text = base_system_text + communication_style_system_context(
+            communication_style
+        )
         persistent_context: str | None = None
         notices: list[str] = []
         if allow_persistent_memory and self._memory_context_provider is not None:
@@ -437,7 +466,7 @@ class ConversationService:
                     "continuing without it."
                 )
         system_text = (
-            base_system_text
+            trusted_system_text
             + (persistent_context or "")
             + (conversation_recall_context or "")
         )
@@ -452,7 +481,8 @@ class ConversationService:
                 try:
                     messages = self._memory.messages_for_request(
                         system_text=(
-                            base_system_text + (conversation_recall_context or "")
+                            trusted_system_text
+                            + (conversation_recall_context or "")
                         ),
                         user_text=user_text,
                         input_token_limit=input_token_limit,
@@ -472,7 +502,7 @@ class ConversationService:
             if conversation_recall_context is not None:
                 try:
                     messages = self._memory.messages_for_request(
-                        system_text=base_system_text,
+                        system_text=trusted_system_text,
                         user_text=user_text,
                         input_token_limit=input_token_limit,
                     )

@@ -134,6 +134,7 @@ class MigrationTests(unittest.TestCase):
                         "conversations",
                         "conversation_messages",
                         "conversation_search",
+                        "assistant_preference_revisions",
                     }.issubset(tables)
                 )
                 history = connection.execute(
@@ -233,7 +234,7 @@ class MigrationTests(unittest.TestCase):
 
             self.assertEqual(
                 result.applied_versions,
-                (14, 15, 16, 17, 18, 19, 20, 21, 22),
+                (14, 15, 16, 17, 18, 19, 20, 21, 22, 23),
             )
             with database.connect(uuid4()) as connection:
                 tables = {
@@ -305,7 +306,7 @@ class MigrationTests(unittest.TestCase):
 
             self.assertEqual(
                 result.applied_versions,
-                (16, 17, 18, 19, 20, 21, 22),
+                (16, 17, 18, 19, 20, 21, 22, 23),
             )
             with database.connect(uuid4()) as connection:
                 rows = connection.execute(
@@ -350,7 +351,7 @@ class MigrationTests(unittest.TestCase):
             current_runner, _ = self._runner(database)
             result = current_runner.migrate(uuid4())
 
-            self.assertEqual(result.applied_versions, (21, 22))
+            self.assertEqual(result.applied_versions, (21, 22, 23))
             with database.connect(uuid4()) as connection:
                 rows = connection.execute(
                     "SELECT conversation_id FROM conversation_search "

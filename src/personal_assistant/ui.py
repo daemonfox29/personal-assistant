@@ -51,6 +51,9 @@ from personal_assistant.application_service import (
     AssistantApplicationService,
     MemoryInventoryItem,
 )
+from personal_assistant.assistant_preferences import (
+    MAX_COMMUNICATION_STYLE_CHARS,
+)
 from personal_assistant.config import load_desktop_settings
 from personal_assistant.conversation import ConversationEvent, ConversationEventKind
 from personal_assistant.conversation_history import (
@@ -273,6 +276,7 @@ class MessageComposer(QPlainTextEdit):
 
 class SettingsPage(QWidget):
     save_requested = Signal(int, int, int, str, str, int)
+    communication_style_save_requested = Signal(str)
     memory_source_requested = Signal(str)
     memory_delete_requested = Signal(str)
     back_requested = Signal()
@@ -298,9 +302,12 @@ class SettingsPage(QWidget):
         )
         memory_section = QListWidgetItem("Memory")
         memory_section.setData(Qt.ItemDataRole.UserRole, 0)
+        communication_section = QListWidgetItem("Communication style")
+        communication_section.setData(Qt.ItemDataRole.UserRole, 1)
         model_section = QListWidgetItem("Model & appearance")
-        model_section.setData(Qt.ItemDataRole.UserRole, 1)
+        model_section.setData(Qt.ItemDataRole.UserRole, 2)
         self._section_list.addItem(memory_section)
+        self._section_list.addItem(communication_section)
         self._section_list.addItem(model_section)
         navigation_layout.addWidget(self._section_list, 1)
         back = QPushButton("Back to chat")
@@ -311,12 +318,80 @@ class SettingsPage(QWidget):
 
         self._section_pages = QStackedWidget()
         self._section_pages.addWidget(self._build_memory_page())
+        self._section_pages.addWidget(self._build_communication_page())
         self._section_pages.addWidget(self._build_model_page())
         layout.addWidget(self._section_pages, 1)
         self._section_list.currentItemChanged.connect(
             self._select_settings_section
         )
         self._section_list.setCurrentRow(0)
+
+    def _build_communication_page(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(28, 28, 28, 28)
+        layout.setSpacing(12)
+        title = QLabel("Communication style")
+        title.setObjectName("settingsTitle")
+        layout.addWidget(title)
+        explanation = QLabel(
+            "Set a global preference for the assistant's tone, verbosity, "
+            "formatting, and conversational manner. It applies to new replies "
+            "in every chat."
+        )
+        explanation.setWordWrap(True)
+        explanation.setObjectName("settingsSubtitle")
+        layout.addWidget(explanation)
+
+        card = QFrame()
+        card.setObjectName("card")
+        card_layout = QVBoxLayout(card)
+        card_layout.setContentsMargins(24, 22, 24, 22)
+        prompt = QLabel("How should the assistant communicate with you?")
+        prompt.setObjectName("communicationStylePrompt")
+        card_layout.addWidget(prompt)
+        self._communication_style = QPlainTextEdit()
+        self._communication_style.setObjectName("communicationStyleInput")
+        self._communication_style.setPlaceholderText(
+            "Example: Be warm and direct. Use plain language, explain unfamiliar "
+            "technical ideas, and keep routine answers concise."
+        )
+        self._communication_style.setTabChangesFocus(True)
+        self._communication_style.setMinimumHeight(180)
+        self._communication_style.textChanged.connect(
+            self._communication_style_changed
+        )
+        card_layout.addWidget(self._communication_style)
+        self._communication_count = QLabel(
+            f"0 / {MAX_COMMUNICATION_STYLE_CHARS:,} characters"
+        )
+        self._communication_count.setObjectName("sessionStatus")
+        card_layout.addWidget(self._communication_count)
+        boundary = QLabel(
+            "This preference is encrypted and revisioned. It can shape style, "
+            "but cannot change safety rules, permissions, truthfulness, or tool "
+            "authority. Leave it blank to restore the default style."
+        )
+        boundary.setWordWrap(True)
+        boundary.setObjectName("settingsSubtitle")
+        card_layout.addWidget(boundary)
+        layout.addWidget(card)
+        layout.addStretch()
+        self._communication_result = QLabel()
+        self._communication_result.setObjectName("settingsResult")
+        self._communication_result.setWordWrap(True)
+        layout.addWidget(self._communication_result)
+        save_row = QHBoxLayout()
+        save_row.addStretch()
+        self._communication_save = QPushButton("Save communication style")
+        self._communication_save.clicked.connect(
+            lambda: self.communication_style_save_requested.emit(
+                self._communication_style.toPlainText()
+            )
+        )
+        save_row.addWidget(self._communication_save)
+        layout.addLayout(save_row)
+        return page
 
     def _build_model_page(self) -> QWidget:
         page = QWidget()
@@ -472,6 +547,32 @@ class SettingsPage(QWidget):
 
     def show_memory_page(self) -> None:
         self._section_list.setCurrentRow(0)
+
+    def set_communication_style(self, text: str, *, persistent: bool) -> None:
+        self._communication_style.setPlainText(text)
+        self._communication_style.setEnabled(persistent)
+        self._communication_save.setEnabled(persistent)
+        self._communication_result.setText(
+            ""
+            if persistent
+            else "Encrypted memory is required to save a global style."
+        )
+
+    def show_communication_saved(self) -> None:
+        self._communication_result.setText(
+            "Communication style saved and applied to future replies."
+        )
+
+    @Slot()
+    def _communication_style_changed(self) -> None:
+        length = len(self._communication_style.toPlainText())
+        self._communication_count.setText(
+            f"{length:,} / {MAX_COMMUNICATION_STYLE_CHARS:,} characters"
+        )
+        self._communication_save.setEnabled(
+            self._communication_style.isEnabled()
+            and length <= MAX_COMMUNICATION_STYLE_CHARS
+        )
 
     def set_preferences(self, preferences: RuntimePreferences) -> None:
         self._maximum_response_tokens.setValue(
@@ -1281,6 +1382,9 @@ class AssistantWindow(QMainWindow):
         self._chat.conversation_requested.connect(self._open_conversation)
         self._chat.delete_requested.connect(self._delete_conversation)
         self._settings.save_requested.connect(self._save_settings)
+        self._settings.communication_style_save_requested.connect(
+            self._save_communication_style
+        )
         self._settings.memory_source_requested.connect(self._open_memory_source)
         self._settings.memory_delete_requested.connect(self._delete_memory)
         self._settings.back_requested.connect(self._return_to_chat)
@@ -1431,6 +1535,10 @@ class AssistantWindow(QMainWindow):
         self._settings.set_preferences(self._factory.runtime_preferences)
         self._settings.show_memory_page()
         if self._service is not None:
+            self._settings.set_communication_style(
+                self._service.communication_style,
+                persistent=self._service.info.persistent_memory,
+            )
             try:
                 self._settings.set_memories(self._service.list_memories())
             except ApplicationOpenError as error:
@@ -1509,6 +1617,17 @@ class AssistantWindow(QMainWindow):
             return
         self._apply_appearance(preferences)
         self._settings.show_saved()
+
+    @Slot(str)
+    def _save_communication_style(self, text: str) -> None:
+        if self._service is None:
+            return
+        try:
+            self._service.save_communication_style(text)
+        except ApplicationSettingsError as error:
+            self._show_safe_error(str(error))
+            return
+        self._settings.show_communication_saved()
 
     @Slot(bool)
     def _new_chat(self, private: bool) -> None:

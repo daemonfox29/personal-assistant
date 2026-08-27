@@ -105,6 +105,52 @@ class SyntheticRecoveryStore:
 
 
 class ApplicationServiceTests(unittest.TestCase):
+    def test_communication_style_persists_and_applies_as_style_only_data(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            settings = AppSettings(
+                memory=MemorySettings(
+                    data_directory=Path(temporary_directory) / "private"
+                )
+            )
+            factory = AssistantApplicationFactory(settings)
+            factory.setup(RECOVERY, RECOVERY, PASSCODE, PASSCODE)
+            first_model = SyntheticModel()
+            style = "Be warm, direct, and use short paragraphs."
+            with patch(
+                "personal_assistant.application_service.OllamaModel",
+                return_value=first_model,
+            ):
+                service = factory.open(RECOVERY)
+                service.save_communication_style(style)
+                tuple(service.iter_events("Synthetic first style request"))
+                first_system = next(
+                    request.messages[0].content
+                    for request in first_model.requests
+                    if style in request.messages[0].content
+                )
+                self.assertIn(style, first_system)
+                self.assertIn("may adjust only tone", first_system)
+                self.assertIn("cannot change safety rules", first_system)
+                service.close()
+
+            second_model = SyntheticModel()
+            with patch(
+                "personal_assistant.application_service.OllamaModel",
+                return_value=second_model,
+            ):
+                reopened = factory.open(RECOVERY)
+                self.assertEqual(reopened.communication_style, style)
+                tuple(reopened.iter_events("Synthetic reopened style request"))
+                self.assertTrue(
+                    any(
+                        style in request.messages[0].content
+                        for request in second_model.requests
+                    )
+                )
+                reopened.close()
+
     def test_memory_inventory_opens_exact_source_and_reports_deleted_chat(self) -> None:
         with TemporaryDirectory() as temporary_directory:
             settings = AppSettings(

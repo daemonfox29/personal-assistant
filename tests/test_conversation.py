@@ -5,6 +5,7 @@ import unittest
 from unittest.mock import Mock
 from uuid import UUID
 
+from personal_assistant.assistant_preferences import CommunicationStyle
 from personal_assistant.conversation import (
     ConversationEventKind,
     ConversationService,
@@ -242,11 +243,15 @@ class ConversationServiceTests(unittest.TestCase):
         self.assertTrue(worker.closed)
 
     def test_closed_session_rejects_new_work(self) -> None:
-        service = ConversationService(SyntheticStreamingModel())
+        service = ConversationService(
+            SyntheticStreamingModel(),
+            communication_style=CommunicationStyle("Be warm and concise."),
+        )
         service.close()
 
         events = tuple(service.events_for("synthetic question"))
 
+        self.assertEqual(service.communication_style, CommunicationStyle())
         self.assertEqual(events[0].text, "This assistant session is closed.")
 
     def test_invalid_ui_response_limit_is_refused_before_model_use(self) -> None:
