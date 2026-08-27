@@ -10,33 +10,49 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 
 
 class RepositorySafetyTests(unittest.TestCase):
-    def test_memory_repository_sql_is_fixed_source_code(self) -> None:
-        source = (
-            REPOSITORY_ROOT
-            / "src"
-            / "personal_assistant"
-            / "memory_repository.py"
-        ).read_text()
-        tree = ast.parse(source)
-        execute_calls = [
-            node
-            for node in ast.walk(tree)
-            if isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Attribute)
-            and node.func.attr == "execute"
-        ]
+    def test_repository_sql_is_fixed_source_code(self) -> None:
+        for filename in ("memory_repository.py", "conversation_history.py"):
+            source = (
+                REPOSITORY_ROOT / "src" / "personal_assistant" / filename
+            ).read_text()
+            tree = ast.parse(source)
+            execute_calls = [
+                node
+                for node in ast.walk(tree)
+                if isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr in {"execute", "executemany"}
+            ]
 
-        self.assertTrue(execute_calls)
-        for call in execute_calls:
-            with self.subTest(line=call.lineno):
-                self.assertTrue(call.args)
-                self.assertIsInstance(call.args[0], ast.Constant)
-                self.assertIsInstance(call.args[0].value, str)
+            self.assertTrue(execute_calls)
+            for call in execute_calls:
+                with self.subTest(filename=filename, line=call.lineno):
+                    self.assertTrue(call.args)
+                    self.assertIsInstance(call.args[0], ast.Constant)
+                    self.assertIsInstance(call.args[0].value, str)
 
     def test_encrypted_database_dependency_is_exactly_pinned(self) -> None:
         project_metadata = (REPOSITORY_ROOT / "pyproject.toml").read_text()
 
         self.assertIn('"sqlcipher3==0.6.2"', project_metadata)
+
+    def test_native_ui_dependency_is_minimal_and_exactly_pinned(self) -> None:
+        project_metadata = (REPOSITORY_ROOT / "pyproject.toml").read_text()
+        lockfile = (REPOSITORY_ROOT / "uv.lock").read_text()
+
+        self.assertIn('"pyside6-essentials==6.11.2"', project_metadata)
+        self.assertNotIn('"pyside6==', project_metadata)
+        self.assertIn('name = "pyside6-essentials"', lockfile)
+        self.assertIn('version = "6.11.2"', lockfile)
+
+    def test_credential_store_is_pinned_without_plaintext_backend(self) -> None:
+        project_metadata = (REPOSITORY_ROOT / "pyproject.toml").read_text()
+        lockfile = (REPOSITORY_ROOT / "uv.lock").read_text()
+
+        self.assertIn('"keyring==25.7.0"', project_metadata)
+        self.assertIn('name = "keyring"', lockfile)
+        self.assertIn('version = "25.7.0"', lockfile)
+        self.assertNotIn('name = "keyrings-alt"', lockfile)
 
     def test_uv_version_lockfile_and_ci_are_pinned(self) -> None:
         project_metadata = (REPOSITORY_ROOT / "pyproject.toml").read_text()
@@ -51,6 +67,7 @@ class RepositorySafetyTests(unittest.TestCase):
         self.assertIn('version = "0.6.2"', lockfile)
         self.assertIn("uv sync --locked", workflow)
         self.assertIn("uv run --locked --no-sync", workflow)
+        self.assertIn("--no-install-recommends libegl1", workflow)
 
     def test_common_secret_files_are_ignored(self) -> None:
         ignore_rules = (REPOSITORY_ROOT / ".gitignore").read_text()

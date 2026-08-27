@@ -44,6 +44,8 @@ class AuditOperation(StrEnum):
     STARTUP = "startup"
     SHUTDOWN = "shutdown"
     CONFIGURATION_VALIDATE = "configuration_validate"
+    CONFIGURATION_UPDATE = "configuration_update"
+    CREDENTIAL_ACCESS = "credential_access"
     MODEL_REQUEST = "model_request"
     PERMISSION_EVALUATE = "permission_evaluate"
     APPROVAL_ISSUE = "approval_issue"
@@ -108,6 +110,7 @@ class AuditMetadataKey(StrEnum):
     AGENT_ID = "agent_id"
     APPROVAL_STATE = "approval_state"
     BYTE_COUNT = "byte_count"
+    CONTEXT_TOKENS = "context_tokens"
     DESTINATION_CLASS = "destination_class"
     ENTITY_ID = "entity_id"
     ERROR_CATEGORY = "error_category"
@@ -117,6 +120,8 @@ class AuditMetadataKey(StrEnum):
     MIGRATION_VERSION = "migration_version"
     MODEL_ADAPTER = "model_adapter"
     RECORD_ID = "record_id"
+    RESPONSE_CEILING = "response_ceiling"
+    RESPONSE_TOKENS = "response_tokens"
     TARGET_CLASS = "target_class"
     TASK_ID = "task_id"
 
@@ -126,9 +131,12 @@ AuditMetadataValue = str | int
 
 _INTEGER_METADATA_KEYS = {
     AuditMetadataKey.BYTE_COUNT,
+    AuditMetadataKey.CONTEXT_TOKENS,
     AuditMetadataKey.HTTP_STATUS,
     AuditMetadataKey.ITEM_COUNT,
     AuditMetadataKey.MIGRATION_VERSION,
+    AuditMetadataKey.RESPONSE_CEILING,
+    AuditMetadataKey.RESPONSE_TOKENS,
 }
 
 

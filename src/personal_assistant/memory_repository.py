@@ -23,6 +23,17 @@ from personal_assistant.audit import (
     AuditReasonCode,
     AuditSink,
 )
+from personal_assistant.memory_evidence import (
+    is_standalone_direct_memory_statement,
+    memory_payload_equivalence_key,
+)
+from personal_assistant.memory_scopes import (
+    MAX_MATCHED_SCOPES,
+    MAX_NAMED_SCOPES,
+    normalize_scope_label,
+    normalize_scope_query,
+    validate_scope_label,
+)
 from personal_assistant.encrypted_database import EncryptedConnectionProvider
 from personal_assistant.memory_types import (
     ActorType,
@@ -62,6 +73,10 @@ from personal_assistant.memory_types import (
     payload_from_data,
     payload_to_data,
 )
+from personal_assistant.retrieval_language import (
+    connected_topic_terms,
+    normalized_terms,
+)
 
 
 PAYLOAD_VERSION = 1
@@ -74,7 +89,7 @@ MAX_RETRIEVAL_QUERY_CHARS = 1_000
 MAX_RETRIEVAL_SCOPES = 8
 MAX_RETRIEVAL_ENTITIES = 8
 MAX_RETRIEVAL_CANDIDATES = 96
-RETRIEVAL_RECORD_OVERHEAD_TOKENS = 16
+RETRIEVAL_RECORD_OVERHEAD_TOKENS = 96
 MAX_CAPTURE_NEIGHBORS = 64
 MAX_CANDIDATES_PER_SOURCE = 5
 MAX_CANDIDATE_REVIEW_RECORDS = 100
@@ -89,14 +104,23 @@ _RETRIEVAL_STOP_WORDS = {
     "do",
     "does",
     "how",
+    "information",
     "i",
     "is",
+    "know",
     "me",
+    "memories",
+    "memory",
     "my",
     "not",
     "or",
+    "please",
+    "recall",
+    "remember",
+    "saved",
     "tell",
     "the",
+    "you",
     "was",
     "were",
     "what",
@@ -108,15 +132,7 @@ _RETRIEVAL_STOP_WORDS = {
 
 
 def _normalized_retrieval_terms(query: str) -> tuple[str, ...]:
-    terms: list[str] = []
-    for term in _RETRIEVAL_TERM.findall(query.casefold()):
-        if term in _RETRIEVAL_STOP_WORDS:
-            continue
-        if term not in terms:
-            terms.append(term)
-        if len(terms) == 16:
-            break
-    return tuple(terms)
+    return normalized_terms(query, stop_words=_RETRIEVAL_STOP_WORDS)
 
 
 class MemoryRepositoryError(RuntimeError):
@@ -176,6 +192,7 @@ class RetrievalExclusion(StrEnum):
     NOT_CURRENT = "not_current"
     MENTION_RESTRICTED = "mention_restricted"
     SENSITIVITY_RESTRICTED = "sensitivity_restricted"
+    DUPLICATE_CONTENT = "duplicate_content"
     RESULT_LIMIT = "result_limit"
     TOKEN_LIMIT = "token_limit"
 
@@ -191,6 +208,7 @@ class RetrievalRequest:
     mode: RetrievalMode = RetrievalMode.ORDINARY
     max_records: int = MAX_RETRIEVAL_RECORDS
     token_limit: int = MAX_RETRIEVAL_TOKENS
+    include_tentative_observations: bool = False
 
     def __post_init__(self) -> None:
         if not isinstance(self.query, str):
@@ -242,6 +260,10 @@ class RetrievalRequest:
             or not 1 <= self.token_limit <= MAX_RETRIEVAL_TOKENS
         ):
             raise MemoryValidationError("Retrieval token limit is invalid.")
+        if not isinstance(self.include_tentative_observations, bool):
+            raise MemoryValidationError(
+                "Tentative-observation retrieval setting is invalid."
+            )
         object.__setattr__(self, "query", query)
 
 
@@ -308,6 +330,22 @@ class MemoryRecord:
     updated_at: datetime
     row_version: int
     revision: RecordRevision
+
+
+@dataclass(frozen=True)
+class MemoryRecordPage:
+    records: tuple[MemoryRecord, ...]
+    next_updated_at: datetime | None
+    next_record_id: UUID | None
+
+    def __post_init__(self) -> None:
+        if (self.next_updated_at is None) != (self.next_record_id is None):
+            raise MemoryValidationError("Memory page cursor is incomplete.")
+        if self.next_updated_at is not None and (
+            self.next_updated_at.tzinfo is None
+            or self.next_updated_at.utcoffset() is None
+        ):
+            raise MemoryValidationError("Memory page cursor time is invalid.")
 
 
 @dataclass(frozen=True)
@@ -533,8 +571,28 @@ class MemoryRepository:
     ) -> tuple[MemoryRecord, ...]:
         """Return a bounded trusted-interface inventory in newest-first order."""
 
+        return self.list_record_page(correlation_id, limit=limit).records
+
+    def list_record_page(
+        self,
+        correlation_id: UUID,
+        *,
+        limit: int = 100,
+        before_updated_at: datetime | None = None,
+        before_record_id: UUID | None = None,
+    ) -> MemoryRecordPage:
+        """Return a bounded stable newest-first page and an opaque cursor pair."""
+
         if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
             raise MemoryValidationError("Memory inventory limit is invalid.")
+        if (before_updated_at is None) != (before_record_id is None):
+            raise MemoryValidationError("Memory inventory cursor is incomplete.")
+        if before_record_id is not None and not isinstance(before_record_id, UUID):
+            raise MemoryValidationError("Memory inventory cursor ID is invalid.")
+        if before_updated_at is not None and (
+            before_updated_at.tzinfo is None or before_updated_at.utcoffset() is None
+        ):
+            raise MemoryValidationError("Memory inventory cursor time is invalid.")
         with self._audited(
             correlation_id,
             AuditOperation.REPOSITORY_READ,
@@ -542,14 +600,127 @@ class MemoryRepository:
             item_count=limit,
         ):
             with self._connection_provider.connect(correlation_id) as connection:
-                rows = connection.execute(
-                    "SELECT record_id FROM records "
-                    "ORDER BY updated_at DESC, record_id LIMIT ?",
-                    (limit,),
-                ).fetchall()
-                return tuple(
-                    self._load_record(connection, UUID(row[0])) for row in rows
+                if before_updated_at is None:
+                    rows = connection.execute(
+                        "SELECT record_id, updated_at FROM records "
+                        "ORDER BY updated_at DESC, record_id DESC LIMIT ?",
+                        (limit + 1,),
+                    ).fetchall()
+                else:
+                    rows = connection.execute(
+                        "SELECT record_id, updated_at FROM records "
+                        "WHERE updated_at < ? OR "
+                        "(updated_at = ? AND record_id < ?) "
+                        "ORDER BY updated_at DESC, record_id DESC LIMIT ?",
+                        (
+                            before_updated_at.isoformat(),
+                            before_updated_at.isoformat(),
+                            str(before_record_id),
+                            limit + 1,
+                        ),
+                    ).fetchall()
+                selected = rows[:limit]
+                records = tuple(
+                    self._load_record(connection, UUID(row[0])) for row in selected
                 )
+                if len(rows) <= limit or not selected:
+                    return MemoryRecordPage(records, None, None)
+                return MemoryRecordPage(
+                    records,
+                    self._parse_datetime(selected[-1][1]),
+                    UUID(selected[-1][0]),
+                )
+
+    def resolve_named_scope(
+        self,
+        scope_type: ScopeType,
+        display_label: str,
+        correlation_id: UUID,
+    ) -> Scope:
+        """Return one persistent opaque scope for an explicit owner label."""
+
+        if scope_type not in {ScopeType.TOPIC, ScopeType.PROJECT, ScopeType.PLACE}:
+            raise MemoryValidationError("Named memory scope type is invalid.")
+        label = validate_scope_label(display_label)
+        normalized = normalize_scope_label(label)
+        with self._audited(
+            correlation_id,
+            AuditOperation.REPOSITORY_WRITE,
+            "named_scope_resolve",
+        ):
+            with self._connection_provider.connect(correlation_id) as connection:
+                with self._transaction(connection):
+                    row = connection.execute(
+                        "SELECT scope_id FROM named_memory_scopes "
+                        "WHERE scope_type = ? AND normalized_label = ?",
+                        (scope_type.value, normalized),
+                    ).fetchone()
+                    if row is not None:
+                        return Scope(scope_type, UUID(row[0]))
+                    count = connection.execute(
+                        "SELECT count(*) FROM named_memory_scopes"
+                    ).fetchone()[0]
+                    if (
+                        isinstance(count, bool)
+                        or not isinstance(count, int)
+                        or count < 0
+                        or count >= MAX_NAMED_SCOPES
+                    ):
+                        raise MemoryValidationError(
+                            "The named memory scope limit was reached."
+                        )
+                    scope_id = self._new_id()
+                    connection.execute(
+                        "INSERT INTO named_memory_scopes "
+                        "(scope_id, scope_type, normalized_label, display_label, "
+                        "created_at) VALUES (?, ?, ?, ?, ?)",
+                        (
+                            str(scope_id),
+                            scope_type.value,
+                            normalized,
+                            label,
+                            self._now().isoformat(),
+                        ),
+                    )
+                    return Scope(scope_type, scope_id)
+
+    def match_named_scopes(
+        self,
+        query: str,
+        correlation_id: UUID,
+        *,
+        limit: int = MAX_MATCHED_SCOPES,
+    ) -> tuple[Scope, ...]:
+        """Match stored labels as complete phrases in one bounded query."""
+
+        if (
+            isinstance(limit, bool)
+            or not isinstance(limit, int)
+            or not 1 <= limit <= MAX_MATCHED_SCOPES
+        ):
+            raise MemoryValidationError("Named scope match limit is invalid.")
+        normalized = normalize_scope_query(query)
+        if not normalized:
+            return ()
+        with self._audited(
+            correlation_id,
+            AuditOperation.REPOSITORY_READ,
+            "named_scope_match",
+            item_count=limit,
+        ):
+            with self._connection_provider.connect(correlation_id) as connection:
+                rows = connection.execute(
+                    "SELECT scope_id, scope_type FROM named_memory_scopes "
+                    "WHERE (scope_type = 'place' AND ("
+                    "instr(' ' || ? || ' ', ' at ' || normalized_label || ' ') > 0 "
+                    "OR instr(' ' || ? || ' ', ' in ' || normalized_label || ' ') > 0 "
+                    "OR instr(' ' || ? || ' ', ' for ' || normalized_label || ' ') > 0"
+                    ")) OR (scope_type IN ('topic', 'project') AND "
+                    "instr(' ' || ? || ' ', ' ' || normalized_label || ' ') > 0) "
+                    "ORDER BY length(normalized_label) DESC, scope_id LIMIT ?",
+                    (normalized, normalized, normalized, normalized, limit),
+                ).fetchall()
+        return tuple(Scope(ScopeType(row[1]), UUID(row[0])) for row in rows)
 
     def find_capture_neighbors(
         self,
@@ -612,6 +783,8 @@ class MemoryRepository:
                 exclusions = {reason: 0 for reason in RetrievalExclusion}
                 ranked: list[tuple[int, float, str, MemoryRecord, tuple[str, ...]]] = []
                 query_terms = self._retrieval_terms(request.query)
+                if request.mode is RetrievalMode.DIRECT:
+                    query_terms = connected_topic_terms(query_terms)
                 for record_id, text_match, entity_match in candidates:
                     record = self._load_record(connection, record_id)
                     exclusion = self._retrieval_exclusion(record, request, now)
@@ -637,8 +810,21 @@ class MemoryRepository:
 
                 ranked.sort(key=lambda item: (-item[0], -item[1], item[2]))
                 selected: list[RetrievedMemory] = []
+                selected_content: set[tuple[str, ...]] = set()
                 tokens_returned = 0
                 for _, _, _, record, reasons in ranked:
+                    content_key = memory_payload_equivalence_key(
+                        record.revision.payload
+                    ) + (
+                        record.scope.type.value,
+                        "" if record.scope.id is None else str(record.scope.id),
+                        ""
+                        if record.primary_entity_id is None
+                        else str(record.primary_entity_id),
+                    )
+                    if content_key in selected_content:
+                        exclusions[RetrievalExclusion.DUPLICATE_CONTENT] += 1
+                        continue
                     if len(selected) >= request.max_records:
                         exclusions[RetrievalExclusion.RESULT_LIMIT] += 1
                         continue
@@ -647,15 +833,21 @@ class MemoryRepository:
                         exclusions[RetrievalExclusion.TOKEN_LIMIT] += 1
                         continue
                     selected.append(RetrievedMemory(record, token_count, reasons))
+                    selected_content.add(content_key)
                     tokens_returned += token_count
 
         rules = (
-            "confirmed_only",
+            (
+                "confirmed_and_labeled_tentative_observations"
+                if request.include_tentative_observations
+                else "confirmed_only"
+            ),
             "applicable_scope_only",
             "currently_valid_only",
             "restricted_requires_separate_authorization",
             "mention_policy_enforced",
             "deterministic_specificity_relevance_recency_rank",
+            "equivalent_content_deduplicated",
             "record_limit_enforced",
             "token_limit_enforced",
         )
@@ -849,6 +1041,238 @@ class MemoryRepository:
             action_kind="record_reject",
             correlation_id=correlation_id,
         )
+
+    def reconcile_candidate_as_correction(
+        self,
+        candidate_id: UUID,
+        candidate_version: int,
+        target_id: UUID,
+        target_version: int,
+        provenance: Provenance,
+        correlation_id: UUID,
+    ) -> tuple[MemoryRecord, MemoryRecord, RecordLink]:
+        """Atomically apply candidate content as a correction to one record."""
+
+        self._validate_reconciliation_request(
+            candidate_id,
+            candidate_version,
+            target_id,
+            target_version,
+            provenance,
+        )
+        with self._audited(
+            correlation_id,
+            AuditOperation.REPOSITORY_WRITE,
+            "candidate_reconcile_correction",
+            record_id=candidate_id,
+            item_count=2,
+        ):
+            with self._connection_provider.connect(correlation_id) as connection:
+                with self._transaction(connection):
+                    candidate, target = self._load_reconciliation_pair(
+                        connection,
+                        candidate_id,
+                        candidate_version,
+                        target_id,
+                        target_version,
+                    )
+                    now = self._now()
+                    corrected = self._append_revision(
+                        connection,
+                        target,
+                        payload=candidate.revision.payload,
+                        status=RecordStatus.CONFIRMED,
+                        sensitivity=target.sensitivity,
+                        mention_policy=target.mention_policy,
+                        scope=target.scope,
+                        primary_entity_id=target.primary_entity_id,
+                        valid_from=target.valid_from,
+                        valid_until=target.valid_until,
+                        candidate_expires_at=None,
+                        provenance=provenance,
+                        reason=ChangeReason.CORRECTED,
+                        now=now,
+                    )
+                    consumed = self._append_revision(
+                        connection,
+                        candidate,
+                        payload=candidate.revision.payload,
+                        status=RecordStatus.SUPERSEDED,
+                        sensitivity=candidate.sensitivity,
+                        mention_policy=candidate.mention_policy,
+                        scope=candidate.scope,
+                        primary_entity_id=candidate.primary_entity_id,
+                        valid_from=candidate.valid_from,
+                        valid_until=candidate.valid_until,
+                        candidate_expires_at=None,
+                        provenance=provenance,
+                        reason=ChangeReason.SUPERSEDED,
+                        now=now,
+                    )
+                    link = self._insert_record_link(
+                        connection,
+                        self._new_id(),
+                        RecordLinkDraft(
+                            candidate_id,
+                            target_id,
+                            RecordRelationship.EVIDENCE,
+                            self._link_source_for_provenance(provenance),
+                            provenance.source_ref,
+                        ),
+                        now,
+                    )
+                    self._insert_feedback(connection, corrected, FeedbackType.EDIT, now)
+                    self._insert_feedback(connection, consumed, FeedbackType.CONFIRM, now)
+            return consumed, corrected, link
+
+    def reconcile_candidate_as_successor(
+        self,
+        candidate_id: UUID,
+        candidate_version: int,
+        target_id: UUID,
+        target_version: int,
+        effective_at: datetime,
+        provenance: Provenance,
+        correlation_id: UUID,
+    ) -> tuple[MemoryRecord, MemoryRecord, RecordLink]:
+        """Atomically end one current record and confirm its dated successor."""
+
+        self._validate_reconciliation_request(
+            candidate_id,
+            candidate_version,
+            target_id,
+            target_version,
+            provenance,
+        )
+        if (
+            not isinstance(effective_at, datetime)
+            or effective_at.tzinfo is None
+            or effective_at.utcoffset() is None
+        ):
+            raise MemoryValidationError("Reconciliation date must include a timezone.")
+        with self._audited(
+            correlation_id,
+            AuditOperation.REPOSITORY_WRITE,
+            "candidate_reconcile_successor",
+            record_id=candidate_id,
+            item_count=2,
+        ):
+            with self._connection_provider.connect(correlation_id) as connection:
+                with self._transaction(connection):
+                    candidate, target = self._load_reconciliation_pair(
+                        connection,
+                        candidate_id,
+                        candidate_version,
+                        target_id,
+                        target_version,
+                    )
+                    if target.valid_from is not None and effective_at < target.valid_from:
+                        raise LifecycleTransitionError(
+                            "The change date predates the current memory."
+                        )
+                    if target.valid_until is not None and effective_at > target.valid_until:
+                        raise LifecycleTransitionError(
+                            "The change date follows the current memory's end."
+                        )
+                    if (
+                        candidate.valid_until is not None
+                        and effective_at > candidate.valid_until
+                    ):
+                        raise LifecycleTransitionError(
+                            "The change date follows the candidate's end."
+                        )
+                    now = self._now()
+                    ended = self._append_revision(
+                        connection,
+                        target,
+                        payload=target.revision.payload,
+                        status=RecordStatus.CONFIRMED,
+                        sensitivity=target.sensitivity,
+                        mention_policy=target.mention_policy,
+                        scope=target.scope,
+                        primary_entity_id=target.primary_entity_id,
+                        valid_from=target.valid_from,
+                        valid_until=effective_at,
+                        candidate_expires_at=None,
+                        provenance=provenance,
+                        reason=ChangeReason.CORRECTED,
+                        now=now,
+                    )
+                    successor = self._append_revision(
+                        connection,
+                        candidate,
+                        payload=candidate.revision.payload,
+                        status=RecordStatus.CONFIRMED,
+                        sensitivity=candidate.sensitivity,
+                        mention_policy=candidate.mention_policy,
+                        scope=candidate.scope,
+                        primary_entity_id=candidate.primary_entity_id,
+                        valid_from=effective_at,
+                        valid_until=candidate.valid_until,
+                        candidate_expires_at=None,
+                        provenance=provenance,
+                        reason=ChangeReason.CONFIRMED,
+                        now=now,
+                    )
+                    link = self._insert_record_link(
+                        connection,
+                        self._new_id(),
+                        RecordLinkDraft(
+                            target_id,
+                            candidate_id,
+                            RecordRelationship.SUPERSESSION,
+                            self._link_source_for_provenance(provenance),
+                            provenance.source_ref,
+                        ),
+                        now,
+                    )
+                    self._insert_feedback(connection, ended, FeedbackType.EDIT, now)
+                    self._insert_feedback(connection, successor, FeedbackType.CONFIRM, now)
+            return ended, successor, link
+
+    def _validate_reconciliation_request(
+        self,
+        candidate_id: UUID,
+        candidate_version: int,
+        target_id: UUID,
+        target_version: int,
+        provenance: Provenance,
+    ) -> None:
+        self._require_uuid(candidate_id, "Candidate ID")
+        self._require_uuid(target_id, "Target ID")
+        if candidate_id == target_id:
+            raise MemoryValidationError("A candidate cannot reconcile with itself.")
+        self._validate_expected_version(candidate_version)
+        self._validate_expected_version(target_version)
+        self._require_trusted_change_provenance(provenance)
+
+    def _load_reconciliation_pair(
+        self,
+        connection: Any,
+        candidate_id: UUID,
+        candidate_version: int,
+        target_id: UUID,
+        target_version: int,
+    ) -> tuple[MemoryRecord, MemoryRecord]:
+        candidate = self._load_record(connection, candidate_id)
+        target = self._load_record(connection, target_id)
+        self._require_version(candidate.row_version, candidate_version)
+        self._require_version(target.row_version, target_version)
+        if candidate.status is not RecordStatus.CANDIDATE:
+            raise LifecycleTransitionError("Only a candidate can be reconciled.")
+        if target.status is not RecordStatus.CONFIRMED:
+            raise LifecycleTransitionError(
+                "A reconciliation target must be confirmed."
+            )
+        if (
+            candidate.kind is not target.kind
+            or candidate.scope != target.scope
+            or candidate.primary_entity_id != target.primary_entity_id
+        ):
+            raise LifecycleTransitionError(
+                "Candidate and target must share kind, scope, and entity."
+            )
+        return candidate, target
 
     def archive_record(
         self,
@@ -1665,9 +2089,13 @@ class MemoryRepository:
         ]
         if request.mode is RetrievalMode.DIRECT:
             mention_policies.append(MentionPolicy.ONLY_WHEN_DIRECTLY_ASKED.value)
+        statuses = [RecordStatus.CONFIRMED.value]
+        if request.include_tentative_observations:
+            statuses.append(RecordStatus.CANDIDATE.value)
         scope_keys = [f"{scope.type.value}:{scope.id}" for scope in request.scopes]
         kind_values = [kind.value for kind in request.kinds]
         common_parameters = (
+            canonical_json(statuses),
             Sensitivity.RESTRICTED.value,
             canonical_json(mention_policies),
             now.isoformat(),
@@ -1681,7 +2109,8 @@ class MemoryRepository:
             rows = connection.execute(
                 "SELECT r.record_id FROM records r "
                 "WHERE r.primary_entity_id IN (SELECT value FROM json_each(?)) "
-                "AND r.status = 'confirmed' AND r.sensitivity <> ? "
+                "AND r.status IN (SELECT value FROM json_each(?)) "
+                "AND r.sensitivity <> ? "
                 "AND r.mention_policy IN (SELECT value FROM json_each(?)) "
                 "AND (r.valid_from IS NULL OR r.valid_from <= ?) "
                 "AND (r.valid_until IS NULL OR r.valid_until >= ?) "
@@ -1708,25 +2137,40 @@ class MemoryRepository:
 
         terms = self._retrieval_terms(request.query)
         if terms and len(found) < MAX_RETRIEVAL_CANDIDATES:
-            expression = " AND ".join(f'"{term}"*' for term in terms)
-            rows = connection.execute(
-                "SELECT record_id FROM record_search "
-                "WHERE record_search MATCH ? "
-                "AND status = 'confirmed' AND sensitivity <> ? "
-                "AND mention_policy IN (SELECT value FROM json_each(?)) "
-                "AND (valid_from IS NULL OR valid_from <= ?) "
-                "AND (valid_until IS NULL OR valid_until >= ?) "
-                "AND (scope_type = 'global' OR (scope_type || ':' || scope_id) "
-                "IN (SELECT value FROM json_each(?))) "
-                "AND (json_array_length(?) = 0 OR kind IN "
-                "(SELECT value FROM json_each(?))) "
-                "ORDER BY bm25(record_search), updated_at DESC, record_id LIMIT ?",
-                (
-                    expression,
+            strict_expression = " AND ".join(f'"{term}"*' for term in terms)
+            expressions = [strict_expression]
+            fallback_terms = (
+                connected_topic_terms(terms)
+                if request.mode is RetrievalMode.DIRECT
+                else terms
+            )
+            if len(fallback_terms) > 1:
+                expressions.append(
+                    " OR ".join(f'"{term}"*' for term in fallback_terms)
                 )
-                + common_parameters
-                + (MAX_RETRIEVAL_CANDIDATES,),
-            ).fetchall()
+            rows = ()
+            for expression in expressions:
+                rows = connection.execute(
+                    "SELECT record_id FROM record_search "
+                    "WHERE record_search MATCH ? "
+                    "AND status IN (SELECT value FROM json_each(?)) "
+                    "AND sensitivity <> ? "
+                    "AND mention_policy IN (SELECT value FROM json_each(?)) "
+                    "AND (valid_from IS NULL OR valid_from <= ?) "
+                    "AND (valid_until IS NULL OR valid_until >= ?) "
+                    "AND (scope_type = 'global' OR "
+                    "(scope_type || ':' || scope_id) "
+                    "IN (SELECT value FROM json_each(?))) "
+                    "AND (json_array_length(?) = 0 OR kind IN "
+                    "(SELECT value FROM json_each(?))) "
+                    "ORDER BY bm25(record_search), updated_at DESC, "
+                    "record_id LIMIT ?",
+                    (expression,)
+                    + common_parameters
+                    + (MAX_RETRIEVAL_CANDIDATES,),
+                ).fetchall()
+                if rows:
+                    break
             for row in rows:
                 try:
                     record_id = UUID(row[0])
@@ -1749,7 +2193,11 @@ class MemoryRepository:
 
     @staticmethod
     def _capture_terms(payload: MemoryPayload) -> tuple[str, ...]:
-        if isinstance(
+        if isinstance(payload, FactPayload) and payload.subject.startswith(
+            "direct-statement:"
+        ):
+            text = payload.statement
+        elif isinstance(
             payload,
             (FactPayload, PreferencePayload, PolicyPreferencePayload),
         ):
@@ -1776,7 +2224,30 @@ class MemoryRepository:
         request: RetrievalRequest,
         now: datetime,
     ) -> RetrievalExclusion | None:
-        if record.status is not RecordStatus.CONFIRMED:
+        payload = record.revision.payload
+        if (
+            isinstance(payload, FactPayload)
+            and payload.subject.startswith("direct-statement:")
+            and not is_standalone_direct_memory_statement(payload.statement)
+        ):
+            return RetrievalExclusion.UNCONFIRMED
+        if record.status is RecordStatus.CANDIDATE:
+            if (
+                not request.include_tentative_observations
+                or not isinstance(record.revision.payload, InsightPayload)
+            ):
+                return RetrievalExclusion.UNCONFIRMED
+            if (
+                record.candidate_expires_at is None
+                or record.candidate_expires_at <= now
+            ):
+                return RetrievalExclusion.NOT_CURRENT
+            if record.sensitivity not in {
+                Sensitivity.NORMAL,
+                Sensitivity.PERSONAL,
+            }:
+                return RetrievalExclusion.SENSITIVITY_RESTRICTED
+        elif record.status is not RecordStatus.CONFIRMED:
             return RetrievalExclusion.UNCONFIRMED
         if record.valid_from is not None and record.valid_from > now:
             return RetrievalExclusion.NOT_CURRENT
@@ -1792,7 +2263,8 @@ class MemoryRepository:
             return RetrievalExclusion.MENTION_RESTRICTED
         if (
             record.mention_policy is MentionPolicy.ASK_BEFORE_MENTIONING
-            and request.mode is not RetrievalMode.APPROVED
+            and request.mode
+            not in {RetrievalMode.DIRECT, RetrievalMode.APPROVED}
         ):
             return RetrievalExclusion.MENTION_RESTRICTED
         if (
@@ -1813,6 +2285,14 @@ class MemoryRepository:
     ) -> tuple[int, tuple[str, ...]]:
         score = 0
         reasons: list[str] = []
+        if record.status is RecordStatus.CONFIRMED:
+            # When tentative observations are requested, canonical records must
+            # consume the bounded result and token budgets first. Observations
+            # can qualify or challenge them in context, never crowd them out.
+            score += 1_000 if request.include_tentative_observations else 15
+            reasons.append("confirmed_status")
+        else:
+            reasons.append("tentative_observation")
         if entity_match and record.primary_entity_id in request.entity_ids:
             score += 100
             reasons.append("resolved_entity_match")

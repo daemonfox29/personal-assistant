@@ -334,7 +334,7 @@ class ChatSessionTests(unittest.TestCase):
         write_output = Mock()
 
         ChatSession(
-            Mock(),
+            self._non_streaming_model(),
             read_input=read_input,
             write_output=write_output,
         ).run()
@@ -345,7 +345,7 @@ class ChatSessionTests(unittest.TestCase):
         write_output = Mock()
 
         ChatSession(
-            Mock(),
+            self._non_streaming_model(),
             read_input=Mock(side_effect=KeyboardInterrupt),
             write_output=write_output,
         ).run()

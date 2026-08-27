@@ -7,6 +7,13 @@ from pathlib import Path
 
 from personal_assistant.local_http import validate_loopback_http_url
 from personal_assistant.model import validate_response_token_limit
+from personal_assistant.runtime_preferences import (
+    MAX_CONTEXT_TOKENS,
+    MIN_CONTEXT_TOKENS,
+    PREFERENCES_FILENAME,
+    RuntimePreferences,
+    RuntimePreferencesStore,
+)
 
 
 @dataclass(frozen=True)
@@ -27,6 +34,14 @@ class OllamaSettings:
             validate_loopback_http_url(self.base_url, base_url=True),
         )
         validate_response_token_limit(self.max_response_tokens)
+        if (
+            isinstance(self.context_tokens, bool)
+            or not isinstance(self.context_tokens, int)
+            or not MIN_CONTEXT_TOKENS
+            <= self.context_tokens
+            <= MAX_CONTEXT_TOKENS
+        ):
+            raise ValueError("The context window is outside its supported range.")
 
 
 @dataclass(frozen=True)
@@ -100,12 +115,19 @@ class AppSettings:
 
 def load_settings(
     environment: Mapping[str, str] | None = None,
+    *,
+    preferences: RuntimePreferences | None = None,
 ) -> AppSettings:
     """Load safe optional environment overrides for this local machine."""
 
     if environment is None:
         environment = os.environ
     defaults = AppSettings()
+    preferences = preferences or RuntimePreferences(
+        context_tokens=defaults.ollama.context_tokens,
+        default_response_tokens=defaults.ollama.max_response_tokens,
+        maximum_response_tokens=defaults.chat.maximum_response_tokens,
+    )
 
     chat_settings = ChatSettings(
         session_history_tokens=_positive_integer(
@@ -116,12 +138,15 @@ def load_settings(
         long_response_tokens=_positive_integer(
             environment,
             "PERSONAL_ASSISTANT_LONG_RESPONSE_TOKENS",
-            defaults.chat.long_response_tokens,
+            min(
+                defaults.chat.long_response_tokens,
+                preferences.maximum_response_tokens,
+            ),
         ),
         maximum_response_tokens=_positive_integer(
             environment,
             "PERSONAL_ASSISTANT_MAX_RESPONSE_TOKENS",
-            defaults.chat.maximum_response_tokens,
+            preferences.maximum_response_tokens,
         ),
     )
     return AppSettings(
@@ -137,12 +162,12 @@ def load_settings(
             context_tokens=_positive_integer(
                 environment,
                 "PERSONAL_ASSISTANT_CONTEXT_TOKENS",
-                defaults.ollama.context_tokens,
+                preferences.context_tokens,
             ),
             max_response_tokens=_positive_integer(
                 environment,
                 "PERSONAL_ASSISTANT_RESPONSE_TOKENS",
-                defaults.ollama.max_response_tokens,
+                preferences.default_response_tokens,
             ),
             keep_alive=environment.get(
                 "PERSONAL_ASSISTANT_KEEP_ALIVE",
@@ -165,6 +190,11 @@ def load_settings(
             backup_directory=_optional_absolute_path(
                 environment,
                 "PERSONAL_ASSISTANT_BACKUP_DIR",
+                (
+                    None
+                    if preferences.backup_directory == ""
+                    else Path(preferences.backup_directory)
+                ),
             ),
             context_tokens=_positive_integer(
                 environment,
@@ -178,6 +208,20 @@ def load_settings(
             ),
         ),
     )
+
+
+def load_desktop_settings(
+    environment: Mapping[str, str] | None = None,
+) -> AppSettings:
+    """Load native preferences first, with explicit environment overrides last."""
+
+    active_environment = os.environ if environment is None else environment
+    baseline = load_settings(active_environment)
+    store = RuntimePreferencesStore(
+        baseline.memory.data_directory / PREFERENCES_FILENAME
+    )
+    preferences = store.load()
+    return load_settings(active_environment, preferences=preferences)
 
 
 def _positive_integer(
@@ -231,9 +275,12 @@ def _absolute_path(
 def _optional_absolute_path(
     environment: Mapping[str, str],
     name: str,
+    default: Path | None = None,
 ) -> Path | None:
     value = environment.get(name)
-    if value is None or not value.strip():
+    if value is None:
+        return default
+    if not value.strip():
         return None
     path = Path(value)
     if not path.is_absolute():

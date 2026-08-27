@@ -50,6 +50,8 @@ must be replaceable behind narrow interfaces.
 - typed records, append-only revisions, provenance, and optimistic concurrency;
 - stable entities, aliases, links, scopes, sensitivity, and mention policies;
 - explicit remember, inspect, correct, supersede, delete, and purge operations;
+- deterministic confirmation of exact low-risk quotes from the user's current
+  message without storing model-authored wording;
 - automatic creation of quarantined, unconfirmed memory suggestions;
 - bounded deterministic retrieval of confirmed records;
 - assembled entity profiles, such as a profile for Luna, without duplicating a
@@ -75,6 +77,12 @@ must be replaceable behind narrow interfaces.
 - any credential storage, retrieval, derivation, or password inference.
 
 Deferred capabilities are tracked in [Future Features](future-features.md).
+
+Module 1.5 later approved encrypted conversation history as a separate retention
+feature. That amendment does not make transcripts canonical memory: they remain
+separate conversation/message records, are never searched by ordinary memory
+retrieval, and are loaded into model context only when the owner explicitly
+opens that conversation. See [Module 1.5 Native UI Specification](module-1-5-ui-spec.md).
 
 ## Trust boundaries
 
@@ -145,7 +153,7 @@ sensitivity defaults, retrieval rules, audit events, and focused tests.
 
 Each record has one current status:
 
-- `candidate`: automatically suggested and quarantined from ordinary retrieval;
+- `candidate`: automatically suggested and quarantined from canonical retrieval;
 - `confirmed`: approved by an explicit user instruction or trusted interface;
 - `superseded`: preserved history replaced by a correction or later state;
 - `archived`: excluded from ordinary retrieval but still inspectable;
@@ -156,6 +164,10 @@ Each record has one current status:
 An explicit instruction such as "remember that Luna turned six in July" counts
 as confirmation. Inferred memories remain candidates. Candidates expire from
 the review inbox after 30 days unless confirmed, edited, or retained.
+One narrow exception allows an eligible low-risk candidate `insight` to be
+retrieved only in a separately labeled `tentative_observations` envelope. It
+never becomes a fact, instruction, or source of authority merely by being
+retrieved. Other candidate kinds remain excluded.
 
 ### Sensitivity
 
@@ -185,6 +197,9 @@ Every relevant subject may inherit or override one of these policies:
 
 Tightening a restriction takes effect immediately. Loosening a restriction
 requires clearer confirmation and, when high risk, the trusted passcode flow.
+An explicit question about the saved subject counts as consent to use an
+applicable `ask_before_mentioning` record for that answer. Mere incidental
+relevance still requires a clarification before content is exposed.
 
 ### Scope
 
@@ -226,6 +241,14 @@ The candidate insight records its evidence links, time range, plain-language
 confidence, contradictions considered, model/provider version, and last review
 time. It remains an inference rather than a fact or diagnosis. Uncertainty or
 material contradiction triggers clarification.
+
+A low-risk observation may describe a plausible interpretation of one completed
+turn before enough evidence exists to call it a longitudinal pattern. It is
+phrased to the chat model as potential truth that may be specific to a scenario,
+time, or scope. It may challenge a confirmed default, but cannot silently revise
+it. Trusted explicit confirmation must reconcile the proposal as one of: a
+global correction or replacement, a fact that changed over time, or a narrower
+contextual exception. The revision history preserves the earlier state.
 
 ## Conceptual schema
 
@@ -320,13 +343,20 @@ Migrations are packaged numeric, forward-only SQL files. The runner must:
    and ambiguous entities.
 4. Ambiguity is clarified rather than guessed.
 5. Explicit user remember instructions may create confirmed low-risk records.
-   Inferred information creates a quarantined candidate.
+   A code-owned pre-response phrase gate may also create confirmed memory when a
+   reviewed pattern selects a complete, exact, low-risk declarative sentence in
+   the user's current message. It does not require model output. The stored
+   payload is that exact sentence under deterministic trusted-interface
+   provenance, never a model subject or paraphrase. Questions, inferred,
+   mismatched, sensitive, or conflicting information create a quarantined
+   candidate or require clarification.
 6. The repository writes the record and first revision in one transaction using
    an expected version.
 7. A sanitized audit event records operation, outcome, IDs, reason codes, and
    duration, but not record content.
 
-Explicit remember requests are handled synchronously. Inferred-candidate
+Explicit remember requests and reviewed clear direct statements are handled
+synchronously. Inferred-candidate
 analysis runs only after the visible answer has completed, is bounded and
 cancellable, uses at most the completed turn plus the minimum required context,
 and cannot delay first-token streaming. It may create only a small configured
@@ -337,6 +367,20 @@ Future automatic confirmation is enabled separately per low-risk category only
 after sufficient accepted feedback. The policy and thresholds remain visible,
 reversible, and deterministic. Sensitive or restricted categories never gain
 automatic confirmation merely because the model is confident.
+
+The owner grants standing approval for relevant ordinary retrieval of confirmed
+personal records. This removes repeated conversational “may I check memory?”
+prompts without changing storage eligibility. Direct-only, never-mention,
+restricted, prohibited, and unconfirmed records retain their stricter policy
+boundaries.
+
+Eligible normal or personal insight candidates may be supplied as labeled,
+expiring tentative observations under standing owner approval. Confirmed records
+always consume bounded retrieval capacity first. Observation text remains inert
+data and may qualify or challenge a confirmed record in the response, but it
+cannot grant authority, authorize an action, diagnose the user, or alter
+canonical memory. Sensitive, restricted, direct-only, never-mention, expired,
+and non-insight candidates remain excluded.
 
 ## Contradictions and revisions
 
@@ -350,6 +394,12 @@ Corrections append a revision. Changes over time preserve validity dates.
 Scoped exceptions coexist according to scope precedence. Material uncertainty
 produces a clarification request. Optimistic concurrency rejects stale writes
 instead of losing another change.
+
+An observation that conflicts with a fact is not itself an overwrite request.
+The trusted reconciliation step must show what would change and record explicit
+confirmation before applying a revision, temporal successor, or scoped
+exception. Native reconciliation controls remain a Module 1.5 owner-control
+deliverable.
 
 ## Retrieval contract
 
@@ -375,8 +425,12 @@ The coordinator:
 
 1. applies status, scope, sensitivity, mention, and time filters;
 2. matches stable entities, aliases, kinds, and relationships;
-3. uses indexed full-text search for remaining text relevance;
-4. ranks by specificity, confirmation, relevance, recency, and provenance; and
+3. removes conversational scaffolding and uses indexed full-text search for
+   remaining text relevance, trying all meaningful terms before a bounded
+   partial-match fallback when the strict search returns nothing;
+4. ranks by confirmation, specificity, relevance, recency, and provenance,
+   preserving confirmed records ahead of tentative observations within bounded
+   capacity; and
 5. returns only the highest-value records that fit both limits below.
 
 These stages should compile into a small number of indexed database operations,
@@ -461,8 +515,11 @@ a production bypass.
 - Data must briefly exist decrypted in process memory while validated,
   retrieved, and used. Minimize amount and lifetime, release references, and
   never claim guaranteed physical erasure from RAM, swap, or crash facilities.
-- The optional OS credential-store adapter may support automatic unlock, while
-  a separate portable recovery passphrase preserves cross-platform recovery.
+- The native app may store a verified recovery secret through its narrow OS
+  credential-store adapter for automatic unlock, while a separate owner-held
+  copy preserves portable recovery. Unknown, null, or plaintext credential
+  backends fail closed to manual recovery; they never trigger plaintext storage
+  or creation of a replacement database.
 
 Loss of all key material means encrypted data is unrecoverable. Setup and key
 rotation must verify recovery material before accepting real records.
@@ -535,6 +592,8 @@ history.
 
 - Writes are parameterized and typed; model-created SQL is impossible.
 - Explicit remember creates a confirmed low-risk record and revision.
+- Exact low-risk current-message evidence may create a confirmed record without
+  storing model-authored content; mismatched or sensitive evidence cannot.
 - Inference creates a quarantined candidate excluded from ordinary retrieval.
 - Candidate expiry, confirmation, rejection, correction, supersession,
   archival, deletion, and purge follow the defined state transitions.

@@ -71,6 +71,18 @@ class SessionConversationMemory:
             removed_turn = self._turns.pop(0)
             self._stored_tokens -= removed_turn.token_count()
 
+    def replace_turns(self, turns: tuple[ConversationTurn, ...]) -> None:
+        """Replace RAM context with the newest complete persisted turns."""
+
+        if not isinstance(turns, tuple) or not all(
+            isinstance(turn, ConversationTurn) for turn in turns
+        ):
+            raise TypeError("Conversation turns must be an immutable tuple.")
+        self._turns.clear()
+        self._stored_tokens = 0
+        for turn in turns:
+            self.add_turn(turn.user_text, turn.assistant_text)
+
     def messages_for_request(
         self,
         *,

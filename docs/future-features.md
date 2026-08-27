@@ -66,6 +66,16 @@ pull-request workflow does not spend the limited Actions budget on an unused
 platform. Treat Windows support as unverified until this gate passes; package
 availability alone is not proof of runtime compatibility.
 
+## Signed macOS packaging
+
+Defer the self-contained, signed, and notarized macOS application package until
+the owner-facing UI and accessibility review are stable. The current native
+development launcher should continue opening the live checkout in the meantime.
+Before release, verify clean installation, protected Keychain enrollment, Touch
+ID and Mac-login-password fallback, recovery, database migration, graceful
+shutdown persistence, code signing, notarization, and an uninstall path that
+does not silently destroy the encrypted database or backups.
+
 ## Reassess the Python dependency workflow
 
 At a later maintenance milestone, reassess whether `uv` is still the right
@@ -80,10 +90,21 @@ with acceptable maintenance cost. Any migration must preserve dependency
 pinning, package-hash verification, clean-environment testing, and a documented
 rollback path.
 
-## Memory, privacy, and backup settings interface
+## Deferred memory administration settings
 
-Add a non-technical configuration interface for persistent memory after the
-Module 1 data boundary is implemented. It should let the user:
+Revisit and redesign the native Memory Review page after automatic suggestions
+have demonstrated enough practical value. The first dense candidate/reconciliation
+screen was intentionally removed from active Settings navigation because its
+complexity outweighed its current usefulness. Preserve the tested encrypted
+candidate, revision, correction, dated-successor, stale-write, and protected-
+approval engine underneath; later UI work should begin from actual review usage
+and prioritize a simpler, calmer decision flow rather than exposing every
+lifecycle choice at once.
+
+The current native UI now covers paginated memory inventory, exact source
+navigation, recoverable deletion, encrypted backup destination and creation,
+guided managed-snapshot restore, and a bounded content-minimized audit viewer.
+Future administration work may add:
 
 - search and inspect confirmed memories, tentative suggestions, linked entity
   profiles, sources, and revision history;
@@ -95,13 +116,13 @@ Module 1 data boundary is implemented. It should let the user:
   asked`, and `never mention`;
 - view effective settings after global, conversation, topic, and session
   overrides are applied;
-- configure a cross-platform encrypted database and portable recovery method,
-  with optional operating-system credential-store integration;
-- choose an external-drive backup destination, run or schedule one daily
-  backup, set retention and size limits, verify backup health, and perform a
-  guided restore; and
-- review sanitized audit events for memory changes, backup operations, and
-  restores without exposing personal record contents.
+- configure the cross-platform encrypted database, portable recovery method,
+  and operating-system credential-store automatic unlock, including removal or
+  re-enrollment of the machine-local credential;
+- configure daily-backup scheduling, retention and size limits, and deeper
+  backup-health verification; and
+- filter and summarize sanitized audit events without exposing personal record
+  contents.
 
 The first backup policy should favor one verified daily snapshot to an
 external drive. Backups must remain encrypted, excluded from Git, bounded by a
@@ -112,9 +133,13 @@ reapply the permanent-deletion ledger so purged records are not resurrected.
 
 Current Module 1 defaults to preserve or expose through that future UI:
 
-- continue requiring the portable recovery passphrase at startup; optionally
-  add automatic unlock through the current operating system's credential store
-  only after a separate cross-platform design and threat review;
+- use protected automatic unlock for the native app after one verified recovery
+  entry, with manual recovery fallback; keep Windows and Linux credential-store
+  behavior unverified until their explicit platform gates pass;
+- when the macOS `.app` is signed, migrate from the current Local
+  Authentication-before-Keychain sequence to a Keychain item whose own
+  `SecAccessControl` requires user presence, then verify Touch ID and Mac-login-
+  password fallback in the packaged application;
 - do not require a separate login for ordinary conversation; require a local
   passcode or passphrase entered through the trusted interface for each exact
   high-risk operation;

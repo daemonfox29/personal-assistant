@@ -4,6 +4,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
+from hashlib import sha256
 import re
 from threading import Lock
 from time import monotonic
@@ -19,6 +20,10 @@ from personal_assistant.audit import (
     AuditReasonCode,
     AuditSink,
 )
+from personal_assistant.memory_evidence import (
+    is_standalone_direct_memory_statement,
+    memory_payload_equivalence_key,
+)
 from personal_assistant.memory_repository import (
     MAX_CAPTURE_NEIGHBORS,
     MAX_CANDIDATES_PER_SOURCE,
@@ -26,12 +31,14 @@ from personal_assistant.memory_repository import (
     MemoryRecord,
     MemoryRepository,
 )
+from personal_assistant.memory_scopes import detect_explicit_named_scope
 from personal_assistant.memory_types import (
     ActorType,
     FactPayload,
     InsightPayload,
     MemoryPayload,
     MemoryValidationError,
+    MAX_SUMMARY_CHARS,
     MentionPolicy,
     NotePayload,
     PolicyPreferencePayload,
@@ -40,11 +47,13 @@ from personal_assistant.memory_types import (
     RecordDraft,
     RecordStatus,
     Scope,
+    ScopeType,
     Sensitivity,
     SourceType,
     canonical_json,
     payload_to_data,
 )
+from personal_assistant.retrieval_language import safe_topic_key
 
 
 DEFAULT_CANDIDATES_PER_SOURCE = 3
@@ -95,7 +104,7 @@ class ExplicitMemoryRequest:
 
 @dataclass(frozen=True)
 class AutomaticMemorySuggestion:
-    """One untrusted model proposal after structural parsing and validation."""
+    """One bounded proposal with no authority over capture policy."""
 
     payload: MemoryPayload
     proposed_sensitivity: Sensitivity
@@ -103,6 +112,7 @@ class AutomaticMemorySuggestion:
     scope: Scope
     source_ref: str
     model_version: str
+    user_evidence: str | None = None
     resolved_primary_entity_id: UUID | None = None
     valid_from: datetime | None = None
     valid_until: datetime | None = None
@@ -114,6 +124,11 @@ class AutomaticMemorySuggestion:
             ActorType.MODEL_CANDIDATE,
             self.model_version,
         )
+        if self.user_evidence is not None and (
+            not isinstance(self.user_evidence, str)
+            or not 1 <= len(self.user_evidence) <= MAX_SUMMARY_CHARS
+        ):
+            raise MemoryValidationError("Direct user evidence is invalid.")
         self.to_draft()
 
     def to_draft(self) -> RecordDraft:
@@ -196,6 +211,22 @@ class MemoryCaptureCoordinator:
         self._audit_sink = audit_sink
         self._candidates_per_source = candidates_per_source
         self._lock = Lock()
+
+    def scope_for_explicit_statement(
+        self,
+        statement: str,
+        correlation_id: UUID,
+    ) -> Scope:
+        """Resolve only an explicit code-recognized context; otherwise global."""
+
+        detected = detect_explicit_named_scope(statement)
+        if detected is None:
+            return Scope(ScopeType.GLOBAL)
+        return self._repository.resolve_named_scope(
+            detected.scope_type,
+            detected.display_label,
+            correlation_id,
+        )
 
     def remember_explicitly(
         self,
@@ -336,6 +367,7 @@ class MemoryCaptureCoordinator:
         correlation_id: UUID,
         *,
         is_cancelled: Callable[[], bool] = lambda: False,
+        direct_user_text: str | None = None,
     ) -> SuggestionBatchResult:
         """Process a small post-response batch that a session may cancel safely."""
 
@@ -352,14 +384,150 @@ class MemoryCaptureCoordinator:
             )
         if not callable(is_cancelled):
             raise MemoryValidationError("Suggestion cancellation check is invalid.")
+        if direct_user_text is not None and not isinstance(direct_user_text, str):
+            raise MemoryValidationError("Direct user text is invalid.")
         results: list[CaptureResult] = []
         for suggestion in suggestions:
             if is_cancelled():
                 return SuggestionBatchResult(tuple(results), True)
+            direct_result = self._capture_supported_direct_statement(
+                suggestion,
+                direct_user_text,
+                correlation_id,
+            )
             results.append(
-                self.suggest_automatically(suggestion, correlation_id)
+                direct_result
+                if direct_result is not None
+                else self.suggest_automatically(suggestion, correlation_id)
             )
         return SuggestionBatchResult(tuple(results), False)
+
+    def _capture_supported_direct_statement(
+        self,
+        suggestion: AutomaticMemorySuggestion,
+        user_text: str | None,
+        correlation_id: UUID,
+    ) -> CaptureResult | None:
+        """Confirm only exact low-risk text from the current user message."""
+
+        evidence = suggestion.user_evidence
+        if (
+            evidence is None
+            or user_text is None
+            or evidence not in user_text
+            or not is_standalone_direct_memory_statement(evidence)
+        ):
+            return None
+        digest = sha256(evidence.encode("utf-8")).hexdigest()[:24]
+        try:
+            payload = FactPayload(f"direct-statement:{digest}", evidence)
+            sensitivity = _automatic_sensitivity(
+                payload,
+                suggestion.proposed_sensitivity,
+            )
+            mention_policy = _automatic_mention_policy(
+                sensitivity,
+                suggestion.proposed_mention_policy,
+            )
+        except MemoryValidationError:
+            return None
+        if sensitivity not in {Sensitivity.NORMAL, Sensitivity.PERSONAL}:
+            return None
+
+        started = monotonic()
+        self._emit(
+            correlation_id,
+            "direct_user_statement",
+            AuditOutcome.STARTED,
+            AuditReasonCode.NORMAL,
+            started,
+        )
+        try:
+            result = self._remember_supported_direct_statement(
+                RecordDraft(
+                    payload,
+                    RecordStatus.CONFIRMED,
+                    sensitivity,
+                    mention_policy,
+                    suggestion.scope,
+                    valid_from=suggestion.valid_from,
+                    valid_until=suggestion.valid_until,
+                ),
+                suggestion.source_ref,
+                correlation_id,
+            )
+        except Exception:
+            self._emit(
+                correlation_id,
+                "direct_user_statement",
+                AuditOutcome.FAILED,
+                AuditReasonCode.SAFE_INTERNAL_FAILURE,
+                started,
+            )
+            raise
+        self._emit_result(
+            correlation_id,
+            "direct_user_statement",
+            result,
+            started,
+        )
+        return result
+
+    def _remember_supported_direct_statement(
+        self,
+        draft: RecordDraft,
+        source_ref: str,
+        correlation_id: UUID,
+    ) -> CaptureResult:
+        provenance = Provenance(
+            SourceType.TRUSTED_INTERFACE,
+            source_ref,
+            ActorType.SYSTEM,
+        )
+        with self._lock:
+            neighbors = self._repository.find_capture_neighbors(
+                draft,
+                correlation_id,
+            )
+            if len(neighbors) > MAX_CAPTURE_NEIGHBORS:
+                return self._clarification(neighbors)
+            exact, topical = _classify_neighbors(draft.payload, neighbors)
+            confirmed = tuple(
+                record for record in exact if record.status is RecordStatus.CONFIRMED
+            )
+            if confirmed:
+                return CaptureResult(
+                    CaptureDecision.DUPLICATE,
+                    related_record_ids=tuple(
+                        record.record_id for record in confirmed
+                    ),
+                )
+            candidates = tuple(
+                record for record in exact if record.status is RecordStatus.CANDIDATE
+            )
+            if len(candidates) == 1:
+                existing = candidates[0]
+                record = self._repository.confirm_candidate(
+                    existing.record_id,
+                    existing.row_version,
+                    provenance,
+                    correlation_id,
+                )
+                return CaptureResult(
+                    CaptureDecision.CONFIRMED_EXISTING_CANDIDATE,
+                    record,
+                    (existing.record_id,),
+                )
+            if len(candidates) > 1 or any(
+                record.status is RecordStatus.CONFIRMED for record in topical
+            ):
+                return self._clarification(candidates + topical)
+            record = self._repository.create_record(
+                draft,
+                provenance,
+                correlation_id,
+            )
+            return CaptureResult(CaptureDecision.CREATED_CONFIRMED, record)
 
     def _suggest_automatically(
         self,
@@ -526,7 +694,30 @@ _RESTRICTED_CONTENT = re.compile(
 _SENSITIVE_CONTENT = re.compile(
     r"\b(?:emotion\w*|anxi\w*|depress\w*|grief|relationship|conflict|"
     r"health|money|financial|location|address|workplace|date\s+of\s+birth|"
-    r"birth\s*date|phone(?:\s+number)?|email(?:\s+address)?)\b",
+    r"birth\s*date|birthday|phone(?:\s+number)?|email(?:\s+address)?)\b",
+    re.IGNORECASE,
+)
+_STREET_ADDRESS_CONTENT = re.compile(
+    r"\b(?:my\s+address\s+is|i\s+live\s+at)\b|"
+    r"\b\d{1,6}\s+[\w.'-]+(?:\s+[\w.'-]+){0,5}\s+"
+    r"(?:street|st|avenue|ave|road|rd|boulevard|blvd|lane|ln|drive|dr|"
+    r"court|ct|way|parkway|pkwy)\b",
+    re.IGNORECASE,
+)
+_PERSONAL_CONTENT = re.compile(
+    r"\b(?:i\s+live\s+(?:in|near|outside|around)|"
+    r"i\s+am\s+based\s+in|i['’]m\s+based\s+in|"
+    r"i(?:\s+am|['’]m)\s+(?:[\w'-]+\s+){0,4}"
+    r"(?:allergic|sensitive|intolerant)|"
+    r"i\s+(?:prefer|like|love|dislike|avoid|work|want|own)|"
+    r"i\s+(?:have|do\s+not\s+have|don['’]t\s+have)\s+"
+    r"(?:a\s+|an\s+)?(?:[\w'-]+\s+){0,5}"
+    r"(?:allerg\w*|sensitiv\w*|intoleran\w*|dog|cat|pet|child|sibling|"
+    r"partner|spouse)|"
+    r"my\s+(?:name|dog|cat|pet|vet|veterinarian|favorite|preference|"
+    r"allerg\w*|sensitiv\w*|"
+    r"intoleran\w*|age|home|city|state|country|job|career|profession|"
+    r"pronouns?|schedule|goal|values?|hobb(?:y|ies)|diet))\b",
     re.IGNORECASE,
 )
 _RESTRICTED_IDENTITY_CONTENT = re.compile(
@@ -543,9 +734,14 @@ def _automatic_sensitivity(
 ) -> Sensitivity:
     if not isinstance(proposed, Sensitivity) or proposed is Sensitivity.PROHIBITED:
         raise MemoryValidationError("Automatic sensitivity is invalid.")
+    direct_personal_fact = (
+        isinstance(payload, FactPayload)
+        and payload.subject.startswith("direct-statement:")
+    )
     type_floor = (
         Sensitivity.PERSONAL
         if isinstance(payload, (InsightPayload, NotePayload))
+        or direct_personal_fact
         else Sensitivity.NORMAL
     )
     deterministic = _deterministic_sensitivity(payload)
@@ -559,8 +755,10 @@ def _deterministic_sensitivity(payload: MemoryPayload) -> Sensitivity:
     text = canonical_json(payload_to_data(payload))
     if _RESTRICTED_CONTENT.search(text) or _RESTRICTED_IDENTITY_CONTENT.search(text):
         return Sensitivity.RESTRICTED
-    if _SENSITIVE_CONTENT.search(text):
+    if _SENSITIVE_CONTENT.search(text) or _STREET_ADDRESS_CONTENT.search(text):
         return Sensitivity.SENSITIVE
+    if _PERSONAL_CONTENT.search(text):
+        return Sensitivity.PERSONAL
     return Sensitivity.NORMAL
 
 
@@ -578,13 +776,13 @@ def _classify_neighbors(
     payload: MemoryPayload,
     neighbors: tuple[MemoryRecord, ...],
 ) -> tuple[tuple[MemoryRecord, ...], tuple[MemoryRecord, ...]]:
-    identity = canonical_json(payload_to_data(payload))
+    identity = memory_payload_equivalence_key(payload)
     topic = _payload_topic(payload)
     exact: list[MemoryRecord] = []
     topical: list[MemoryRecord] = []
     for record in neighbors:
         stored_payload = record.revision.payload
-        if canonical_json(payload_to_data(stored_payload)) == identity:
+        if memory_payload_equivalence_key(stored_payload) == identity:
             exact.append(record)
         elif topic is not None and _payload_topic(stored_payload) == topic:
             topical.append(record)
@@ -593,6 +791,10 @@ def _classify_neighbors(
 
 def _payload_topic(payload: MemoryPayload) -> str | None:
     value: str | None = None
+    if isinstance(payload, FactPayload) and payload.subject.startswith(
+        "direct-statement:"
+    ):
+        return safe_topic_key(payload.statement)
     if isinstance(payload, (FactPayload, PreferencePayload, PolicyPreferencePayload)):
         value = payload.subject
     elif isinstance(payload, NotePayload):

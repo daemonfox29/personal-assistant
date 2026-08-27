@@ -32,18 +32,83 @@ review questions in [Security Principles](security-principles.md).
 
 ## Information flow
 
-Current chat flow after trusted Module 1 setup and recovery unlock:
+Current native or recovery-CLI chat flow after trusted Module 1 setup and
+recovery or operating-system-assisted unlock:
 
-User request → bounded encrypted retrieval → untrusted-data system envelope →
-token-bounded structured messages → model adapter → local Ollama model →
-streamed response
+Native widgets or recovery CLI → narrow application/conversation service →
+bounded encrypted retrieval → untrusted-data system envelope → token-bounded
+structured messages → model adapter → local Ollama model → sanitized streamed
+display events
 
-The default command-line startup supplies the adapter only when a safe portable
-security manifest exists and the hidden recovery prompt unlocks it. A new or
-disabled installation follows the Module 0 session-only path. Explicit remember
-instructions are intercepted before model submission. After the visible answer,
-a bounded worker may ask the model for tentative suggestions, but those enter
-only the quarantined candidate inbox until trusted review confirms them.
+After encrypted unlock, the application service may also append structured
+conversation messages and return bounded sidebar summaries. Those transcript
+tables are not canonical memory and are not searched by ordinary memory
+retrieval. Selecting one conversation restores only its newest complete turns
+through the existing token-bounded RAM context.
+
+For new chat-derived memory, the provenance `source_ref` contains the opaque
+saved user-message ID, not its content. The trusted application service can
+resolve that ID to one live conversation and exact sequence for source
+navigation; widgets receive only an immutable conversation plus the sequence to
+highlight. Conversation deletion cascades the source message and intentionally
+leaves a dangling non-secret provenance reference, producing a fixed unavailable
+outcome. Older/imported memories without this reference are never matched back
+to transcripts by text. The Settings memory table similarly receives bounded
+immutable inventory rows and invokes narrow source/delete methods rather than
+repository handles.
+
+The native app can retrieve the previously verified recovery secret through a
+narrow operating-system credential-store adapter. The adapter is bound to the
+configured data location, accepts only reviewed protected backends, and falls
+back to trusted recovery entry when unavailable or stale. On macOS, the native
+adapter first requires device-owner authentication through Apple Local
+Authentication, allowing Touch ID or the Mac login password, and only then asks
+Keychain for the stored recovery passphrase. The same macOS policy may accept a
+paired Apple Watch when enabled. In the unsigned development build
+this is an application-enforced sequence; a signed packaged build must move the
+user-presence rule onto the Keychain item itself. The default command-line
+startup remains the explicit recovery path. Both supply the memory
+adapter only when a safe portable manifest and existing encrypted database
+unlock successfully. A new or disabled installation follows the Module 0
+session-only path. Explicit remember instructions are intercepted before model
+submission. A deterministic phrase gate selects reviewed clear durable-looking
+first-person statements before the main model request; an eligible exact
+low-risk sentence commits synchronously without a model-analysis dependency and
+produces a fixed, generic-topic UI receipt. Uncertain, contradictory, inferred,
+or higher-risk
+material cannot use that promotion path and produces an immediate fixed review
+or clarification receipt. Other completed turns use a bounded post-response
+worker for tentative suggestions. Deterministic code
+may promote only a complete low-risk declarative sentence found exactly in the
+user's current message and stores that sentence with trusted-interface
+provenance. A model-selected exact fragment or an unambiguous lexical paraphrase
+may locate the sentence but cannot author its persisted content. Ambiguous
+matches, inferences, sensitive material, and conflicts enter only the
+quarantined candidate inbox until trusted review confirms them. Replacing active
+chat history sets a one-request handoff barrier so the next persistent-memory
+request waits boundedly for preceding accepted analysis before retrieval. A
+referential first request may reuse only the immediately preceding accepted user
+statement as a search hint; it is not inserted as a new model role. Retrieval
+shares small deterministic singular/plural normalization across memory,
+transcript recall, and evidence binding. Direct owner recall may also expand a
+small reviewed topic table; ordinary prompts do not receive that wider fallback.
+Every returned confirmed entry includes a trusted repository `updated_at`
+timestamp. When retrieved values conflict, the later update is canonical and
+overrides stale details restored from an older conversation transcript. The
+model never invents search terms, timestamps, or UI save receipts.
+Eligible low-risk insight candidates form a separate observation layer. They
+remain expiring candidates but may be retrieved into a labeled
+`tentative_observations` JSON array after confirmed records have received bounded
+capacity. The system contract treats each as a plausible, potentially
+situational interpretation: it may qualify or challenge a confirmed default,
+but cannot replace it, grant authority, authorize action, or diagnose. Only a
+trusted explicit reconciliation may turn it into a global revision, a
+time-bounded successor, or a scoped exception; that owner-control workflow must
+retain the prior revision and is not delegated to the chat model.
+Confirmed personal records receive standing owner approval for relevant ordinary
+retrieval; direct-only, never-mention, restricted, and unconfirmed records do
+not. Natural explicit prior-discussion language triggers bounded transcript
+search immediately rather than asking whether to search.
 
 Future action flow:
 
@@ -51,10 +116,28 @@ User request → coordinator → model and/or tools → permission layer → app
 
 ## Initial scope
 
-The first version uses one local model and a command-line interface. Recent
-conversation is held only in RAM for the current session. System, user, and
-assistant messages remain separate data structures; history retains only
-complete recent turns within a conservative token budget.
+The first native interface uses PySide6 widgets over a narrow application
+service. Widgets do not receive database connections, keys, approval authorities,
+audit sinks, or model adapters. The terminal interface remains a recovery and
+developer fallback over the same conversation service. The native interface can
+archive structured messages in the encrypted database, while only complete
+recent turns from the active conversation enter RAM context. System, user, and
+assistant messages remain separate data structures and retain a conservative
+token budget.
+
+The settings widget similarly receives only bounded non-secret preference
+values. It asks the application factory to atomically persist a versioned JSON
+document and emit typed configuration events; it never receives the audit sink,
+model adapter, database, or credential store. Context and response-limit changes
+take effect when the next session is composed. Code-owned system/light/dark
+palettes and an installed font preference cannot contain arbitrary stylesheet
+content.
+
+Because the native widgets and application service share one Python process,
+this narrow API is a modularity and review boundary rather than a sandbox against
+malicious UI implementation code. The shipped UI remains trusted code while all
+user/model-controlled content is untrusted. A future third-party or lower-trust
+interface requires a separate authenticated process and least-authority IPC.
 
 Confirmed persistent records can be selected by the encrypted repository's
 deterministic policy and inserted into the system message as one bounded JSON
@@ -65,11 +148,17 @@ The labeling can reduce accidental instruction-following but is not assumed to
 make the model reliable; deterministic permission and executor boundaries
 remain responsible for preventing actions.
 
-Closing the process drops the application's session-history references. Module 1
-stores selected confirmed memories and revision history, not a transcript of
-every conversation. This is an application retention boundary, not guaranteed
-physical erasure from Python, native libraries, Ollama, the operating system,
-swap, backups, or crash diagnostics.
+Closing the process drops the active RAM-context references. Module 1.5 can also
+retain full structured transcripts in dedicated encrypted tables. These rows are
+separate from selected memory and are loaded when the owner opens that
+conversation. An explicit owner request to recall an earlier discussion can
+search an encrypted FTS transcript index and inject a small neighborhood from at
+most three other chats as a clearly labeled untrusted-data envelope. Ordinary
+prompts do not search transcripts, the active conversation is excluded, and
+Private Chat bypasses transcript storage, transcript recall, persistent
+retrieval, explicit memory capture, and suggestion analysis. Neither mode
+guarantees physical erasure from Python, native libraries, Ollama, the operating
+system, swap, backups, or crash diagnostics.
 
 Future versions may add bounded worker agents. Worker agents will receive limited tasks and permissions from the coordinator rather than unrestricted access.
 

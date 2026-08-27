@@ -1,0 +1,1 @@
+INSERT INTO conversation_search (message_id, conversation_id, sequence, role, content, created_at) SELECT message_id, conversation_id, sequence, role, content, created_at FROM conversation_messages WHERE role IN ('user', 'assistant')

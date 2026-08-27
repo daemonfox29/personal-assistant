@@ -131,7 +131,12 @@ def _setup(settings: MemorySettings) -> None:
             passcode_confirmation,
             uuid4(),
         )
-        runtime = MemoryRuntime.open(settings, recovery, audit_sink=sink)
+        runtime = MemoryRuntime.open(
+            settings,
+            recovery,
+            audit_sink=sink,
+            create_database=True,
+        )
         runtime.close()
         setup_completed = True
     finally:

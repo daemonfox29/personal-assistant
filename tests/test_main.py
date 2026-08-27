@@ -6,7 +6,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 import personal_assistant.__main__ as main_module
-from personal_assistant.config import MemorySettings
+from personal_assistant.config import AppSettings, MemorySettings
 from personal_assistant.model import ModelUnavailableError
 
 
@@ -18,7 +18,11 @@ class MainTests(unittest.TestCase):
     ) -> None:
         model_type.return_value.warm_up.side_effect = ModelUnavailableError()
 
-        main_module.main()
+        with patch(
+            "personal_assistant.__main__.load_settings",
+            return_value=AppSettings(memory=MemorySettings(enabled=False)),
+        ):
+            main_module.main()
 
         write_output.assert_called_with(
             "Ollama is unavailable. Check that it is installed and try again."

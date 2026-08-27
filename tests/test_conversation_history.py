@@ -1,0 +1,274 @@
+"""Checks for encrypted, bounded, durable conversation transcripts."""
+
+from datetime import datetime, timezone
+from pathlib import Path
+from tempfile import TemporaryDirectory
+import unittest
+from uuid import uuid4
+
+from personal_assistant.audit import AuditWriteError, InMemoryAuditSink
+from personal_assistant.conversation_history import (
+    ConversationHistoryError,
+    ConversationNotFoundError,
+    ConversationSourceAmbiguousError,
+    ConversationHistoryRepository,
+    ConversationResponseMessage,
+    ConversationRole,
+)
+from personal_assistant.encrypted_database import (
+    EncryptedDatabase,
+    EncryptedDatabaseSettings,
+)
+from personal_assistant.key_provider import DatabaseKey
+from personal_assistant.migration import MigrationRunner, PackageMigrationSource
+
+
+SYNTHETIC_KEY = bytes(range(32))
+NOW = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+
+
+class SyntheticKeyProvider:
+    def acquire(self, key_id: str) -> DatabaseKey:
+        return DatabaseKey(SYNTHETIC_KEY)
+
+
+class FailingAuditSink:
+    def write(self, event: object) -> None:
+        raise AuditWriteError("synthetic audit failure")
+
+
+class ConversationHistoryTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temporary = TemporaryDirectory()
+        self.path = Path(self.temporary.name) / "memory.db"
+        self.audit = InMemoryAuditSink()
+        self.database = EncryptedDatabase(
+            EncryptedDatabaseSettings(self.path, "synthetic-history-key"),
+            key_provider=SyntheticKeyProvider(),
+            audit_sink=self.audit,
+        )
+        MigrationRunner(
+            connection_provider=self.database,
+            migration_source=PackageMigrationSource(),
+            audit_sink=self.audit,
+        ).migrate(uuid4())
+        self.repository = ConversationHistoryRepository(
+            self.database,
+            self.audit,
+            clock=lambda: NOW,
+        )
+
+    def tearDown(self) -> None:
+        self.temporary.cleanup()
+
+    def test_turn_is_durable_and_reopens_as_model_context(self) -> None:
+        conversation_id = self.repository.begin_turn(
+            None,
+            "Tell me about Luna",
+            uuid4(),
+        )
+        self.repository.finish_turn(
+            conversation_id,
+            (
+                ConversationResponseMessage(
+                    ConversationRole.NOTICE,
+                    "Synthetic notice",
+                ),
+                ConversationResponseMessage(
+                    ConversationRole.ASSISTANT,
+                    "Luna is your pet.",
+                ),
+            ),
+            uuid4(),
+        )
+
+        reopened = self.repository.load_conversation(conversation_id, uuid4())
+
+        self.assertEqual(
+            [message.role for message in reopened.messages],
+            [
+                ConversationRole.USER,
+                ConversationRole.NOTICE,
+                ConversationRole.ASSISTANT,
+            ],
+        )
+        self.assertEqual(reopened.completed_turns()[0].user_text, "Tell me about Luna")
+        self.assertEqual(
+            self.repository.list_conversations(uuid4())[0].conversation_id,
+            conversation_id,
+        )
+        self.assertNotEqual(self.path.read_bytes()[:16], b"SQLite format 3\x00")
+
+    def test_unanswered_user_message_remains_visible_but_not_model_context(self) -> None:
+        conversation_id = self.repository.begin_turn(
+            None,
+            "A prompt saved before generation",
+            uuid4(),
+        )
+
+        reopened = self.repository.load_conversation(conversation_id, uuid4())
+
+        self.assertEqual(len(reopened.messages), 1)
+        self.assertEqual(reopened.completed_turns(), ())
+
+    def test_delete_cascades_messages(self) -> None:
+        conversation_id = self.repository.begin_turn(None, "Delete me", uuid4())
+
+        self.repository.delete_conversation(conversation_id, uuid4())
+
+        self.assertEqual(self.repository.list_conversations(uuid4()), ())
+        with self.database.connect(uuid4()) as connection:
+            count = connection.execute(
+                "SELECT count(*) FROM conversation_messages"
+            ).fetchone()[0]
+            search_count = connection.execute(
+                "SELECT count(*) FROM conversation_search"
+            ).fetchone()[0]
+        self.assertEqual(count, 0)
+        self.assertEqual(search_count, 0)
+
+    def test_message_reference_resolves_exact_source_then_fails_after_delete(
+        self,
+    ) -> None:
+        reference = self.repository.begin_turn_with_reference(
+            None,
+            "My synthetic source statement",
+            uuid4(),
+        )
+        self.repository.finish_turn(
+            reference.conversation_id,
+            (
+                ConversationResponseMessage(
+                    ConversationRole.ASSISTANT,
+                    "Synthetic response",
+                ),
+            ),
+            uuid4(),
+        )
+
+        source = self.repository.load_message_source(reference.message_id, uuid4())
+
+        self.assertEqual(
+            source.conversation.summary.conversation_id,
+            reference.conversation_id,
+        )
+        self.assertEqual(source.source_sequence, reference.sequence)
+        self.assertEqual(
+            next(
+                message.content
+                for message in source.conversation.messages
+                if message.sequence == source.source_sequence
+            ),
+            "My synthetic source statement",
+        )
+
+        self.repository.delete_conversation(reference.conversation_id, uuid4())
+        with self.assertRaises(ConversationNotFoundError):
+            self.repository.load_message_source(reference.message_id, uuid4())
+
+    def test_legacy_exact_source_resolves_only_when_match_is_unique(self) -> None:
+        exact_text = "My synthetic legacy detail is cobalt."
+        first = self.repository.begin_turn_with_reference(
+            None,
+            f"Please remember this: {exact_text}",
+            uuid4(),
+        )
+        self.repository.finish_turn(
+            first.conversation_id,
+            (
+                ConversationResponseMessage(
+                    ConversationRole.ASSISTANT,
+                    "Synthetic response",
+                ),
+            ),
+            uuid4(),
+        )
+
+        source = self.repository.find_unique_exact_user_source(
+            exact_text,
+            uuid4(),
+        )
+
+        self.assertEqual(
+            source.conversation.summary.conversation_id,
+            first.conversation_id,
+        )
+        second = self.repository.begin_turn_with_reference(
+            None,
+            f"A duplicate includes {exact_text}",
+            uuid4(),
+        )
+        self.repository.finish_turn(
+            second.conversation_id,
+            (
+                ConversationResponseMessage(
+                    ConversationRole.ASSISTANT,
+                    "Synthetic duplicate response",
+                ),
+            ),
+            uuid4(),
+        )
+        with self.assertRaises(ConversationSourceAmbiguousError):
+            self.repository.find_unique_exact_user_source(exact_text, uuid4())
+
+    def test_explicit_search_returns_bounded_prior_conversation_neighborhood(self) -> None:
+        prior_id = self.repository.begin_turn(
+            None,
+            "We planned the synthetic cobalt garden launch",
+            uuid4(),
+        )
+        self.repository.finish_turn(
+            prior_id,
+            (
+                ConversationResponseMessage(
+                    ConversationRole.ASSISTANT,
+                    "The synthetic launch should begin with cobalt flowers.",
+                ),
+            ),
+            uuid4(),
+        )
+        current_id = self.repository.begin_turn(
+            None,
+            "Remember when we discussed the cobalt garden?",
+            uuid4(),
+        )
+
+        matches = self.repository.search_conversations(
+            "Remember when we discussed the cobalt garden?",
+            uuid4(),
+            exclude_conversation_id=current_id,
+        )
+
+        self.assertEqual(len(matches), 1)
+        self.assertEqual(matches[0].summary.conversation_id, prior_id)
+        self.assertEqual(
+            tuple(message.role for message in matches[0].messages),
+            (ConversationRole.USER, ConversationRole.ASSISTANT),
+        )
+        self.assertTrue(
+            all(
+                message.content
+                != "Remember when we discussed the cobalt garden?"
+                for message in matches[0].messages
+            )
+        )
+
+    def test_audit_failure_prevents_a_write(self) -> None:
+        repository = ConversationHistoryRepository(
+            self.database,
+            FailingAuditSink(),
+            clock=lambda: NOW,
+        )
+
+        with self.assertRaises(ConversationHistoryError):
+            repository.begin_turn(None, "Do not persist", uuid4())
+
+        with self.database.connect(uuid4()) as connection:
+            count = connection.execute(
+                "SELECT count(*) FROM conversations"
+            ).fetchone()[0]
+        self.assertEqual(count, 0)
+
+
+if __name__ == "__main__":
+    unittest.main()

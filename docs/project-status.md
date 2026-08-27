@@ -30,6 +30,27 @@ This document is the handoff point between coding sessions. At the end of each s
   privacy controls, lifecycle changes, profile assembly, permanent purge,
   backup, and restore. A new installation remains session-only until setup
   succeeds.
+- Module 1.5 now has a lean native PySide6 foundation: masked first-run setup,
+  recovery unlock before model loading, protected OS credential-store automatic
+  unlock after one verified recovery entry, safe manual fallback, explicit
+  session-only startup, streaming plain-text chat, fixed safe failures, bounded
+  response selection, and graceful lifecycle shutdown. Credential reads and
+  writes are content-free audited; unknown or plaintext backends fail closed.
+  Both the native UI and terminal fallback use the same UI-neutral conversation
+  service. Widgets receive no database, key, audit, approval, credential-store,
+  or model authority objects.
+- The native UI now has code-owned system/light/dark palettes, installed-font
+  selection, and bounded global font sizing in backward-compatible versioned
+  preferences. Its conversation sidebar automatically stores structured
+  transcripts in the unlocked SQLCipher database, reopens them as continuable
+  token-bounded chats, and supports permanent live-database deletion with an
+  explicit backup-retention warning. Private Chat bypasses transcript storage,
+  persistent retrieval, explicit memory capture, and suggestion analysis.
+  Graceful window shutdown waits for an active response to finish its synchronous
+  transcript commit and bounded accepted memory analysis before releasing
+  database keys. Confirmed low-risk facts cross saved chats after a one-request
+  handoff barrier. Explicit prior-chat recall uses a bounded encrypted FTS index;
+  ordinary prompts still do not load other transcripts.
 - The local permission policy is implemented and covered by automated tests.
 - GitHub Actions is configured to test pull requests targeting `main` before
   merge. The public repository has an active ruleset requiring the `test`
@@ -49,8 +70,12 @@ This document is the handoff point between coding sessions. At the end of each s
 - The local-only chat streams responses and has bounded session history while it
   is open. After trusted setup and recovery unlock, it retrieves only eligible
   confirmed persistent records, intercepts explicit remember instructions, and
-  analyzes completed turns asynchronously into quarantined candidates. It has
-  no tools, browser access, credential access, or web capability.
+  deterministically commits reviewed clear exact low-risk statements before the
+  response while analyzing other completed turns asynchronously into
+  quarantined candidates. It has
+  no tools, browser access, broad credential access, or web capability; the
+  native composition alone receives a narrow automatic-unlock credential
+  adapter that is never exposed to the model or widgets.
 - Conversation policy is documented separately from the action-permission policy.
 - `docs/security-principles.md` is the governing threat model and review
   checklist for every future capability; design decisions should explicitly
@@ -80,10 +105,16 @@ This document is the handoff point between coding sessions. At the end of each s
   helper functions and database attachment through a connection authorizer,
   and emits content-free database-open audit events. It has been tested only
   with synthetic data.
-- The encrypted schema is built from 17 fixed, packaged, single-statement SQL
+- The encrypted schema is built from 24 fixed, packaged, single-statement SQL
   migrations. Exact SHA-256 history is stored in the database; missing,
   duplicate, reordered, changed, unknown, or untracked history fails closed.
   The entire pending migration batch commits atomically or rolls back.
+- Persistent memory uses one configured `memory.db`. Normal unlock requires that
+  exact regular file to exist and cannot silently create a blank replacement;
+  database creation is permitted only by explicit first-run setup. Missing or
+  unsafe storage fails before model loading. A separate missing-live-database
+  recovery design remains necessary because current restore intentionally
+  expects a live deletion ledger and pre-restore snapshot.
 
 ## Outstanding actions
 
@@ -121,10 +152,430 @@ complete; the batched Linux pull-request check is its final platform gate.
   restart-persistent synthetic recall.
 - [x] Module 1 deployment gate: implement portable key onboarding, verified
   recovery, trusted passcode approval, candidate review, and runtime wiring.
+- [x] Module 1.5 foundation: add a native setup, recovery/automatic unlock,
+  session-only, and streaming-chat interface over a narrow application-service
+  boundary.
+- [x] Module 1.5 conversation experience: add code-owned appearance controls,
+  automatic encrypted transcript persistence, continuable sidebar history,
+  Private Chat, deletion, and graceful shutdown finalization.
+- [x] Module 1.5 owner controls: add a compact native memory inventory, exact
+  source navigation for newly linked chat memories, and audited soft deletion
+  without exposing authority objects to widgets.
+- [x] Module 1.5 reconciliation engine: add bounded review values, edit,
+  confirmation, rejection, conflict comparison, atomic correction, dated
+  successors, stale-write protection, and exact protected-memory approvals.
+- [x] Module 1.5 contextual memory: add an encrypted named-scope registry,
+  conservative explicit phrase recognition, and deterministic scoped retrieval.
+- [x] Module 1.5 owner controls: add opaque-cursor memory pagination, encrypted
+  backup destination/create/guided restore, and bounded redacted audit viewing.
+- [ ] Deferred Memory Review: redesign the hidden review experience later from
+  practical usage; keep the tested reconciliation engine intact meanwhile.
+- [x] Module 1.5 usability gate: complete headless native visual acceptance,
+  primary-control accessibility names, keyboard navigation, and full local tests.
+- [ ] Deferred release gate: package and sign the macOS app and verify packaged
+  recovery and shutdown. Keep Windows packaging and runtime verification as a
+  required later gate.
 - [ ] Define the assistant's first tool registry and permission-enforcement path before adding any tool.
 - [ ] Add a web/search tool only behind the tool registry and approval layer.
 
 ## Session history
+
+### 2026-08-26 — Pre-PR blocker remediation
+
+Completed:
+
+- Converted passcode verification and lockout failures during native restore
+  into fixed application-service errors, so they remain inside the trusted UI
+  boundary instead of escaping through the Qt event loop.
+- Isolated memory, audit, and backup Settings loading. A missing or disconnected
+  external backup destination now leaves Settings open and provides a replacement
+  folder path instead of trapping the owner outside configuration.
+- Validated a new backup destination before persisting it or replacing the live
+  manager. Moved destination checks, full ciphertext hashing, snapshot creation,
+  and guided restore to a dedicated Qt worker thread.
+- Made native shutdown wait for an active backup operation to complete before
+  closing the encrypted runtime. Conflicting Settings controls remain disabled
+  while the worker owns the operation.
+- Kept Settings, New chat, Private chat, and saved-chat navigation available
+  while a response streams. A read-only conversation view prevents background
+  navigation from replacing the active model context; the requested destination
+  becomes active only after the current turn commits. Stream events are routed
+  away from unrelated transcripts and rapid token chunks are repaint-batched.
+- Added `docs/open-bugs.md` for two deliberately deferred P2 defects: unstable
+  audit offset pagination under concurrent appends and session-only visibility
+  of content-minimized owner audit history.
+- Verified all 363 local tests; one opt-in performance test remained skipped.
+  Dependency consistency and compile checks also passed.
+- PR #8's first Linux run reached the UI test import after 343 successful tests,
+  then exposed a missing runner dependency: `libEGL.so.1`. The workflow now
+  installs only the required `libegl1` runtime package before the locked project
+  install, and a repository-safety assertion keeps that CI prerequisite visible.
+
+Next:
+
+- Confirm PR #8's replacement Linux run imports and exercises the native UI.
+- Keep the two documented P2 audit defects visible for the following maintenance
+  pass.
+
+### 2026-08-26 — Module 1.5 owner controls and usability gate
+
+Completed:
+
+- Added stable opaque-cursor pagination for the memory inventory. Pages remain
+  bounded to 100 raw records, and a non-content canonical identity prevents the
+  same logical memory from reappearing when older pages are appended.
+- Added native encrypted-backup controls for choosing and persisting an existing
+  destination, creating a fully verified managed snapshot, viewing bounded
+  metadata, and restoring only a managed snapshot. Restore requires exact
+  `RESTORE` confirmation plus the high-risk passcode, verifies the encrypted
+  database, creates a pre-restore safety snapshot, reapplies the deletion ledger,
+  and refreshes live memory and conversation views.
+- Added a newest-first audit reader and native Audit trail page. It reads rotated
+  regular files without following symbolic links, rejects malformed entries,
+  caps display at 1,000 events, and exposes only allowlisted timestamp,
+  component, operation, outcome, and reason fields.
+- Added primary-control accessibility names and keyboard navigation across active
+  Settings pages. Performed headless light/dark visual checks at the standard
+  native window size and corrected navigation and table truncation.
+- Kept the dense Memory Review page out of active navigation and documented its
+  redesign as a future usage-informed feature. Kept signed macOS packaging and
+  Linux Actions/PR execution deferred for owner review.
+- Verified all 360 local tests; one opt-in performance test remained skipped.
+
+Next:
+
+- Owner-review the native settings flow locally before any push or pull request.
+- After approval, run the batched Linux pull-request gate, then define the first
+  tool registry and permission-enforcement path.
+
+### 2026-08-26 — Native memory inventory and exact source navigation
+
+Completed:
+
+- Added a dedicated Settings navigation layout whose default Memory page uses a
+  stable broad-category sidebar, local search, and one dense
+  value/kind/status/update/actions table. Widgets receive immutable bounded rows
+  rather than repository or database objects.
+- Made the normal inventory canonical: it shows confirmed usable memory and
+  clearly labeled tentative observations, collapses conservative exact-content
+  equivalents, and hides raw fact candidates, archived records, question-shaped
+  fragments, and context-dependent fragments without deleting audit history.
+- Hardened automatic capture so missing-punctuation questions cannot be promoted
+  as facts and model-generated background facts or trivia without exact
+  standalone user evidence are discarded. Retrieval independently excludes
+  legacy invalid direct statements and equivalent duplicate content.
+- Added a global Communication Style settings panel. Free-form style text is
+  bounded, validated, encrypted, append-only revisioned, content-free audited,
+  and applied immediately to subsequent replies through a style-only system-data
+  envelope that cannot grant authority or weaken safety rules.
+- Preserved the tested candidate-reconciliation engine but removed its first
+  dense Memory Review page from active Settings navigation. A simpler redesign
+  is recorded in future features and should be informed by actual suggestion-
+  review value rather than presenting every lifecycle choice immediately.
+- Protected candidate values remain redacted until passcode-backed review.
+  Protected decisions bind approval to the exact decision, content digest,
+  record versions, target, and effective date; widgets never receive approval
+  receipts or authority objects.
+- Added encrypted named contextual scopes for explicit phrases such as `At
+  work, ...`, `For project Apollo, ...`, and `When discussing family plans,
+  ...`. Complete-label matching activates them during retrieval; outside that
+  context they remain excluded. Ambiguous phrasing stays global rather than
+  letting the model invent a scope.
+- Linked newly created chat-derived memories to the exact opaque encrypted user
+  message ID. View source resolves the ID directly, opens the correct saved
+  conversation, and highlights the exact sequence even when text is duplicated.
+- Preserved deletion honesty: removing a chat cascades its source messages, so
+  the memory remains but source lookup returns a fixed deleted-or-unavailable
+  error. Older memories use a strict compatibility lookup only when their
+  literal saved text occurs in exactly one surviving user message; ambiguous,
+  inferred, deleted, and imported sources are never guessed.
+- Kept memory deletion recoverable: the row leaves ordinary retrieval while its
+  revision history and content-free audit event remain.
+- Verified all 352 local tests under the locked `uv` environment; one opt-in
+  performance test remained skipped.
+
+Next:
+
+- Let the owner review the native Settings changes before any push or pull
+  request.
+- Run the intentionally deferred Linux pull-request gate only after that review.
+- Keep the Memory Review redesign and signed macOS packaging deferred.
+
+### 2026-08-26 — Tentative observation layer
+
+Completed:
+
+- Added low-confidence observation proposals to bounded post-response analysis.
+  They are model-authored insight candidates with no exact-user-evidence
+  auto-confirm path, a 30-day expiry, conservative personal sensitivity, and no
+  authority over confirmed memory.
+- Added opt-in repository retrieval for eligible normal or personal insight
+  candidates only. Candidate facts and preferences, expired observations, and
+  sensitive or restricted content remain quarantined. Confirmed records consume
+  bounded record and token capacity first.
+- Separated observations from canonical `memories` in the inert JSON context.
+  The model is told they may be situational, time-specific, or a potential
+  challenge to a confirmed default, but may not silently overwrite facts,
+  authorize actions, or diagnose.
+- Preserved the explicit-confirmation boundary for future reconciliation as a
+  global revision, time-bounded change, or scoped exception. Native review and
+  reconciliation controls remain unimplemented Module 1.5 owner controls.
+- Verified all 324 local tests; one opt-in performance test remained skipped.
+
+Next:
+
+- Add native candidate/observation review and an explicit reconciliation screen
+  that shows the proposed change before applying it.
+- Exercise observation capture and cross-chat retrieval in the native app with
+  situational wording and a deliberate fact conflict.
+
+### 2026-08-26 — Deterministic global memory and standing retrieval approval
+
+Completed:
+
+- Removed the model-analysis dependency from reviewed clear direct facts. The
+  exact current-user sentence is classified and committed synchronously before
+  the main response, even when the model returns no suggestion JSON.
+- Applied standing owner approval to relevant confirmed personal memory, so new,
+  current, and reopened saved chats use the same global canonical records without
+  repeatedly asking whether to check memory. Direct-only, never-mention,
+  restricted, prohibited, and unconfirmed content keeps its stronger boundary.
+- Broadened natural explicit transcript recall to phrases such as “have we
+  discussed,” “did we talk about,” and “do you remember,” while preserving
+  bounded encrypted search, active-chat exclusion, and inert-data handling.
+- Preserved current-fact precedence: retrieved confirmed records are ordered by
+  trusted update time and override stale statements in reopened historical
+  transcripts; contradictions still require clarification instead of silent
+  overwrite.
+- Verified 318 tests locally with the normal performance test skipped.
+
+Next:
+
+- Retest the native app with name, broad residence, pet, and gluten-sensitivity
+  facts across a new chat, a reopened old chat, and an app restart.
+- Continue with native candidate review and backup/restore controls.
+
+### 2026-08-26 — Cross-chat memory handoff and explicit transcript recall
+
+Completed:
+
+- Diagnosed a real cross-chat miss without reading personal content. The first
+  response had committed, but asynchronous memory analysis finished about four
+  seconds later and the model's paraphrase lacked a verified exact evidence
+  quote, so the result correctly remained an unconfirmed candidate excluded from
+  the next chat.
+- Added an idle-tracked post-response handoff. The first persistent request after
+  new/open waits boundedly for accepted preceding analysis, and graceful shutdown
+  waits before cancelling any remaining work.
+- Added conservative lexical evidence binding. A unique model paraphrase may
+  select an exact first-person declarative sentence, but only that original user
+  sentence is confirmed. Ambiguous selections remain quarantined.
+- Added forward-only encrypted transcript-search migrations with backfill for
+  existing saved chats. Explicit history requests search at most three chats and
+  four nearby messages each, exclude the active chat, and place excerpts in a
+  token-bounded untrusted JSON envelope. Ordinary prompts and Private Chat do not
+  search transcripts.
+- Rechecked the feature against the owner's content-free live audit after the
+  first real retest failed. The updated migrations had applied and the relevant
+  direct statement was confirmed, but natural prior-session wording did not
+  trigger transcript search and a singular/plural query mismatch returned no
+  memory context. Broadened deterministic history intent, added a one-turn
+  referential retrieval hint, recognized direct self-questions, and normalized
+  conservative English inflections without recording personal content.
+- Added shared deterministic word normalization and reviewed topic connections
+  for direct memory and explicit transcript recall. Clear durable-looking
+  first-person statements now finish capture before the main response; trusted
+  italic receipts report only generic topics, while contradictions and
+  uncertainty ask for clarification without overwriting confirmed data.
+- Added a transient no-token thinking animation and a lightweight native arm64
+  macOS development launcher for Spotlight and Dock access to the live `uv`
+  checkout. The launcher is ad-hoc signed locally, not a signed or
+  self-contained release package.
+- Fixed reopened-chat precedence: confirmed memories now carry trusted update
+  timestamps in the bounded context envelope, newer conflicting memory is
+  ordered first, and the system contract makes canonical memory override stale
+  details in an older restored transcript.
+- Verified 313 tests locally with the normal performance test skipped. The
+  separate 100,000-record encrypted retrieval benchmark passed at 13.99 ms
+  median and 14.26 ms p95 over 30 queries.
+
+Next:
+
+- Exercise a real first-chat fact handoff and an explicit “remember when” query
+  in the native app after restart.
+- Continue with native candidate review and backup/restore controls.
+
+### 2026-08-26 — Appearance and encrypted conversation sidebar
+
+Completed:
+
+- Extended backward-compatible native preferences with system/light/dark theme,
+  installed-font selection, and a bounded global font size. Themes use only
+  code-owned palettes; preferences cannot inject arbitrary stylesheets.
+- Added three forward-only encrypted migrations for conversation metadata,
+  structured transcript messages, and deterministic message ordering.
+- Added a narrow audited conversation-history repository. User messages commit
+  before generation, assistant content commits synchronously before completion,
+  and sidebar reads never expose database objects or load unrelated transcripts
+  into model context.
+- Added new, private, reopen-and-continue, and permanent-delete sidebar flows.
+  Private Chat bypasses transcript storage, persistent-memory retrieval,
+  explicit memory capture, and suggestion analysis.
+- Changed graceful window shutdown to wait for an active response worker to
+  finish transcript persistence before closing encrypted memory.
+- Verified 290 tests locally with the normal performance test skipped. The
+  separate 100,000-record encrypted retrieval benchmark passed at 14.07 ms
+  median and 14.24 ms p95 over 30 queries.
+
+Next:
+
+- Exercise create, close, reopen, continue, Private Chat, and delete against the
+  owner's real encrypted database in the native app.
+- Continue with native candidate review and backup/restore controls.
+
+### 2026-08-26 — Natural recall and exact-statement capture
+
+Completed:
+
+- Diagnosed live recall using only content-free audit events and aggregate
+  encrypted-record metadata. The stable database contained 26 records: 9
+  confirmed and 17 candidates. Confirmed residence and Scooby records existed,
+  proving the immediate failure was retrieval rather than database loss.
+- Removed conversational scaffolding from lexical queries and added a bounded
+  partial-match fallback only when strict all-term FTS finds nothing. The live
+  natural Scooby question now selects its existing confirmed record; the live
+  residence question selects existing confirmed records.
+- Treated an explicit question about a saved subject as consent to use an
+  applicable ask-before record for that answer, while incidental use still
+  requires a natural clarification and restricted/never-mention records remain
+  excluded.
+- Improved automatic capture by allowing an exact model-selected phrase to
+  locate a complete declarative sentence in the current user message. Only that
+  verified sentence can become confirmed; questions, paraphrases, credentials,
+  sensitive content, conflicts, and inferences remain quarantined or rejected.
+- Verified 267 tests locally with the normal performance test skipped. The
+  separate 100,000-record encrypted retrieval benchmark passed at 13.80 ms
+  median and 14.04 ms p95 over 30 queries.
+
+Next:
+
+- Restart the native app and verify natural questions about the already
+  confirmed residence and Scooby records.
+- Add native candidate review so the 17 existing quarantined suggestions can be
+  inspected and confirmed or rejected without command-line work.
+
+### 2026-08-26 — Biometric launch gate and native runtime settings
+
+Completed:
+
+- Added native macOS device-owner authentication before the application reads
+  its stored Keychain recovery passphrase. The system accepts Touch ID or the
+  Mac login password, and may also accept a paired Apple Watch when enabled;
+  cancellation and unavailable authentication fall back to trusted recovery
+  entry before model loading.
+- Verified a real synthetic Local Authentication then Keychain read on macOS;
+  the temporary credential was deleted afterward. Apple rejected direct
+  Keychain-item access control for the unsigned development process with the
+  expected missing-entitlement status, so signed-package item binding remains
+  an explicit release gate rather than an overstated current guarantee.
+- Added Enter-to-send with Shift+Enter for multiline prompts and removed the
+  missing-font alias warning by selecting installed platform fonts explicitly.
+- Added a native settings page for a bounded context window, default response
+  limit, and response ceiling. Changes are atomically persisted for the next
+  launch, content-minimally audited, and rolled back if required auditing fails.
+- Kept the code-enforced 2,000-token response maximum and required at least
+  1,024 context tokens to remain available for input.
+- Verified 281 tests locally with the normal benchmark skip. The separate
+  100,000-record encrypted retrieval benchmark passed at 13.83 ms median and
+  14.02 ms p95 over 30 queries.
+
+Next:
+
+- Restart the app, approve the native macOS authentication prompt, and verify
+  chat opens using the existing Keychain credential.
+- Package and sign the macOS `.app`, then bind user presence directly to the
+  Keychain item before distribution.
+
+### 2026-08-26 — Protected automatic unlock
+
+Completed:
+
+- Added a narrow OS credential-store adapter so the native app can enroll the
+  recovery secret only after a successful database unlock and then start later
+  sessions without a recovery-passphrase prompt.
+- Kept the portable recovery passphrase and high-risk passcode separate. Missing,
+  unavailable, or stale automatic-unlock material falls back to the trusted
+  recovery screen before model loading and never creates a new database.
+- Restricted production use to reviewed protected keyring backends, pinned and
+  hash-locked `keyring` 25.7.0, and explicitly excluded plaintext fallback.
+- Added content-free audit events for credential reads and enrollment without
+  credential values, OS account names, or data paths.
+- Verified the real macOS Keychain with a temporary synthetic write/read/delete
+  round trip; the temporary credential was removed afterward.
+- Verified 261 tests locally; the opt-in 100,000-record retrieval benchmark is
+  the only normal-suite skip. Windows and Linux credential backends remain
+  explicit platform verification gates.
+
+Next:
+
+- Enter the recovery passphrase once in the native app to enroll the existing
+  encrypted database, then verify the following launch reaches chat without a
+  passphrase prompt.
+- Continue with native candidate review and memory owner controls.
+
+### 2026-08-25 — Module 1.5 native UI foundation
+
+Completed:
+
+- Added a native PySide6-Essentials interface with masked setup and unlock,
+  session-only startup, streaming chat, bounded response selection, inert
+  plain-text rendering, and off-thread model work.
+- Added a narrow application service that owns memory/runtime lifecycle and
+  exposes only immutable session details and sanitized conversation events.
+  Failed recovery unlock occurs before model construction.
+- Consolidated the terminal recovery interface and native interface onto one
+  bounded conversation service for structured roles, session history, persistent
+  context, explicit memory, model failures, token limits, and post-response work.
+- Added headless UI and service tests for secret clearing, authority isolation,
+  failed-setup cleanup, failed-unlock ordering, concurrent-request refusal,
+  inert rendering, busy-state enforcement, invalid limits, and shutdown.
+- Pinned the minimal Qt Essentials dependency through the existing `uv` lock.
+  No browser runtime, UI server, telemetry, tool access, or new network service
+  was introduced.
+- Verified 254 tests locally; the opt-in 100,000-record retrieval benchmark is
+  the only normal-suite skip. Its separate run passed at 13.56 ms median and
+  13.93 ms p95 over 30 queries.
+
+Next:
+
+- Commit this visually reviewed local milestone without pushing until a batched
+  GitHub Actions run is desired. Then add native owner-control panels through
+  the same narrow service boundary.
+
+Follow-up:
+
+- Diagnosed a first-run setup rejection through the content-free audit trail.
+  The deterministic validator correctly rejected invalid secret shape while
+  cleanup left no manifest or database, but the UI-facing service replaced its
+  safe correction with a generic message. Setup now displays only five explicitly
+  whitelisted corrections for confirmation, minimum length, or distinct-secret
+  failures; all other details remain hidden behind the generic safe failure.
+- Verified the live default data directory contained no manifest or database
+  after the rejected setup. Hardened both the application factory and shared
+  memory runtime so normal startup cannot create a missing database; only the
+  explicit setup workflow may create it.
+- Replaced the unnamed Qt font request with the platform application font and
+  added inert native formatting for assistant headings, lists, bold emphasis,
+  and inline code. Streaming stays immediate; formatting is applied on completion
+  without enabling HTML, active links, or remote resources.
+- Diagnosed cross-session recall through content-free audit events: the encrypted
+  database reopened correctly and automatic analysis persisted candidates, but
+  ordinary retrieval correctly excluded their unconfirmed status while the UI
+  offered no review path. Exact low-risk evidence copied from the current user
+  message can now become confirmed automatically. Only the exact quote is stored;
+  model-authored subjects and paraphrases are discarded. Inferences, mismatches,
+  sensitive evidence, and conflicts remain quarantined. An encrypted close/open
+  test verifies recall in a new runtime.
 
 ### 2026-08-25 — Module 1 final security and privacy review
 

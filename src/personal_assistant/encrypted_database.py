@@ -71,6 +71,7 @@ class EncryptedDatabaseSettings:
     key_id: str
     timeout_seconds: float = 5.0
     busy_timeout_ms: int = 5_000
+    require_existing: bool = False
 
     def __post_init__(self) -> None:
         if not isinstance(self.path, Path) or not self.path.is_absolute():
@@ -95,6 +96,8 @@ class EncryptedDatabaseSettings:
             raise ValueError(
                 "The database busy timeout must be within its safe range."
             )
+        if not isinstance(self.require_existing, bool):
+            raise ValueError("The database creation policy must be explicit.")
 
 
 class EncryptedDatabase:
@@ -325,6 +328,10 @@ class EncryptedDatabase:
         try:
             file_status = self._settings.path.lstat()
         except FileNotFoundError:
+            if self._settings.require_existing:
+                raise EncryptedDatabaseConfigurationError(
+                    "The configured database file is unavailable."
+                )
             return
         except OSError as error:
             raise EncryptedDatabaseConfigurationError(

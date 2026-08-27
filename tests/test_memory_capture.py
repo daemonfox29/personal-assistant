@@ -24,7 +24,11 @@ from personal_assistant.memory_capture import (
     ExplicitMemoryRequest,
     MemoryCaptureCoordinator,
 )
-from personal_assistant.memory_repository import MemoryRepository, RetrievalRequest
+from personal_assistant.memory_repository import (
+    MemoryRepository,
+    RetrievalMode,
+    RetrievalRequest,
+)
 from personal_assistant.memory_types import (
     FactPayload,
     MemoryValidationError,
@@ -35,6 +39,8 @@ from personal_assistant.memory_types import (
     Scope,
     ScopeType,
     Sensitivity,
+    canonical_json,
+    payload_to_data,
 )
 from personal_assistant.migration import MigrationRunner, PackageMigrationSource
 
@@ -107,6 +113,7 @@ class MemoryCaptureTests(unittest.TestCase):
         mention_policy: MentionPolicy = MentionPolicy.MAY_MENTION_WHEN_RELEVANT,
         source_ref: str = "synthetic-model-turn",
         model_version: str = "synthetic-model-v1",
+        user_evidence: str | None = None,
     ) -> AutomaticMemorySuggestion:
         return AutomaticMemorySuggestion(
             payload or FactPayload("synthetic subject", "synthetic statement"),
@@ -115,6 +122,191 @@ class MemoryCaptureTests(unittest.TestCase):
             Scope(ScopeType.GLOBAL),
             source_ref,
             model_version,
+            user_evidence,
+        )
+
+    def test_exact_low_risk_user_evidence_becomes_confirmed_without_model_text(self) -> None:
+        user_text = "My name is Synthetic Person."
+        result = self.coordinator.process_suggestion_batch(
+            (
+                self._suggestion(
+                    FactPayload("invented subject", "invented model content"),
+                    user_evidence=user_text,
+                ),
+            ),
+            uuid4(),
+            direct_user_text=user_text,
+        )
+
+        captured = result.results[0]
+        self.assertEqual(captured.decision, CaptureDecision.CREATED_CONFIRMED)
+        assert captured.record is not None
+        self.assertEqual(captured.record.status, RecordStatus.CONFIRMED)
+        self.assertEqual(captured.record.sensitivity, Sensitivity.PERSONAL)
+        self.assertEqual(
+            captured.record.mention_policy,
+            MentionPolicy.ASK_BEFORE_MENTIONING,
+        )
+        self.assertIsInstance(captured.record.revision.payload, FactPayload)
+        assert isinstance(captured.record.revision.payload, FactPayload)
+        self.assertEqual(captured.record.revision.payload.statement, user_text)
+        self.assertNotIn(
+            "invented model content",
+            canonical_json(payload_to_data(captured.record.revision.payload)),
+        )
+        self.assertNotIn(user_text, repr(self.audit_sink.events))
+        self.assertNotIn("invented model content", repr(self.audit_sink.events))
+        recalled = self.repository.retrieve(
+            RetrievalRequest("my name", mode=RetrievalMode.APPROVED),
+            uuid4(),
+        )
+        self.assertEqual(
+            recalled.memories[0].record.record_id,
+            captured.record.record_id,
+        )
+
+    def test_mismatched_or_sensitive_evidence_stays_quarantined(self) -> None:
+        mismatched = self.coordinator.process_suggestion_batch(
+            (
+                self._suggestion(
+                    user_evidence="A quote that the user did not provide",
+                ),
+            ),
+            uuid4(),
+            direct_user_text="A different user message",
+        ).results[0]
+        sensitive_text = "My home address is a synthetic private location."
+        sensitive = self.coordinator.process_suggestion_batch(
+            (
+                self._suggestion(
+                    FactPayload(
+                        "synthetic sensitive subject",
+                        "synthetic sensitive candidate",
+                    ),
+                    user_evidence=sensitive_text,
+                    source_ref="synthetic-sensitive-turn",
+                ),
+            ),
+            uuid4(),
+            direct_user_text=sensitive_text,
+        ).results[0]
+
+        self.assertEqual(mismatched.decision, CaptureDecision.CREATED_CANDIDATE)
+        self.assertEqual(sensitive.decision, CaptureDecision.CREATED_CANDIDATE)
+        assert mismatched.record is not None and sensitive.record is not None
+        self.assertEqual(mismatched.record.status, RecordStatus.CANDIDATE)
+        self.assertEqual(sensitive.record.status, RecordStatus.CANDIDATE)
+
+        street_text = "I live at 123 Synthetic Street."
+        street = self.coordinator.process_suggestion_batch(
+            (
+                self._suggestion(
+                    FactPayload("synthetic street residence", street_text),
+                    user_evidence=street_text,
+                    source_ref="synthetic-street-turn",
+                ),
+            ),
+            uuid4(),
+            direct_user_text=street_text,
+        ).results[0]
+        self.assertEqual(street.decision, CaptureDecision.CREATED_CANDIDATE)
+        assert street.record is not None
+        self.assertEqual(street.record.sensitivity, Sensitivity.SENSITIVE)
+
+    def test_question_shaped_evidence_can_never_be_confirmed(self) -> None:
+        user_text = "have I ever lived in chicago"
+
+        result = self.coordinator.process_suggestion_batch(
+            (
+                self._suggestion(
+                    FactPayload("model residence", user_text),
+                    user_evidence=user_text,
+                    source_ref="synthetic-question-turn",
+                ),
+            ),
+            uuid4(),
+            direct_user_text=user_text,
+        ).results[0]
+
+        self.assertEqual(result.decision, CaptureDecision.CREATED_CANDIDATE)
+        assert result.record is not None
+        self.assertEqual(result.record.status, RecordStatus.CANDIDATE)
+
+    def test_broad_residence_and_pet_relation_are_personal_not_sensitive(self) -> None:
+        for index, user_text in enumerate(
+            ("I live in Synthetic City.", "Scooby is my dog."),
+            start=1,
+        ):
+            with self.subTest(user_text=user_text):
+                result = self.coordinator.process_suggestion_batch(
+                    (
+                        self._suggestion(
+                            user_evidence=user_text,
+                            source_ref=f"synthetic-personal-turn-{index}",
+                        ),
+                    ),
+                    uuid4(),
+                    direct_user_text=user_text,
+                ).results[0]
+
+                self.assertEqual(result.decision, CaptureDecision.CREATED_CONFIRMED)
+                assert result.record is not None
+                self.assertEqual(result.record.sensitivity, Sensitivity.PERSONAL)
+                self.assertEqual(
+                    result.record.mention_policy,
+                    MentionPolicy.ASK_BEFORE_MENTIONING,
+                )
+
+    def test_direct_personal_metadata_is_classified_before_global_use(self) -> None:
+        for index, user_text in enumerate(
+            (
+                "My name is Synthetic Person.",
+                "My favorite synthetic color is blue.",
+                "I have a synthetic gluten sensitivity.",
+                "I am synthetically gluten sensitive.",
+                "My job is synthetic testing.",
+            ),
+            start=1,
+        ):
+            with self.subTest(user_text=user_text):
+                result = self.coordinator.process_suggestion_batch(
+                    (
+                        self._suggestion(
+                            user_evidence=user_text,
+                            source_ref=f"synthetic-personal-metadata-{index}",
+                        ),
+                    ),
+                    uuid4(),
+                    direct_user_text=user_text,
+                ).results[0]
+
+                assert result.record is not None
+                self.assertEqual(result.record.sensitivity, Sensitivity.PERSONAL)
+                self.assertEqual(
+                    result.record.mention_policy,
+                    MentionPolicy.ASK_BEFORE_MENTIONING,
+                )
+
+    def test_birthday_stays_unconfirmed_without_higher_risk_review(self) -> None:
+        user_text = "My birthday is Synthetic January 1."
+        result = self.coordinator.process_suggestion_batch(
+            (
+                self._suggestion(
+                    FactPayload("synthetic birthday", user_text),
+                    user_evidence=user_text,
+                    source_ref="synthetic-birthday-turn",
+                ),
+            ),
+            uuid4(),
+            direct_user_text=user_text,
+        ).results[0]
+
+        assert result.record is not None
+        self.assertEqual(result.record.status, RecordStatus.CANDIDATE)
+        self.assertEqual(result.record.sensitivity, Sensitivity.SENSITIVE)
+        self.assertEqual(
+            result.record.mention_policy,
+            MentionPolicy.ONLY_WHEN_DIRECTLY_ASKED,
         )
 
     def test_explicit_instruction_creates_confirmed_revisioned_memory(self) -> None:
@@ -130,8 +322,18 @@ class MemoryCaptureTests(unittest.TestCase):
         )
 
     def test_exact_confirmed_duplicate_is_reused_without_another_write(self) -> None:
-        first = self.coordinator.remember_explicitly(self._explicit(), uuid4())
-        second = self.coordinator.remember_explicitly(self._explicit(), uuid4())
+        first = self.coordinator.remember_explicitly(
+            self._explicit(
+                FactPayload("Synthetic Duplicate", "Synthetic statement")
+            ),
+            uuid4(),
+        )
+        second = self.coordinator.remember_explicitly(
+            self._explicit(
+                FactPayload("synthetic duplicate.", "synthetic statement.")
+            ),
+            uuid4(),
+        )
 
         assert first.record is not None
         self.assertEqual(second.decision, CaptureDecision.DUPLICATE)

@@ -1,5 +1,27 @@
 # Learning Journal
 
+## 2026-08-26 — Saving, eligibility, and retrieval are three different gates
+
+A memory can exist in the encrypted database and still be unavailable in chat.
+First, capture decides whether a statement becomes confirmed or stays an
+unconfirmed candidate. Second, policy decides whether its sensitivity, mention
+rule, scope, and status permit use in this request. Third, retrieval must match
+the user's natural question to the eligible record. A failure at any gate can
+look like “the assistant forgot,” even though the underlying causes differ.
+
+This bug demonstrated the retrieval gate. A confirmed Scooby record matched a
+search for `Scooby`, but “what do you know about Scooby my dog?” was interpreted
+as a strict requirement that every remaining word appear in the record. The fix
+removes conversational filler, tries a precise all-term search first, and only
+then uses a bounded partial-match fallback. Policy filtering still happens before
+anything reaches the model.
+
+Automatic capture was also made more reliable without trusting model prose. The
+model may point to text that occurs in the current user message, but code expands
+that selection to the complete declarative sentence and verifies it is exact.
+Questions and model-authored paraphrases remain candidates rather than silently
+becoming facts.
+
 ## 2026-08-25 — Recovery keys and high-risk passcodes solve different problems
 
 The recovery passphrase and high-risk passcode are deliberately separate. The
@@ -23,6 +45,25 @@ inside the trust boundary. The passcode primarily lowers risk from malicious
 chat content, accidental commands, or someone casually opening the assistant;
 operating-system account security, disk encryption, updates, and physical control
 remain separate defenses.
+
+Automatic unlock adds a third piece: the operating system's credential store
+can retain the verified recovery secret for routine native-app launches. This
+does not remove encryption or replace the recovery passphrase; it moves routine
+unlock trust to the logged-in operating-system account. The convenience tradeoff
+is that someone already using that unlocked account may open ordinary assistant
+memory without re-entering the recovery phrase. The separate high-risk passcode
+still gates consequential operations, while an owner-held recovery copy remains
+necessary for a new computer or a lost credential-store entry.
+
+The current macOS source-run app now places Apple Local Authentication before
+the Keychain read. Touch ID or the Mac login password proves device-owner
+presence, and only then does this application request the saved recovery phrase.
+That is meaningful protection against someone casually launching the assistant,
+but it is not identical to protecting the Keychain item itself: Apple requires
+the appropriate signed-app entitlement for item-bound `SecAccessControl` in this
+environment. The packaged-app gate must add and verify that stronger binding.
+The lesson is to distinguish a guarded application path from a credential whose
+storage system independently enforces the guard.
 
 Automatic memory analysis now happens after the visible answer, so it does not
 delay the response path. Its output is treated as an untrusted proposal and can

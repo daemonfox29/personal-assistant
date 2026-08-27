@@ -176,6 +176,11 @@ class EncryptedBackupManager:
                 return None
         return self.create_snapshot(correlation_id)
 
+    def validate_destination(self) -> None:
+        """Verify that the configured destination is a present real directory."""
+
+        self._validate_destination()
+
     def list_snapshots(self) -> tuple[Path, ...]:
         """Return managed snapshot paths without opening or exposing content."""
 
@@ -187,6 +192,19 @@ class EncryptedBackupManager:
                 continue
             verified.append(path)
         return tuple(verified)
+
+    def list_snapshot_descriptors(self) -> tuple[BackupSnapshot, ...]:
+        """Return bounded metadata-verified managed snapshots, newest first."""
+
+        descriptors: list[BackupSnapshot] = []
+        for path in reversed(self._safe_snapshots()):
+            try:
+                descriptors.append(self._snapshot_descriptor(path))
+            except BackupError:
+                continue
+            if len(descriptors) >= self._settings.retain_count:
+                break
+        return tuple(descriptors)
 
     def create_snapshot(self, correlation_id: UUID) -> BackupSnapshot:
         """Create, verify, atomically publish, then enforce retention."""

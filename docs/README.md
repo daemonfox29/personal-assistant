@@ -12,6 +12,8 @@ This folder holds human-readable notes about the assistant's design, decisions, 
 - [Module 1 persistent memory](module-1-memory-spec.md): approved encrypted
   storage, retrieval, revision, backup, authorization, and acceptance-test
   contract.
+- [Module 1.5 native UI](module-1-5-ui-spec.md): lean PySide6 presentation
+  boundary, setup/unlock/chat slice, and desktop release gates.
 - [Encrypted SQLite provider spike](encrypted-database-spike.md): SQLCipher
   selection, verified guarantees, tradeoffs, and remaining platform checks.
 - [Typed memory repository](memory-repository.md): validated payloads,
@@ -20,6 +22,8 @@ This folder holds human-readable notes about the assistant's design, decisions, 
   assistant says.
 - [Project status](project-status.md): current implementation state and session
   handoff notes.
+- [Open bugs](open-bugs.md): confirmed defects intentionally deferred with
+  acceptance criteria.
 - [Future features](future-features.md): ideas outside the current project step.
 - [Revisit later](revisit-later.md): open technical questions to return to.
 

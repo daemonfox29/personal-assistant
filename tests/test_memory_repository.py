@@ -222,6 +222,70 @@ class MemoryRepositoryTests(unittest.TestCase):
         with self.assertRaisesRegex(MemoryValidationError, "candidates only"):
             self.repository.create_record(self._fact(), self._model(), uuid4())
 
+    def test_named_scopes_persist_and_match_only_complete_query_phrases(self) -> None:
+        first = self.repository.resolve_named_scope(
+            ScopeType.PROJECT,
+            "Apollo",
+            uuid4(),
+        )
+        repeated = self.repository.resolve_named_scope(
+            ScopeType.PROJECT,
+            "apollo",
+            uuid4(),
+        )
+
+        self.assertEqual(first, repeated)
+        self.assertEqual(
+            self.repository.match_named_scopes(
+                "What did we decide for Apollo?",
+                uuid4(),
+            ),
+            (first,),
+        )
+        self.assertEqual(
+            self.repository.match_named_scopes("Apollonia", uuid4()),
+            (),
+        )
+        work = self.repository.resolve_named_scope(
+            ScopeType.PLACE,
+            "work",
+            uuid4(),
+        )
+        self.assertEqual(
+            self.repository.match_named_scopes("How does this work?", uuid4()),
+            (),
+        )
+        self.assertEqual(
+            self.repository.match_named_scopes("What do I prefer at work?", uuid4()),
+            (work,),
+        )
+
+    def test_record_inventory_cursor_pages_without_overlap(self) -> None:
+        created = tuple(
+            self.repository.create_record(
+                self._fact(f"synthetic page statement {index}"),
+                self._explicit(),
+                uuid4(),
+            )
+            for index in range(3)
+        )
+
+        first = self.repository.list_record_page(uuid4(), limit=2)
+        second = self.repository.list_record_page(
+            uuid4(),
+            limit=2,
+            before_updated_at=first.next_updated_at,
+            before_record_id=first.next_record_id,
+        )
+
+        self.assertEqual(len(first.records), 2)
+        self.assertEqual(len(second.records), 1)
+        self.assertIsNone(second.next_record_id)
+        self.assertEqual(
+            {record.record_id for record in first.records + second.records},
+            {record.record_id for record in created},
+        )
+
     def test_model_candidate_cannot_revise_confirmed_memory(self) -> None:
         record = self.repository.create_record(
             self._fact(), self._explicit(), uuid4()
@@ -418,6 +482,79 @@ class MemoryRepositoryTests(unittest.TestCase):
                 self._explicit(),
                 uuid4(),
             )
+
+    def test_candidate_correction_is_atomic_and_preserves_both_histories(self) -> None:
+        target = self.repository.create_record(
+            self._fact("old synthetic state"),
+            self._explicit(),
+            uuid4(),
+        )
+        candidate = self.repository.create_record(
+            self._draft(
+                FactPayload("synthetic subject", "corrected synthetic state"),
+                status=RecordStatus.CANDIDATE,
+            ),
+            self._model(),
+            uuid4(),
+        )
+
+        consumed, corrected, link = self.repository.reconcile_candidate_as_correction(
+            candidate.record_id,
+            candidate.row_version,
+            target.record_id,
+            target.row_version,
+            self._trusted(),
+            uuid4(),
+        )
+
+        self.assertEqual(consumed.status, RecordStatus.SUPERSEDED)
+        self.assertEqual(corrected.status, RecordStatus.CONFIRMED)
+        self.assertEqual(
+            corrected.revision.payload.statement,  # type: ignore[union-attr]
+            "corrected synthetic state",
+        )
+        self.assertEqual(link.relationship, RecordRelationship.EVIDENCE)
+        self.assertEqual(
+            len(self.repository.get_record_history(target.record_id, uuid4())),
+            2,
+        )
+        self.assertEqual(
+            len(self.repository.get_record_history(candidate.record_id, uuid4())),
+            2,
+        )
+
+    def test_candidate_successor_records_effective_date_without_overwrite(self) -> None:
+        target = self.repository.create_record(
+            self._fact("prior synthetic state"),
+            self._explicit(),
+            uuid4(),
+        )
+        candidate = self.repository.create_record(
+            self._draft(
+                FactPayload("synthetic subject", "new synthetic state"),
+                status=RecordStatus.CANDIDATE,
+            ),
+            self._model(),
+            uuid4(),
+        )
+        effective_at = NOW + timedelta(days=2)
+
+        ended, successor, link = self.repository.reconcile_candidate_as_successor(
+            candidate.record_id,
+            candidate.row_version,
+            target.record_id,
+            target.row_version,
+            effective_at,
+            self._trusted(),
+            uuid4(),
+        )
+
+        self.assertEqual(ended.status, RecordStatus.CONFIRMED)
+        self.assertEqual(ended.valid_until, effective_at)
+        self.assertEqual(successor.status, RecordStatus.CONFIRMED)
+        self.assertEqual(successor.valid_from, effective_at)
+        self.assertIsNone(successor.candidate_expires_at)
+        self.assertEqual(link.relationship, RecordRelationship.SUPERSESSION)
 
     def test_entities_preserve_ambiguity_and_support_typed_links(self) -> None:
         first = self.repository.create_entity(EntityDraft(EntityType.PET), uuid4())

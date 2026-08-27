@@ -7,8 +7,9 @@ from uuid import uuid4
 
 from personal_assistant.audit import InMemoryAuditSink
 from personal_assistant.config import MemorySettings
+from personal_assistant.migration import MigrationApplyError
 from personal_assistant.memory_runtime import MemoryRuntime
-from personal_assistant.memory_capture import AutomaticMemorySuggestion
+from personal_assistant.memory_capture import AutomaticMemorySuggestion, CaptureDecision
 from personal_assistant.memory_repository import RetrievalRequest
 from personal_assistant.memory_types import (
     FactPayload,
@@ -29,6 +30,90 @@ PASSCODE = "synthetic-runtime-passcode"
 
 
 class MemoryRuntimeTests(unittest.TestCase):
+    def test_direct_low_risk_statement_is_recalled_after_restart(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            data = Path(temporary_directory) / "data"
+            audit = InMemoryAuditSink()
+            security = PortableSecurityManager(
+                PortableSecuritySettings(data / "security.json"),
+                audit_sink=audit,
+            )
+            security.setup(
+                RECOVERY,
+                RECOVERY,
+                PASSCODE,
+                PASSCODE,
+                uuid4(),
+            )
+            settings = MemorySettings(
+                data_directory=data,
+                automatic_suggestions=True,
+            )
+            user_text = "My name is Synthetic Person."
+            first = MemoryRuntime.open(
+                settings,
+                RECOVERY,
+                audit_sink=audit,
+                create_database=True,
+            )
+            result = first.capture.process_suggestion_batch(
+                (
+                    AutomaticMemorySuggestion(
+                        FactPayload("model subject", "model paraphrase"),
+                        Sensitivity.NORMAL,
+                        MentionPolicy.MAY_MENTION_WHEN_RELEVANT,
+                        Scope(ScopeType.GLOBAL),
+                        "turn:55555555-5555-5555-5555-555555555555",
+                        "synthetic-model-v1",
+                        user_text,
+                    ),
+                ),
+                uuid4(),
+                direct_user_text=user_text,
+            )
+            first.close()
+
+            self.assertEqual(
+                result.results[0].decision,
+                CaptureDecision.CREATED_CONFIRMED,
+            )
+            second = MemoryRuntime.open(settings, RECOVERY, audit_sink=audit)
+            context = second.context_provider.context_for(
+                "What is my name?",
+                uuid4(),
+            )
+            second.close()
+
+            self.assertIsNotNone(context)
+            assert context is not None
+            self.assertIn(user_text, context)
+
+    def test_normal_open_never_creates_a_missing_database(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            data = Path(temporary_directory) / "data"
+            audit = InMemoryAuditSink()
+            security = PortableSecurityManager(
+                PortableSecuritySettings(data / "security.json"),
+                audit_sink=audit,
+            )
+            security.setup(
+                RECOVERY,
+                RECOVERY,
+                PASSCODE,
+                PASSCODE,
+                uuid4(),
+            )
+            database = data / "memory.db"
+
+            with self.assertRaises(MigrationApplyError):
+                MemoryRuntime.open(
+                    MemorySettings(data_directory=data),
+                    RECOVERY,
+                    audit_sink=audit,
+                )
+
+            self.assertFalse(database.exists())
+
     def test_setup_runtime_remember_restart_recall_backup_and_restore(self) -> None:
         with TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
@@ -53,12 +138,17 @@ class MemoryRuntimeTests(unittest.TestCase):
                 automatic_suggestions=False,
             )
 
-            first = MemoryRuntime.open(settings, RECOVERY, audit_sink=audit)
+            first = MemoryRuntime.open(
+                settings,
+                RECOVERY,
+                audit_sink=audit,
+                create_database=True,
+            )
             outcome = first.remember("Luna likes synthetic rope toys", uuid4())
             snapshot = first.create_daily_backup(uuid4())
             first.close()
 
-            self.assertEqual(outcome, "I saved that as confirmed memory.")
+            self.assertEqual(outcome, "Memory updated: personal fact.")
             self.assertIsNotNone(snapshot)
             second = MemoryRuntime.open(settings, RECOVERY, audit_sink=audit)
             context = second.context_provider.context_for(
@@ -90,6 +180,7 @@ class MemoryRuntimeTests(unittest.TestCase):
                 MemorySettings(data_directory=data, automatic_suggestions=False),
                 RECOVERY,
                 audit_sink=audit,
+                create_database=True,
             )
 
             sensitive = runtime.remember("My childhood trauma detail", uuid4())
@@ -98,7 +189,7 @@ class MemoryRuntimeTests(unittest.TestCase):
 
             self.assertEqual(
                 sensitive,
-                "That memory needs higher-risk review and was not saved.",
+                "Memory not saved: personal fact. Higher-risk review is required.",
             )
             self.assertEqual(
                 prohibited,
@@ -124,6 +215,7 @@ class MemoryRuntimeTests(unittest.TestCase):
                 MemorySettings(data_directory=data),
                 RECOVERY,
                 audit_sink=audit,
+                create_database=True,
             )
             normal = runtime.capture.suggest_automatically(
                 self._suggestion(

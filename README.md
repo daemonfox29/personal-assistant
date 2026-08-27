@@ -20,7 +20,16 @@ redacted auditing, verified SQLCipher storage, checksummed migrations, typed
 revisioned records, bounded retrieval, quarantined automatic suggestions,
 portable recovery, encrypted backup and guided restore, and a bounded chat-
 context adapter. A new installation stays session-only until the owner completes
-the trusted local setup. Tools are not enabled.
+the trusted local setup. A lean native Module 1.5 interface now provides local
+setup, recovery unlock, session-only use, and streaming chat without a browser
+or UI web server. While a response is generating, the owner can open Settings
+or view another saved chat; only the composer remains locked until the active
+turn is durably finished. Rapid model chunks are batched for responsive native
+repainting, and background output cannot be rendered into a different chat.
+Native Settings also provides paginated memory inventory,
+encrypted backup creation and guided restore, a content-minimized audit viewer,
+and keyboard-accessible owner controls. A verified recovery entry can enroll
+protected automatic unlock for later native-app launches. Tools are not enabled.
 
 ## Set up the project
 
@@ -37,45 +46,196 @@ for the supported Python 3.11–3.14 range. Do not edit it manually. `setuptools
 remains the package build backend; `uv` manages resolution, installation,
 environments, and project commands.
 
-## Run the local chat
+## Run the native app
 
 From the project folder:
+
+```bash
+uv run --locked personal-assistant-ui
+```
+
+On Apple-silicon macOS, `launchers/install-macos-launcher.sh` builds a tiny
+native development launcher in `~/Applications`. It opens the same live `uv`
+checkout without Terminal, so Spotlight can launch **Personal Assistant** and
+the app can be pinned to the Dock. This is a development convenience, not the
+future signed and self-contained package.
+
+The native app guides first-run encrypted-memory setup or recovery unlock, then
+starts Ollama and opens streaming chat. After one verified recovery entry, later
+native launches use the operating system's protected credential store and do
+not show a startup passphrase field. Unlock is attempted before Ollama is loaded,
+and model output is displayed only as inert local text.
+Completed answers receive code-defined native formatting for headings, lists,
+bold emphasis, and inline code. Model content is never interpreted as HTML and
+cannot create active links or remote resources.
+
+After encrypted unlock, native conversations save automatically to the existing
+SQLCipher database and appear in the left sidebar. Selecting one restores its
+complete recent turns through the same bounded role-aware context engine so the
+conversation can continue. **Private chat** creates no transcript, retrieves no
+persistent memory, accepts no explicit memory command, and creates no automatic
+memory suggestions.
+
+Confirmed low-risk personal facts are global across ordinary saved chats. A new
+chat waits boundedly for the preceding completed turn's accepted memory analysis
+before its first model request, so a fact stated in one chat can be retrieved in
+the next. A code-owned phrase gate commits reviewed clear, exact, low-risk
+first-person statements before the main response; this path does not depend on
+the model returning memory-analysis JSON. A trusted italic stage direction then
+reports a generic topic such as `pet` or `digestive health`; conflicts,
+uncertainty, and higher-risk classifications request clarification or review
+without overwriting confirmed data. Other turns retain the asynchronous,
+quarantined candidate path. Confirmed personal memories have standing owner
+approval for relevant ordinary use, so the assistant does not repeatedly ask
+whether it may check memory. Direct-only, never-mention, restricted, and
+unconfirmed records retain their stronger exclusions.
+Explicit leading context phrases can create narrower named memory instead of a
+global fact. For example, `At work, I prefer quiet focus time.` and `For project
+Apollo, I prefer concise updates.` create encrypted opaque scopes only because
+their wording matches conservative code-owned patterns. That memory is retrieved
+when the complete scope label appears in a later request and remains excluded
+outside that context. Generic place labels such as `work` also require an `at`,
+`in`, or `for` cue; the model cannot infer or invent a scope.
+The post-response analyzer may also retain a low-risk, expiring **tentative
+observation** when a statement seems useful but may be situational rather than a
+global fact. Relevant observations are sent to the model in a separate labeled
+JSON section after confirmed memories, which always receive bounded capacity
+first. The model must phrase them cautiously: they may suggest that a fact has
+changed or has a contextual exception, but they cannot silently overwrite a
+confirmed memory, authorize an action, or act as a diagnosis. A trusted explicit
+confirmation is required before reconciliation can revise the global fact,
+record a time-bounded change, or add a narrower scoped exception. The tested
+reconciliation engine remains available underneath, while its dense review page
+is intentionally hidden until a simpler workflow is designed from real usage.
+When a saved older chat is reopened, its transcript remains historical context:
+newer confirmed global memory is supplied with trusted update timestamps and
+takes precedence over conflicting details in that older dialogue.
+Direct questions use conservative singular/plural normalization plus a small
+reviewed set of deterministic topic connections, and
+referential questions such as “What was the fact I just told you?” reuse only
+the immediately preceding accepted user statement as a retrieval hint. Saved
+transcripts remain separate from canonical memory: they are not
+searched for ordinary prompts. Natural explicit recall such as “Have we
+discussed the cobalt garden?” or “Remember when we talked about the cobalt
+garden? Let's continue that here” performs bounded full-text search immediately
+inside the encrypted database and supplies only a few nearby user/assistant
+excerpts as untrusted data. The assistant need not offer to search first. The
+current chat and Private Chat are excluded from this recall path.
+
+While a request is active, the native UI displays a transient local animation
+such as *Thinking...* or *Pondering...*. It is removed on the first real event,
+is not persisted, makes no additional model call, and is not a reasoning log.
+
+The command-line interface remains a developer and recovery fallback:
 
 ```bash
 uv run --locked python -m personal_assistant
 ```
 
-The app starts Ollama if needed, sends its documented empty preload request
-without evaluating a chat prompt, then opens a terminal chat.
-
 ### Set up persistent memory
 
 Persistent memory requires a recovery passphrase and a different high-risk
-passcode. Enter both only through the hidden trusted prompts, never in chat or
-as command-line arguments:
+passcode. The native app collects both through masked local fields. Never enter
+either secret in chat or as a command-line argument. The fallback administration
+commands use hidden trusted prompts:
 
 ```bash
 uv run --locked python -m personal_assistant.memory_admin setup
 uv run --locked python -m personal_assistant.memory_admin verify-recovery
 ```
 
-The recovery passphrase derives the SQLCipher key each time the app starts. It
-is not stored, and losing it makes the database and its backups unrecoverable.
+The recovery passphrase derives the SQLCipher key. The portable security
+manifest and database never contain it. After a successful native-app unlock,
+the app stores it in the operating system's protected credential store so later
+native launches can unlock automatically. Keep a separate copy: the credential
+store entry is machine-local and may be lost during account, operating-system,
+or computer recovery. Without either that entry or the recovery passphrase, the
+database and its backups are unrecoverable.
 The high-risk passcode authorizes one exact sensitive operation at a time; it
 cannot override a prohibited action. Failed attempts are audited and the
 lockout survives command restarts.
 
-After setup, start chat normally and enter the recovery passphrase at its hidden
-prompt. Use `/remember <information>` or `remember that <information>` for an
-explicit ordinary memory. Automatic analysis runs after the visible answer and
-can create only unconfirmed, expiring candidates. Review them through the
-trusted commands:
+On macOS, the native app requires Touch ID or the Mac login password through
+Apple Local Authentication before it reads the stored Keychain passphrase.
+macOS may also accept a paired Apple Watch when that owner-authentication method
+is enabled in System Settings.
+The unsigned development process cannot attach that rule directly to the
+Keychain item, so malicious code already running as the same OS user remains
+inside the current trust boundary. Binding user presence directly to the item
+is a signed-package release gate. Automatic unlock never bypasses the separate
+high-risk passcode, and copying only the data directory to another machine does
+not copy the protected credential. The command-line recovery interface
+continues to request the recovery passphrase explicitly.
+
+By default, persistent files use one stable local directory:
+`~/.personal-assistant/`. The encrypted database is always
+`~/.personal-assistant/memory.db`; security metadata and the redacted audit log
+sit beside it. Ordinary startup must reopen that existing database and refuses
+to create a replacement if it is missing. Database creation is enabled only
+inside the explicit first-run setup transaction. Set an absolute
+`PERSONAL_ASSISTANT_DATA_DIR` before first setup to choose another location.
+
+For an existing installation with an enrolled Keychain credential, native
+launches now request Touch ID or the Mac login password before automatic unlock.
+If the credential is absent or stale, the app asks for the recovery passphrase
+once, verifies the encrypted database, and re-enrolls automatic unlock. Use
+`/remember <information>` or `remember that <information>` for an explicit
+ordinary memory. Automatic analysis runs after the visible answer. An exact
+low-risk declarative sentence copied from your current message may become
+confirmed memory. The model may identify an exact phrase, but deterministic code
+expands it to the complete current-user sentence and stores only that sentence—
+not the model's subject or paraphrase. Questions, mismatched or inferred text,
+sensitive content, conflicts, and credential-like material remain rejected or
+enter the expiring candidate inbox. Review candidates through the trusted
+commands:
 
 ```bash
 uv run --locked python -m personal_assistant.memory_admin candidates
 uv run --locked python -m personal_assistant.memory_admin confirm RECORD_ID
 uv run --locked python -m personal_assistant.memory_admin reject RECORD_ID
 ```
+
+In native chat, Enter sends the current prompt and Shift+Enter inserts a new
+line. The Settings page persists a model context window, default response limit,
+response ceiling, code-owned system/light/dark theme, installed font, and a
+bounded global font size. Appearance changes apply immediately and follow later
+native launches; model limits apply after restart. The context window is bounded
+to 2,048–131,072 tokens and must retain at least 1,024 tokens for input; the
+response ceiling cannot exceed the code-enforced 2,000-token maximum. Settings
+changes are stored as non-secret versioned JSON and audited without chat or
+personal-memory content.
+
+The same Settings page includes a compact, searchable memory table with broad
+category filters, saved value, kind, status, update date, **View source**, and
+**Delete**. It uses the already unlocked encrypted session without asking for a
+second credential. New chat-derived memories link to the exact opaque saved
+message ID: View source opens that conversation and highlights the originating
+turn. If the chat or message was deleted, the app reports that the source is
+unavailable; memories created before source linking or by trusted imports report
+that limitation rather than guessing from similar text. Delete removes a memory
+from normal use through a recoverable revision and records a content-free audit
+event. The first table load remains bounded to the newest 100 records, with an
+opaque cursor and explicit **Load more** control for larger inventories.
+
+Settings also lets the owner choose an existing backup folder, create a verified
+encrypted snapshot, list managed snapshots, and restore one through exact
+`RESTORE` confirmation plus the high-risk passcode. Restore never accepts an
+arbitrary file from the UI. Expensive destination checks, integrity hashing,
+creation, and restore run outside the presentation thread; the app waits for an
+active backup operation to finish safely before closing. A missing external
+drive reports an isolated backup error without blocking the rest of Settings.
+The Audit trail page shows only allowlisted time,
+component, action, outcome, and reason fields, newest first, with explicit paging
+and a hard 1,000-event display ceiling. It excludes chat text, memory values,
+prompts, paths, identifiers, and arbitrary audit metadata.
+
+The native app commits a user message before generation and commits completed
+assistant output before reporting completion. If the window is closed during a
+response, it remains visible in a disabled “finishing and saving” state until
+the transcript is finalized and the encrypted runtime closes. Forced process or
+machine termination cannot receive the same guarantee. Deleting a sidebar
+conversation removes its live encrypted rows after confirmation; existing
+encrypted backups may retain it until those snapshots expire.
 
 Candidate lists show metadata only; sensitive candidate content stays hidden
 until the high-risk passcode is verified. The trusted interface also provides
@@ -102,6 +262,13 @@ are withheld until a natural yes/no clarification, `only when directly asked`
 memories require a direct memory question, and restricted memories never enter
 model context.
 
+Natural recall removes conversational scaffolding such as “what do you know”
+before indexed matching. It first requires all meaningful terms, then uses a
+bounded partial-match fallback only when that strict search finds nothing.
+Explicit questions about a saved subject count as consent to use an applicable
+`ask before mentioning` record; incidental relevance still requires a natural
+clarification.
+
 To use encrypted daily backups, create an external destination first and set
 its absolute path before setup and every relevant run:
 
@@ -127,12 +294,14 @@ service details.
 - Type `/max <question>` for up to 2,000 response tokens.
 - Type `/limit <1-2000> <question>` to choose a custom response budget.
 
-Recent chat turns are referenced in application RAM only while the app is open.
-Complete turns are evicted from oldest to newest when they exceed the configured
-history budget. Closing the app drops the application's references and the app
-does not deliberately save this conversation to a file or database. Python,
-Ollama, macOS, swap, crash reports, or other system facilities may retain bytes
-temporarily; this is not a claim of secure physical memory erasure.
+The command-line fallback and native Private Chat retain recent turns in
+application RAM only. Normal unlocked native chat additionally stores structured
+transcripts in dedicated encrypted tables. In every mode, only complete recent
+turns from the active conversation enter model context; they are evicted from
+oldest to newest when they exceed the configured history budget. Other saved
+sidebar conversations consume no model context. Python, Ollama, the operating
+system, swap, backups, crash reports, or other system facilities may retain
+bytes; this is not a claim of secure physical erasure.
 
 Conversation roles remain structurally separate when sent to the model, so
 user text cannot become a trusted system or assistant message. The context
