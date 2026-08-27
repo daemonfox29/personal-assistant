@@ -8,6 +8,7 @@ from personal_assistant.search_policy import (
     SearchSource,
     requests_quality_search,
     requests_search_verification,
+    strip_explicit_provider_language,
 )
 
 
@@ -90,6 +91,25 @@ class SearchPolicyTests(unittest.TestCase):
             follow_up.sources,
             (SearchSource.PUBMED, SearchSource.GOOGLE_SCHOLAR),
         )
+
+    def test_provider_language_can_be_removed_without_removing_the_topic(self) -> None:
+        cases = (
+            (
+                "Look up bipolar disorder on PubMed and summarize it.",
+                "Look up bipolar disorder and summarize it.",
+            ),
+            (
+                "Only search Google Scholar for sleep research.",
+                "sleep research.",
+            ),
+            (
+                "Use Crossref to find papers about sleep.",
+                "papers about sleep.",
+            ),
+        )
+        for prompt, expected in cases:
+            with self.subTest(prompt=prompt):
+                self.assertEqual(strip_explicit_provider_language(prompt), expected)
 
     def test_owner_enabled_subset_is_respected(self) -> None:
         policy = QualitySearchPolicy(

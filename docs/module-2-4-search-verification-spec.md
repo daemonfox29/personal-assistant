@@ -57,6 +57,22 @@ or memory analysis.
   still responsible for claim-to-evidence reasoning, bounded by the instructions
   above.
 
+## Conversational query resolution
+
+- Pronouns and elliptical follow-ups are resolved with one generic deterministic
+  heuristic rather than topic-specific health, culture, product, or software
+  rules.
+- The resolver may copy a bounded topic only from the three most recent
+  user-authored turns in the current chat. It cannot read assistant answers,
+  persistent memory, recalled chats, or tool/web content for an outbound query.
+- A newly named current-message topic wins over older context. Provider choices
+  remain current-message scoped and are never inherited with the topic.
+- First-person/private context, credential terms, URLs, email-like values, long
+  numbers, unsafe lengths, and unresolved references fail to a clarification
+  without contacting search.
+- Resolution changes only the outbound public query. The model still receives
+  the original current message and bounded structured conversation roles.
+
 ## Security and efficiency
 
 - Tool results remain untrusted data and cannot alter reviewer instructions.
@@ -65,8 +81,9 @@ or memory analysis.
 - The normal path uses one model answer pass. Only an explicit owner phrase
   enables the full evidence-review pass and its additional latency and token
   use. If the normal answer fails only the deterministic citation gate, one
-  bounded tool-free repair pass may correct its source links; a failed repair is
-  rejected, and an explicit review never cascades into a third model pass.
+  bounded tool-free repair pass may correct its source citations; a failed
+  repair is rejected, and an explicit review never cascades into a third model
+  pass.
 - The verifier uses only bounded evidence from the same request and has no tool
   definitions, preventing a recursive search or browsing loop.
 
@@ -78,6 +95,8 @@ or memory analysis.
   separate Scholar results are available for comparison.
 - A named provider applies only to that current message. A follow-up that does
   not name a provider returns to automatic quality routing.
+- A safe ambiguous follow-up resolves its topic from recent user-authored chat
+  text; assistant, memory, and web text cannot supply outbound query material.
 - Explicit double-check wording produces exactly one additional model pass and
   exposes only the reviewed answer.
 - Unknown or missing citations fail closed with a fixed notice.

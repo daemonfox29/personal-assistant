@@ -21,6 +21,7 @@ from personal_assistant.model import (
     ModelToolCall,
     ModelUnavailableError,
 )
+from personal_assistant.session_memory import ConversationTurn
 from personal_assistant.tool_runtime import ToolExecutor, default_tool_registry
 from personal_assistant.web_reader import PublicWebPageReader
 from personal_assistant.web_search import WebSearchError, WebSearchFailureCode
@@ -424,6 +425,79 @@ class ConversationServiceTests(unittest.TestCase):
         self.assertNotIn("private model memory value", repr(provider.queries))
         self.assertEqual(len(model.requests), 2)
         self.assertIn("Python result", "".join(event.text for event in events))
+
+    def test_search_follow_up_resolves_from_recent_user_text_globally(self) -> None:
+        class FollowUpSearchModel:
+            def generate(self, request: ModelRequest) -> ModelResponse:
+                if request.messages[-1].role is MessageRole.TOOL:
+                    return ModelResponse("Recommended biographies [S1].")
+                return ModelResponse(
+                    "",
+                    (ModelToolCall.create("search_public_web", {}),),
+                )
+
+        provider = SearchProvider()
+        service = ConversationService(
+            FollowUpSearchModel(),
+            tool_executor=ToolExecutor(
+                default_tool_registry(web_search=provider),
+                InMemoryAuditSink(),
+            ),
+        )
+        service.replace_history(
+            (
+                ConversationTurn(
+                    "Tell me about Janis Joplin.",
+                    "Janis Joplin was an influential singer.",
+                ),
+            )
+        )
+
+        events = tuple(
+            service.events_for("Can you give me some popular books on her?")
+        )
+
+        self.assertEqual(
+            provider.queries,
+            ["Can you give me some popular books on Janis Joplin?"],
+        )
+        self.assertIn(
+            ConversationEventKind.COMPLETED,
+            tuple(event.kind for event in events),
+        )
+
+    def test_ambiguous_search_never_uses_assistant_text_as_query_context(self) -> None:
+        class SearchingModel:
+            def generate(self, request: ModelRequest) -> ModelResponse:
+                return ModelResponse(
+                    "",
+                    (ModelToolCall.create("search_public_web", {}),),
+                )
+
+        provider = SearchProvider()
+        service = ConversationService(
+            SearchingModel(),
+            tool_executor=ToolExecutor(
+                default_tool_registry(web_search=provider),
+                InMemoryAuditSink(),
+            ),
+        )
+        service.replace_history(
+            (
+                ConversationTurn(
+                    "Thanks.",
+                    "The person we discussed was Janis Joplin.",
+                ),
+            )
+        )
+
+        events = tuple(service.events_for("Can you find books about her?"))
+
+        self.assertEqual(provider.queries, [])
+        self.assertIn(
+            "clarify who or what you mean",
+            "".join(event.text for event in events),
+        )
 
     def test_recent_news_search_auto_reads_before_synthesized_answer(self) -> None:
         class ReadingModel:
@@ -962,7 +1036,7 @@ class ConversationServiceTests(unittest.TestCase):
         visible = "".join(event.text for event in events)
         self.assertEqual(len(model.requests), 2)
         self.assertNotIn("Useful draft", visible)
-        self.assertIn("Correcting the source links", visible)
+        self.assertIn("Correcting the source citations", visible)
         self.assertIn("Repaired grounded answer", visible)
         self.assertIn("Source S1 — Example", visible)
         self.assertNotIn("https://example.test/current", visible)

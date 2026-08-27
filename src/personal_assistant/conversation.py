@@ -44,6 +44,7 @@ from personal_assistant.search_evidence import (
     render_grounded_answer,
     requests_source_links,
 )
+from personal_assistant.search_context import resolve_search_query
 from personal_assistant.search_policy import (
     requests_quality_search,
     requests_search_verification,
@@ -115,6 +116,10 @@ class _ResponseCancelled(RuntimeError):
 
 
 class _SearchGroundingRejected(RuntimeError):
+    pass
+
+
+class _SearchReferenceUnresolved(RuntimeError):
     pass
 
 
@@ -282,8 +287,15 @@ class ConversationService:
                 yield ConversationEvent(
                     ConversationEventKind.NOTICE,
                     "I couldn't validate the searched answer against the current "
-                    "source links, so I did not present it as verified. Please "
+                    "search sources, so I did not present it as verified. Please "
                     "retry or refine the question.",
+                )
+                return
+            except _SearchReferenceUnresolved:
+                yield ConversationEvent(
+                    ConversationEventKind.NOTICE,
+                    "I need the subject named in the current message before I can "
+                    "search safely. Please clarify who or what you mean.",
                 )
                 return
             except ModelError as error:
@@ -355,6 +367,14 @@ class ConversationService:
         evidence_sources: list[EvidenceSource] = []
         search_grounding_required = False
         verification_requested = requests_search_verification(user_text)
+        search_resolution = resolve_search_query(
+            user_text,
+            tuple(
+                message.content
+                for message in messages[:-1]
+                if message.role is MessageRole.USER
+            ),
+        )
         self._raise_if_cancelled()
         if (
             request.tools
@@ -365,6 +385,8 @@ class ConversationService:
             )
             and self._tool_executor.has_tool("search_public_web")
         ):
+            if search_resolution.query is None:
+                raise _SearchReferenceUnresolved()
             # Current-news retrieval is a deterministic coordinator decision.
             # Local models are not reliable enough to decide whether they have
             # current knowledge, and may otherwise answer with a stale refusal
@@ -373,7 +395,7 @@ class ConversationService:
             search_result = yield from self._execute_search_with_retry(
                 search_call,
                 correlation_id,
-                user_text,
+                search_resolution.query,
             )
             search_grounding_required = (
                 search_result.status is ToolExecutionStatus.SUCCEEDED
@@ -517,7 +539,7 @@ class ConversationService:
                     ):
                         yield ConversationEvent(
                             ConversationEventKind.NOTICE,
-                            "Correcting the source links…",
+                            "Correcting the source citations…",
                         )
                         grounded_text, repair_limited = self._review_search_answer(
                             user_text,
@@ -592,10 +614,12 @@ class ConversationService:
                 return limit_reached
             seen_calls.add(call_identity)
             if call.name == "search_public_web":
+                if search_resolution.query is None:
+                    raise _SearchReferenceUnresolved()
                 result = yield from self._execute_search_with_retry(
                     call,
                     correlation_id,
-                    user_text,
+                    search_resolution.query,
                 )
                 search_grounding_required = (
                     result.status is ToolExecutionStatus.SUCCEEDED

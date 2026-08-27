@@ -95,6 +95,28 @@ _EXPLICIT_PATTERNS: tuple[tuple[SearchSource, tuple[str, ...]], ...] = (
     (SearchSource.ARXIV, ("arxiv",)),
     (SearchSource.GOOGLE, ("google",)),
 )
+_PROVIDER_ALIAS_TEXT = "|".join(
+    sorted(
+        {
+            re.escape(alias)
+            for _source, aliases in _EXPLICIT_PATTERNS
+            for alias in aliases
+        },
+        key=len,
+        reverse=True,
+    )
+)
+_LEADING_PROVIDER_COMMAND = re.compile(
+    rf"^\s*(?:(?:only\s+search|search\s+only|search|check)\s+"
+    rf"(?:the\s+)?(?:{_PROVIDER_ALIAS_TEXT})(?:\s+(?:web\s+)?search)?\s+for\s+|"
+    rf"use\s+(?:only\s+)?(?:{_PROVIDER_ALIAS_TEXT})\s+to\s+"
+    rf"(?:search\s+for|find|look\s+up)\s+)",
+    re.IGNORECASE,
+)
+_TRAILING_PROVIDER_CLAUSE = re.compile(
+    rf"\s+\b(?:on|with|using)\s+(?:{_PROVIDER_ALIAS_TEXT})\b",
+    re.IGNORECASE,
+)
 
 
 class SearchPolicyError(RuntimeError):
@@ -218,6 +240,18 @@ def _explicit_source(user_text: str) -> SearchSource | None:
 
 def requests_explicit_search(user_text: str) -> bool:
     return isinstance(user_text, str) and _explicit_source(user_text) is not None
+
+
+def strip_explicit_provider_language(user_text: str) -> str:
+    """Remove only recognized provider commands from prior topic text."""
+
+    if not isinstance(user_text, str):
+        raise TypeError("Provider language requires user text.")
+    if _explicit_source(user_text) is None:
+        return user_text
+    stripped = _LEADING_PROVIDER_COMMAND.sub("", user_text, count=1)
+    stripped = _TRAILING_PROVIDER_CLAUSE.sub("", stripped)
+    return " ".join(stripped.split())
 
 
 def requests_quality_search(user_text: str) -> bool:

@@ -62,15 +62,20 @@ the runtime is absent or unhealthy, search fails safely while chat, memory,
 time, and calculator features continue normally.
 
 An outbound query is still visible to SearXNG's configured upstream search
-engines. Deterministic code therefore permits only a bounded phrase copied from
-the user's current message—the model cannot append private memory to a query.
-Only inert titles, snippets, and HTTPS source URLs return from search, labeled
-as untrusted data. When snippets are insufficient, a separate bounded reader
-may extract limited inert text from up to three public HTTPS results in the same
-request. The model selects result numbers, never URLs. Private network targets,
-redirects, scripts, cookies, authentication, downloads, and non-text content are
-blocked. Broad current-events requests automatically read available top results
-before the assistant synthesizes and cites its answer.
+engines. Deterministic code therefore permits a bounded current user message,
+never model-authored additions or private memory. For an ambiguous conversational
+follow-up such as `books on her`, code may resolve the subject from a bounded
+topic literally present in up to three recent user-authored turns. Assistant,
+memory, and web text are never eligible. First-person/private, credential-like,
+URL, email, and long-number context is excluded; an unsafe or unresolved subject
+produces a clarification instead of a search. Only inert titles, snippets, and
+HTTPS source URLs return from search, labeled as untrusted data. When snippets
+are insufficient, a separate bounded reader may extract limited inert text from
+up to three public HTTPS results in the same request. The model selects result
+numbers, never URLs. Private network targets, redirects, scripts, cookies,
+authentication, downloads, and non-text content are blocked. Broad
+current-events requests automatically read available top results before the
+assistant synthesizes and cites its answer.
 
 Quality-first routing uses Google Web for general/current questions, up to
 three reviewed scholarly indexes for research, PubMed plus Google Scholar for

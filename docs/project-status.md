@@ -250,11 +250,16 @@ Completed:
 - Confirmed that provider selection is message-scoped: an explicit PubMed
   request does not pin a later unnamed treatment follow-up to PubMed-only
   routing.
+- Added a domain-neutral conversational search resolver for pronouns and
+  elliptical follow-ups. It uses only bounded recent user-authored topics,
+  rejects private/credential-like context, ignores assistant, memory, and tool
+  text, preserves newly named current topics, and asks for clarification when
+  safe resolution is not possible.
 
 Verification:
 
 - All source and test modules compiled, the dependency lock and repository
-  whitespace checks passed, and 458 local tests passed in 13.604 seconds with
+  whitespace checks passed, and 467 local tests passed in 13.586 seconds with
   one intentionally opt-in benchmark skipped.
 - A real Google Scholar-only double-check compared current evidence and produced
   a completed reviewed answer with three exact citations from distinct papers.
@@ -266,6 +271,10 @@ Verification:
   do?`, completed through automatic health routing, synthesized the retrieved
   material, displayed source names with zero visible URLs, emitted no failure
   notice, and stopped the dedicated search VM on close.
+- The exact reported Janis Joplin follow-up resolved `her` to the topic copied
+  from the preceding user turn, sent `can you give me some popular books on
+  Janis Joplin?`, returned a synthesized five-book answer with a readable source
+  name and zero visible URLs, emitted no notice, and completed normally.
 
 Next:
 
