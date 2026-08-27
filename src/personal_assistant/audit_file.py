@@ -9,7 +9,11 @@ import stat
 from threading import Lock
 
 from personal_assistant.audit import (
+    AuditComponent,
     AuditEvent,
+    AuditOperation,
+    AuditOutcome,
+    AuditReasonCode,
     AuditValidationError,
     AuditWriteError,
 )
@@ -21,6 +25,26 @@ DEFAULT_RETAINED_ROTATIONS = 5
 MAX_FILE_BYTES = 67_108_864
 MAX_EVENT_BYTES = 1_048_576
 MAX_RETAINED_ROTATIONS = 20
+DEFAULT_AUDIT_PAGE_SIZE = 100
+MAX_VISIBLE_AUDIT_EVENTS = 1_000
+_READ_CHUNK_BYTES = 65_536
+
+
+@dataclass(frozen=True)
+class AuditLogItem:
+    """One display-safe audit summary with no identifiers or free-form content."""
+
+    timestamp: str
+    component: str
+    operation: str
+    outcome: str
+    reason_code: str
+
+
+@dataclass(frozen=True)
+class AuditLogPage:
+    items: tuple[AuditLogItem, ...]
+    next_offset: int | None
 
 
 @dataclass(frozen=True)
@@ -197,3 +221,107 @@ class JsonLinesAuditSink:
     def _unlink_regular_file(path: Path) -> None:
         JsonLinesAuditSink._reject_unsafe_existing_file(path)
         path.unlink(missing_ok=True)
+
+
+class JsonLinesAuditReader:
+    """Read a bounded newest-first, content-minimized view of audit events."""
+
+    def __init__(self, settings: AuditFileSettings) -> None:
+        self._settings = settings
+
+    def read_page(self, offset: int = 0) -> AuditLogPage:
+        if isinstance(offset, bool) or not isinstance(offset, int) or offset < 0:
+            raise AuditWriteError("The audit page cursor is invalid.")
+        if offset >= MAX_VISIBLE_AUDIT_EVENTS:
+            return AuditLogPage((), None)
+        limit = min(
+            DEFAULT_AUDIT_PAGE_SIZE,
+            MAX_VISIBLE_AUDIT_EVENTS - offset,
+        )
+        summaries: list[AuditLogItem] = []
+        valid_index = 0
+        has_more = False
+        try:
+            for path in self._newest_files():
+                for encoded in self._reverse_lines(path):
+                    item = self._safe_item(encoded)
+                    if item is None:
+                        raise AuditWriteError(
+                            "Audit history contains an invalid entry."
+                        )
+                    if valid_index < offset:
+                        valid_index += 1
+                        continue
+                    if len(summaries) < limit:
+                        summaries.append(item)
+                        valid_index += 1
+                        continue
+                    has_more = True
+                    break
+                if has_more:
+                    break
+        except AuditWriteError:
+            raise
+        except OSError as error:
+            raise AuditWriteError("Audit history could not be read safely.") from error
+        next_offset = offset + len(summaries) if has_more else None
+        return AuditLogPage(tuple(summaries), next_offset)
+
+    def _newest_files(self) -> tuple[Path, ...]:
+        paths = [self._settings.path]
+        paths.extend(
+            self._settings.path.with_name(f"{self._settings.path.name}.{index}")
+            for index in range(1, self._settings.retained_rotations + 1)
+        )
+        return tuple(
+            path for path in paths if path.exists() or path.is_symlink()
+        )
+
+    def _reverse_lines(self, path: Path):
+        JsonLinesAuditSink._reject_unsafe_existing_file(path)
+        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+        descriptor = os.open(path, flags)
+        try:
+            status = os.fstat(descriptor)
+            if not stat.S_ISREG(status.st_mode):
+                raise AuditWriteError("Audit history could not be read safely.")
+            position = status.st_size
+            remainder = b""
+            while position > 0:
+                size = min(_READ_CHUNK_BYTES, position)
+                position -= size
+                os.lseek(descriptor, position, os.SEEK_SET)
+                block = os.read(descriptor, size) + remainder
+                lines = block.split(b"\n")
+                remainder = lines[0]
+                for line in reversed(lines[1:]):
+                    if line:
+                        yield line
+            if remainder:
+                yield remainder
+        finally:
+            os.close(descriptor)
+
+    def _safe_item(self, encoded: bytes) -> AuditLogItem | None:
+        if len(encoded) > self._settings.max_event_bytes:
+            return None
+        try:
+            document = json.loads(encoded.decode("utf-8"))
+            if not isinstance(document, dict):
+                return None
+            timestamp = document["timestamp"]
+            if not isinstance(timestamp, str) or len(timestamp) > 40:
+                return None
+            component = AuditComponent(document["component"])
+            operation = AuditOperation(document["operation"])
+            outcome = AuditOutcome(document["outcome"])
+            reason = AuditReasonCode(document["reason_code"])
+            return AuditLogItem(
+                timestamp,
+                component.value,
+                operation.value,
+                outcome.value,
+                reason.value,
+            )
+        except (KeyError, UnicodeError, json.JSONDecodeError, ValueError, TypeError):
+            return None

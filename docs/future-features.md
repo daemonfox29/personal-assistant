@@ -90,7 +90,7 @@ with acceptable maintenance cost. Any migration must preserve dependency
 pinning, package-hash verification, clean-environment testing, and a documented
 rollback path.
 
-## Memory, privacy, and backup settings interface
+## Deferred memory administration settings
 
 Revisit and redesign the native Memory Review page after automatic suggestions
 have demonstrated enough practical value. The first dense candidate/reconciliation
@@ -101,8 +101,10 @@ approval engine underneath; later UI work should begin from actual review usage
 and prioritize a simpler, calmer decision flow rather than exposing every
 lifecycle choice at once.
 
-Add a non-technical configuration interface for persistent memory after the
-Module 1 data boundary is implemented. It should let the user:
+The current native UI now covers paginated memory inventory, exact source
+navigation, recoverable deletion, encrypted backup destination and creation,
+guided managed-snapshot restore, and a bounded content-minimized audit viewer.
+Future administration work may add:
 
 - search and inspect confirmed memories, tentative suggestions, linked entity
   profiles, sources, and revision history;
@@ -117,11 +119,10 @@ Module 1 data boundary is implemented. It should let the user:
 - configure the cross-platform encrypted database, portable recovery method,
   and operating-system credential-store automatic unlock, including removal or
   re-enrollment of the machine-local credential;
-- choose an external-drive backup destination, run or schedule one daily
-  backup, set retention and size limits, verify backup health, and perform a
-  guided restore; and
-- review sanitized audit events for memory changes, backup operations, and
-  restores without exposing personal record contents.
+- configure daily-backup scheduling, retention and size limits, and deeper
+  backup-health verification; and
+- filter and summarize sanitized audit events without exposing personal record
+  contents.
 
 The first backup policy should favor one verified daily snapshot to an
 external drive. Backups must remain encrypted, excluded from Git, bounded by a

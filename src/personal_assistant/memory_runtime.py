@@ -249,6 +249,27 @@ class MemoryRuntime:
             return None
         return self.backup_manager.create_daily(correlation_id)
 
+    def configure_backup_directory(self, destination: Path) -> None:
+        """Enable the existing encrypted backup manager for this live session."""
+
+        if not isinstance(destination, Path) or not destination.is_absolute():
+            raise ValueError("Backup destination must be an explicit absolute path.")
+        migrations = PackageMigrationSource()
+        self.backup_manager = EncryptedBackupManager(
+            BackupSettings(
+                self.settings.data_directory / "memory.db",
+                destination,
+            ),
+            live_database=self.database,
+            database_factory=lambda path: EncryptedDatabase(
+                EncryptedDatabaseSettings(path, "primary-memory-key"),
+                key_provider=self.key_provider,
+                audit_sink=self.audit_sink,
+            ),
+            migration_source=migrations,
+            audit_sink=self.audit_sink,
+        )
+
     def confirm_candidate(
         self,
         record_id: UUID,

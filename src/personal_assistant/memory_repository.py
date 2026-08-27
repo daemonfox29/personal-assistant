@@ -333,6 +333,22 @@ class MemoryRecord:
 
 
 @dataclass(frozen=True)
+class MemoryRecordPage:
+    records: tuple[MemoryRecord, ...]
+    next_updated_at: datetime | None
+    next_record_id: UUID | None
+
+    def __post_init__(self) -> None:
+        if (self.next_updated_at is None) != (self.next_record_id is None):
+            raise MemoryValidationError("Memory page cursor is incomplete.")
+        if self.next_updated_at is not None and (
+            self.next_updated_at.tzinfo is None
+            or self.next_updated_at.utcoffset() is None
+        ):
+            raise MemoryValidationError("Memory page cursor time is invalid.")
+
+
+@dataclass(frozen=True)
 class Entity:
     entity_id: UUID
     entity_type: EntityType
@@ -555,8 +571,28 @@ class MemoryRepository:
     ) -> tuple[MemoryRecord, ...]:
         """Return a bounded trusted-interface inventory in newest-first order."""
 
+        return self.list_record_page(correlation_id, limit=limit).records
+
+    def list_record_page(
+        self,
+        correlation_id: UUID,
+        *,
+        limit: int = 100,
+        before_updated_at: datetime | None = None,
+        before_record_id: UUID | None = None,
+    ) -> MemoryRecordPage:
+        """Return a bounded stable newest-first page and an opaque cursor pair."""
+
         if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
             raise MemoryValidationError("Memory inventory limit is invalid.")
+        if (before_updated_at is None) != (before_record_id is None):
+            raise MemoryValidationError("Memory inventory cursor is incomplete.")
+        if before_record_id is not None and not isinstance(before_record_id, UUID):
+            raise MemoryValidationError("Memory inventory cursor ID is invalid.")
+        if before_updated_at is not None and (
+            before_updated_at.tzinfo is None or before_updated_at.utcoffset() is None
+        ):
+            raise MemoryValidationError("Memory inventory cursor time is invalid.")
         with self._audited(
             correlation_id,
             AuditOperation.REPOSITORY_READ,
@@ -564,13 +600,35 @@ class MemoryRepository:
             item_count=limit,
         ):
             with self._connection_provider.connect(correlation_id) as connection:
-                rows = connection.execute(
-                    "SELECT record_id FROM records "
-                    "ORDER BY updated_at DESC, record_id LIMIT ?",
-                    (limit,),
-                ).fetchall()
-                return tuple(
-                    self._load_record(connection, UUID(row[0])) for row in rows
+                if before_updated_at is None:
+                    rows = connection.execute(
+                        "SELECT record_id, updated_at FROM records "
+                        "ORDER BY updated_at DESC, record_id DESC LIMIT ?",
+                        (limit + 1,),
+                    ).fetchall()
+                else:
+                    rows = connection.execute(
+                        "SELECT record_id, updated_at FROM records "
+                        "WHERE updated_at < ? OR "
+                        "(updated_at = ? AND record_id < ?) "
+                        "ORDER BY updated_at DESC, record_id DESC LIMIT ?",
+                        (
+                            before_updated_at.isoformat(),
+                            before_updated_at.isoformat(),
+                            str(before_record_id),
+                            limit + 1,
+                        ),
+                    ).fetchall()
+                selected = rows[:limit]
+                records = tuple(
+                    self._load_record(connection, UUID(row[0])) for row in selected
+                )
+                if len(rows) <= limit or not selected:
+                    return MemoryRecordPage(records, None, None)
+                return MemoryRecordPage(
+                    records,
+                    self._parse_datetime(selected[-1][1]),
+                    UUID(selected[-1][0]),
                 )
 
     def resolve_named_scope(

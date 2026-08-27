@@ -56,6 +56,30 @@ class RuntimePreferencesTests(unittest.TestCase):
             self.assertIsNotNone(preferences)
             self.assertEqual(preferences.font_family, "system")
             self.assertEqual(preferences.font_size, 13)
+            self.assertEqual(preferences.backup_directory, "")
+
+    def test_version_two_preferences_gain_disabled_backup_default(self) -> None:
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "preferences.json"
+            path.write_text(
+                json.dumps(
+                    {
+                        "context_tokens": 16_384,
+                        "default_response_tokens": 400,
+                        "maximum_response_tokens": 2_000,
+                        "theme": "dark",
+                        "font_family": "system",
+                        "font_size": 14,
+                        "version": 2,
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            preferences = RuntimePreferencesStore(path).load()
+
+            self.assertIsNotNone(preferences)
+            self.assertEqual(preferences.backup_directory, "")
 
     def test_desktop_loader_applies_file_then_environment_override(self) -> None:
         with TemporaryDirectory() as directory:
@@ -65,6 +89,7 @@ class RuntimePreferencesTests(unittest.TestCase):
                     context_tokens=32_768,
                     default_response_tokens=700,
                     maximum_response_tokens=1_500,
+                    backup_directory=str(Path(directory) / "backups"),
                 )
             )
             environment = {
@@ -77,6 +102,15 @@ class RuntimePreferencesTests(unittest.TestCase):
             self.assertEqual(settings.ollama.context_tokens, 32_768)
             self.assertEqual(settings.ollama.max_response_tokens, 900)
             self.assertEqual(settings.chat.maximum_response_tokens, 1_500)
+            self.assertEqual(
+                settings.memory.backup_directory,
+                Path(directory) / "backups",
+            )
+
+            disabled = load_desktop_settings(
+                environment | {"PERSONAL_ASSISTANT_BACKUP_DIR": ""}
+            )
+            self.assertIsNone(disabled.memory.backup_directory)
 
     def test_invalid_or_symlinked_file_fails_closed(self) -> None:
         with TemporaryDirectory() as directory:

@@ -566,6 +566,28 @@ class ApplicationServiceTests(unittest.TestCase):
                 self.assertFalse(any("capital" in value for value in values))
                 service.close()
 
+    def test_memory_inventory_rejects_a_malformed_page_cursor(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            settings = AppSettings(
+                memory=MemorySettings(
+                    data_directory=Path(temporary_directory) / "private"
+                )
+            )
+            factory = AssistantApplicationFactory(settings)
+            factory.setup(RECOVERY, RECOVERY, PASSCODE, PASSCODE)
+            with patch(
+                "personal_assistant.application_service.OllamaModel",
+                return_value=SyntheticModel(),
+            ):
+                service = factory.open(RECOVERY)
+
+                with self.assertRaisesRegex(
+                    ApplicationOpenError,
+                    "could not be listed safely",
+                ):
+                    service.list_memories_page("not-valid-json")
+                service.close()
+
     def test_tentative_observation_links_to_the_exact_completed_chat_message(
         self,
     ) -> None:
@@ -1176,6 +1198,80 @@ class ApplicationServiceTests(unittest.TestCase):
             self.assertIn("database is missing or unsafe", str(raised.exception))
             self.assertFalse(database.exists())
             model_type.assert_not_called()
+
+    def test_live_backup_configuration_creation_and_audit_view_are_bounded(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            backup_directory = root / "backups"
+            backup_directory.mkdir()
+            settings = AppSettings(
+                memory=MemorySettings(data_directory=root / "private")
+            )
+            factory = AssistantApplicationFactory(settings)
+            factory.setup(RECOVERY, RECOVERY, PASSCODE, PASSCODE)
+            with patch(
+                "personal_assistant.application_service.OllamaModel",
+                return_value=SyntheticModel(),
+            ):
+                service = factory.open(RECOVERY)
+                service.configure_backup_directory(backup_directory)
+                factory.save_backup_directory(backup_directory)
+                created = service.create_backup()
+                overview = service.list_backups()
+
+                self.assertEqual(overview.directory, str(backup_directory))
+                self.assertEqual(overview.snapshots[0].snapshot_name, created.snapshot_name)
+                self.assertEqual(
+                    factory.runtime_preferences.backup_directory,
+                    str(backup_directory),
+                )
+                with self.assertRaisesRegex(ApplicationOpenError, "RESTORE"):
+                    service.restore_backup(created.snapshot_name, "restore", PASSCODE)
+                with self.assertRaisesRegex(ApplicationOpenError, "unavailable"):
+                    service.restore_backup(
+                        "memory-20260826T190000Z-" + ("f" * 32) + ".db",
+                        "RESTORE",
+                        PASSCODE,
+                    )
+
+                runtime = service._runtime
+                self.assertIsNotNone(runtime)
+                runtime.repository.create_record(  # type: ignore[union-attr]
+                    RecordDraft(
+                        FactPayload(
+                            "synthetic post-backup fact",
+                            "Synthetic fact created after the selected backup.",
+                        ),
+                        RecordStatus.CONFIRMED,
+                        Sensitivity.NORMAL,
+                        MentionPolicy.MAY_MENTION_WHEN_RELEVANT,
+                        Scope(ScopeType.GLOBAL),
+                    ),
+                    Provenance(
+                        SourceType.TRUSTED_INTERFACE,
+                        "synthetic-post-backup",
+                        ActorType.USER,
+                    ),
+                    uuid4(),
+                )
+                self.assertTrue(
+                    any("created after" in item.value for item in service.list_memories())
+                )
+
+                service.restore_backup(created.snapshot_name, "RESTORE", PASSCODE)
+
+                self.assertFalse(
+                    any("created after" in item.value for item in service.list_memories())
+                )
+
+                audit_page = service.list_audit_events()
+                self.assertGreater(len(audit_page.items), 0)
+                audit_text = repr(audit_page.items)
+                self.assertNotIn(RECOVERY, audit_text)
+                self.assertNotIn(str(backup_directory), audit_text)
+                with self.assertRaisesRegex(ApplicationOpenError, "cursor"):
+                    service.list_audit_events("not-a-cursor")
+                service.close()
 
     def test_session_only_service_exposes_no_authority_objects(self) -> None:
         with TemporaryDirectory() as temporary_directory:

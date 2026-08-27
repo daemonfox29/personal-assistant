@@ -188,6 +188,19 @@ class EncryptedBackupManager:
             verified.append(path)
         return tuple(verified)
 
+    def list_snapshot_descriptors(self) -> tuple[BackupSnapshot, ...]:
+        """Return bounded metadata-verified managed snapshots, newest first."""
+
+        descriptors: list[BackupSnapshot] = []
+        for path in reversed(self._safe_snapshots()):
+            try:
+                descriptors.append(self._snapshot_descriptor(path))
+            except BackupError:
+                continue
+            if len(descriptors) >= self._settings.retain_count:
+                break
+        return tuple(descriptors)
+
     def create_snapshot(self, correlation_id: UUID) -> BackupSnapshot:
         """Create, verify, atomically publish, then enforce retention."""
 

@@ -22,8 +22,10 @@ portable recovery, encrypted backup and guided restore, and a bounded chat-
 context adapter. A new installation stays session-only until the owner completes
 the trusted local setup. A lean native Module 1.5 interface now provides local
 setup, recovery unlock, session-only use, and streaming chat without a browser
-or UI web server. A verified recovery entry can enroll protected automatic
-unlock for later native-app launches. Tools are not enabled.
+or UI web server. Native Settings also provides paginated memory inventory,
+encrypted backup creation and guided restore, a content-minimized audit viewer,
+and keyboard-accessible owner controls. A verified recovery entry can enroll
+protected automatic unlock for later native-app launches. Tools are not enabled.
 
 ## Set up the project
 
@@ -98,8 +100,9 @@ first. The model must phrase them cautiously: they may suggest that a fact has
 changed or has a contextual exception, but they cannot silently overwrite a
 confirmed memory, authorize an action, or act as a diagnosis. A trusted explicit
 confirmation is required before reconciliation can revise the global fact,
-record a time-bounded change, or add a narrower scoped exception. Native review
-and reconciliation controls remain part of the Module 1.5 owner-controls work.
+record a time-bounded change, or add a narrower scoped exception. The tested
+reconciliation engine remains available underneath, while its dense review page
+is intentionally hidden until a simpler workflow is designed from real usage.
 When a saved older chat is reopened, its transcript remains historical context:
 newer confirmed global memory is supplied with trusted update timestamps and
 takes precedence over conflicting details in that older dialogue.
@@ -207,8 +210,16 @@ turn. If the chat or message was deleted, the app reports that the source is
 unavailable; memories created before source linking or by trusted imports report
 that limitation rather than guessing from similar text. Delete removes a memory
 from normal use through a recoverable revision and records a content-free audit
-event. The first table load remains bounded to the newest 100 records; native
-pagination is still required before larger inventories.
+event. The first table load remains bounded to the newest 100 records, with an
+opaque cursor and explicit **Load more** control for larger inventories.
+
+Settings also lets the owner choose an existing backup folder, create a verified
+encrypted snapshot, list managed snapshots, and restore one through exact
+`RESTORE` confirmation plus the high-risk passcode. Restore never accepts an
+arbitrary file from the UI. The Audit trail page shows only allowlisted time,
+component, action, outcome, and reason fields, newest first, with explicit paging
+and a hard 1,000-event display ceiling. It excludes chat text, memory values,
+prompts, paths, identifiers, and arbitrary audit metadata.
 
 The native app commits a user message before generation and commits completed
 assistant output before reporting completion. If the window is closed during a

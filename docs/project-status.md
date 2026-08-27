@@ -166,10 +166,12 @@ complete; the batched Linux pull-request check is its final platform gate.
   successors, stale-write protection, and exact protected-memory approvals.
 - [x] Module 1.5 contextual memory: add an encrypted named-scope registry,
   conservative explicit phrase recognition, and deterministic scoped retrieval.
-- [ ] Module 1.5 owner controls: redesign the deferred Memory Review experience,
-  add pagination, backup/restore, and bounded audit viewing.
-- [ ] Module 1.5 usability gate: complete native acceptance and accessibility
-  review before release packaging.
+- [x] Module 1.5 owner controls: add opaque-cursor memory pagination, encrypted
+  backup destination/create/guided restore, and bounded redacted audit viewing.
+- [ ] Deferred Memory Review: redesign the hidden review experience later from
+  practical usage; keep the tested reconciliation engine intact meanwhile.
+- [x] Module 1.5 usability gate: complete headless native visual acceptance,
+  primary-control accessibility names, keyboard navigation, and full local tests.
 - [ ] Deferred release gate: package and sign the macOS app and verify packaged
   recovery and shutdown. Keep Windows packaging and runtime verification as a
   required later gate.
@@ -177,6 +179,37 @@ complete; the batched Linux pull-request check is its final platform gate.
 - [ ] Add a web/search tool only behind the tool registry and approval layer.
 
 ## Session history
+
+### 2026-08-26 — Module 1.5 owner controls and usability gate
+
+Completed:
+
+- Added stable opaque-cursor pagination for the memory inventory. Pages remain
+  bounded to 100 raw records, and a non-content canonical identity prevents the
+  same logical memory from reappearing when older pages are appended.
+- Added native encrypted-backup controls for choosing and persisting an existing
+  destination, creating a fully verified managed snapshot, viewing bounded
+  metadata, and restoring only a managed snapshot. Restore requires exact
+  `RESTORE` confirmation plus the high-risk passcode, verifies the encrypted
+  database, creates a pre-restore safety snapshot, reapplies the deletion ledger,
+  and refreshes live memory and conversation views.
+- Added a newest-first audit reader and native Audit trail page. It reads rotated
+  regular files without following symbolic links, rejects malformed entries,
+  caps display at 1,000 events, and exposes only allowlisted timestamp,
+  component, operation, outcome, and reason fields.
+- Added primary-control accessibility names and keyboard navigation across active
+  Settings pages. Performed headless light/dark visual checks at the standard
+  native window size and corrected navigation and table truncation.
+- Kept the dense Memory Review page out of active navigation and documented its
+  redesign as a future usage-informed feature. Kept signed macOS packaging and
+  Linux Actions/PR execution deferred for owner review.
+- Verified all 360 local tests; one opt-in performance test remained skipped.
+
+Next:
+
+- Owner-review the native settings flow locally before any push or pull request.
+- After approval, run the batched Linux pull-request gate, then define the first
+  tool registry and permission-enforcement path.
 
 ### 2026-08-26 — Native memory inventory and exact source navigation
 
@@ -226,10 +259,10 @@ Completed:
 
 Next:
 
-- Add native pagination beyond the initial newest-100 inventory, backup/restore,
-  and bounded audit viewing. Keep the Memory Review redesign deferred.
-- Run a native manual check that creates a new fact, opens its source, deletes
-  its chat, and verifies the unavailable-source message.
+- Let the owner review the native Settings changes before any push or pull
+  request.
+- Run the intentionally deferred Linux pull-request gate only after that review.
+- Keep the Memory Review redesign and signed macOS packaging deferred.
 
 ### 2026-08-26 — Tentative observation layer
 

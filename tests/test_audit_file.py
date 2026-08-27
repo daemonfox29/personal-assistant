@@ -1,6 +1,6 @@
 """Checks for bounded, injection-resistant local audit storage."""
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import json
 import os
 from pathlib import Path
@@ -20,14 +20,21 @@ from personal_assistant.audit import (
     AuditValidationError,
     AuditWriteError,
 )
-from personal_assistant.audit_file import AuditFileSettings, JsonLinesAuditSink
+from personal_assistant.audit_file import (
+    AuditFileSettings,
+    JsonLinesAuditReader,
+    JsonLinesAuditSink,
+)
 
 
 def audit_event(index: int = 1) -> AuditEvent:
     return AuditEvent(
         event_id=UUID(int=index),
         correlation_id=UUID(int=100 + index),
-        timestamp=datetime(2026, 8, 24, 12, 0, index, tzinfo=timezone.utc),
+        timestamp=(
+            datetime(2026, 8, 24, 12, 0, tzinfo=timezone.utc)
+            + timedelta(seconds=index)
+        ),
         component=AuditComponent.DATABASE,
         operation=AuditOperation.REPOSITORY_READ,
         outcome=AuditOutcome.SUCCEEDED,
@@ -198,3 +205,42 @@ class JsonLinesAuditSinkTests(unittest.TestCase):
                 sink.write(audit_event())
 
             self.assertEqual(tuple(target.iterdir()), ())
+
+
+class JsonLinesAuditReaderTests(unittest.TestCase):
+    def test_reader_is_newest_first_paginated_and_content_minimized(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            path = Path(temporary_directory) / "audit.jsonl"
+            settings = AuditFileSettings(path)
+            sink = JsonLinesAuditSink(settings)
+            for index in range(1, 106):
+                sink.write(audit_event(index))
+
+            reader = JsonLinesAuditReader(settings)
+            first = reader.read_page()
+            second = reader.read_page(first.next_offset or 0)
+
+            self.assertEqual(len(first.items), 100)
+            self.assertEqual(len(second.items), 5)
+            self.assertEqual(first.items[0].operation, "repository_read")
+            self.assertEqual(first.items[0].timestamp, "2026-08-24T12:01:45.000Z")
+            self.assertIsNone(second.next_offset)
+            serialized = repr(first.items)
+            self.assertNotIn("record-105", serialized)
+            self.assertNotIn("correlation", serialized)
+
+    def test_reader_skips_malformed_content_and_rejects_symlink(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            path = root / "audit.jsonl"
+            path.write_text('{"prompt":"must not display"}\n', encoding="utf-8")
+            with self.assertRaisesRegex(AuditWriteError, "invalid entry"):
+                JsonLinesAuditReader(AuditFileSettings(path)).read_page()
+            if hasattr(os, "symlink"):
+                linked = root / "linked.jsonl"
+                try:
+                    linked.symlink_to(path)
+                except OSError:
+                    return
+                with self.assertRaises(AuditWriteError):
+                    JsonLinesAuditReader(AuditFileSettings(linked)).read_page()

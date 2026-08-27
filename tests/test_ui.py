@@ -20,6 +20,10 @@ from PySide6.QtWidgets import (  # noqa: E402
 
 from personal_assistant.application_service import (  # noqa: E402
     ApplicationLaunchState,
+    AuditInventoryItem,
+    AuditInventoryPage,
+    BackupInventoryItem,
+    BackupOverview,
     MemoryInventoryItem,
     MemoryReviewItem,
     MemoryReviewRelatedItem,
@@ -205,7 +209,7 @@ class NativeUiTests(unittest.TestCase):
 
         self.assertEqual(saved, ["Be warm and use plain language."])
         self.assertEqual(page._section_pages.currentIndex(), 2)
-        self.assertEqual(page._section_list.count(), 3)
+        self.assertEqual(page._section_list.count(), 5)
         page._communication_style.setPlainText("x" * 2_001)
         self.assertFalse(page._communication_save.isEnabled())
 
@@ -279,6 +283,7 @@ class NativeUiTests(unittest.TestCase):
                     "preference",
                     "confirmed",
                     "2026-08-26",
+                    "people-pets-luna",
                 ),
                 MemoryInventoryItem(
                     second_id,
@@ -288,12 +293,15 @@ class NativeUiTests(unittest.TestCase):
                     "candidate",
                     "2026-08-25",
                 ),
-            )
+            ),
+            next_cursor="synthetic-next-page",
         )
         source_requests: list[str] = []
         delete_requests: list[str] = []
+        page_requests: list[str] = []
         page.memory_source_requested.connect(source_requests.append)
         page.memory_delete_requested.connect(delete_requests.append)
+        page.memory_next_page_requested.connect(page_requests.append)
 
         self.assertEqual(page._memory_table.rowCount(), 2)
         self.assertEqual(
@@ -314,6 +322,89 @@ class NativeUiTests(unittest.TestCase):
         buttons[1].click()
         self.assertEqual(source_requests, [str(second_id)])
         self.assertEqual(delete_requests, [str(second_id)])
+        page._memory_load_more.click()
+        self.assertEqual(page_requests, ["synthetic-next-page"])
+        page.set_memories(
+            (
+                MemoryInventoryItem(
+                    uuid4(),
+                    "People & pets",
+                    "Luna likes synthetic rope toys",
+                    "preference",
+                    "confirmed",
+                    "2026-08-20",
+                    "people-pets-luna",
+                ),
+            ),
+            append=True,
+        )
+        self.assertEqual(page._memory_table.rowCount(), 2)
+
+    def test_backup_and_audit_pages_are_bounded_native_controls(self) -> None:
+        page = SettingsPage()
+        snapshot = BackupInventoryItem(
+            "memory-20260826T190000Z-" + ("a" * 32) + ".db",
+            1_572_864,
+            "2026-08-26T19:00:00+00:00",
+        )
+        page.set_backups(BackupOverview("/tmp/synthetic-backups", (snapshot,)))
+        restored: list[str] = []
+        page.backup_restore_requested.connect(restored.append)
+        page._backup_table.selectRow(0)
+        page._backup_restore.click()
+
+        self.assertEqual(restored, [snapshot.snapshot_name])
+        self.assertEqual(page._backup_table.item(0, 1).text(), "1.5 MB")
+        first = AuditInventoryItem(
+            "2026-08-26T19:00:00.000Z",
+            "backup",
+            "backup_create",
+            "succeeded",
+            "normal",
+        )
+        page.set_audit_events(AuditInventoryPage((first,), "100"))
+        audit_pages: list[str] = []
+        page.audit_next_page_requested.connect(audit_pages.append)
+        page._audit_load_more.click()
+
+        self.assertEqual(page._audit_table.rowCount(), 1)
+        self.assertEqual(page._audit_table.item(0, 2).text(), "Backup Create")
+        self.assertEqual(audit_pages, ["100"])
+        self.assertEqual(
+            page._audit_table.accessibleName(),
+            "Redacted audit events table",
+        )
+
+    def test_settings_primary_controls_are_named_and_keyboard_navigable(self) -> None:
+        page = SettingsPage()
+        page.show()
+        page._section_list.setFocus()
+
+        self.assertEqual(page._section_list.accessibleName(), "Settings sections")
+        for control in (
+            page._memory_search,
+            page._memory_table,
+            page._communication_style,
+            page._context_tokens,
+            page._default_response_tokens,
+            page._maximum_response_tokens,
+            page._backup_table,
+            page._backup_create,
+            page._backup_restore,
+            page._audit_table,
+            page._audit_load_more,
+        ):
+            self.assertTrue(control.accessibleName())
+
+        QTest.keyClick(page._section_list, Qt.Key.Key_Down)
+        self.assertEqual(page._section_pages.currentIndex(), 2)
+        QTest.keyClick(page._section_list, Qt.Key.Key_Down)
+        self.assertEqual(page._section_pages.currentIndex(), 3)
+        QTest.keyClick(page._section_list, Qt.Key.Key_Down)
+        self.assertEqual(page._section_pages.currentIndex(), 4)
+        QTest.keyClick(page._section_list, Qt.Key.Key_Down)
+        self.assertEqual(page._section_pages.currentIndex(), 5)
+        page.close()
 
     def test_sidebar_selects_and_renders_a_structured_saved_conversation(self) -> None:
         page = ChatPage()

@@ -327,6 +327,19 @@ class ConversationService:
         finally:
             self._request_lock.release()
 
+    def wait_for_pending_memory(self) -> bool:
+        """Wait boundedly for accepted background memory while no request runs."""
+
+        if not self._request_lock.acquire(blocking=False):
+            return False
+        try:
+            with self._lifecycle_lock:
+                if self._closed:
+                    return False
+            return self._wait_for_post_response_memory()
+        finally:
+            self._request_lock.release()
+
     def _wait_for_post_response_memory(self) -> bool:
         worker = self._post_response_worker
         if worker is None:

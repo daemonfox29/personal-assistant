@@ -190,6 +190,11 @@ def load_settings(
             backup_directory=_optional_absolute_path(
                 environment,
                 "PERSONAL_ASSISTANT_BACKUP_DIR",
+                (
+                    None
+                    if preferences.backup_directory == ""
+                    else Path(preferences.backup_directory)
+                ),
             ),
             context_tokens=_positive_integer(
                 environment,
@@ -270,9 +275,12 @@ def _absolute_path(
 def _optional_absolute_path(
     environment: Mapping[str, str],
     name: str,
+    default: Path | None = None,
 ) -> Path | None:
     value = environment.get(name)
-    if value is None or not value.strip():
+    if value is None:
+        return default
+    if not value.strip():
         return None
     path = Path(value)
     if not path.is_absolute():

@@ -11,7 +11,7 @@ from tempfile import mkstemp
 from personal_assistant.model import validate_response_token_limit
 
 
-PREFERENCES_VERSION = 2
+PREFERENCES_VERSION = 3
 PREFERENCES_FILENAME = "preferences.json"
 MIN_CONTEXT_TOKENS = 2_048
 MAX_CONTEXT_TOKENS = 131_072
@@ -20,6 +20,7 @@ MAX_PREFERENCES_BYTES = 4_096
 MIN_UI_FONT_SIZE = 11
 MAX_UI_FONT_SIZE = 24
 MAX_FONT_FAMILY_CHARS = 128
+MAX_BACKUP_PATH_CHARS = 1_024
 
 
 class ThemePreference(StrEnum):
@@ -42,6 +43,7 @@ class RuntimePreferences:
     theme: ThemePreference = ThemePreference.SYSTEM
     font_family: str = "system"
     font_size: int = 13
+    backup_directory: str = ""
 
     def __post_init__(self) -> None:
         if (
@@ -77,6 +79,17 @@ class RuntimePreferences:
             or not MIN_UI_FONT_SIZE <= self.font_size <= MAX_UI_FONT_SIZE
         ):
             raise ValueError("The interface font size is outside its range.")
+        if not isinstance(self.backup_directory, str):
+            raise ValueError("The backup directory is invalid.")
+        if self.backup_directory:
+            backup_path = Path(self.backup_directory)
+            if (
+                len(self.backup_directory) > MAX_BACKUP_PATH_CHARS
+                or not backup_path.is_absolute()
+                or backup_path.name in {"", ".", ".."}
+                or any(ord(character) < 32 for character in self.backup_directory)
+            ):
+                raise ValueError("The backup directory is invalid.")
 
 
 @dataclass(frozen=True)
@@ -119,7 +132,7 @@ class RuntimePreferencesStore:
             if not isinstance(payload, dict):
                 raise RuntimePreferencesError("The preferences file is invalid.")
             version = payload.get("version")
-            if isinstance(version, bool) or version not in {1, PREFERENCES_VERSION}:
+            if isinstance(version, bool) or version not in {1, 2, PREFERENCES_VERSION}:
                 raise RuntimePreferencesError(
                     "The preferences version is not supported."
                 )
@@ -134,9 +147,13 @@ class RuntimePreferencesStore:
                 "font_family",
                 "font_size",
             }
-            if set(payload) != (
-                version_one_keys if version == 1 else version_two_keys
-            ):
+            version_three_keys = version_two_keys | {"backup_directory"}
+            expected_keys = {
+                1: version_one_keys,
+                2: version_two_keys,
+                3: version_three_keys,
+            }[version]
+            if set(payload) != expected_keys:
                 raise RuntimePreferencesError("The preferences file is invalid.")
             return RuntimePreferences(
                 context_tokens=payload["context_tokens"],
@@ -149,6 +166,9 @@ class RuntimePreferencesStore:
                 ),
                 font_family=("system" if version == 1 else payload["font_family"]),
                 font_size=(13 if version == 1 else payload["font_size"]),
+                backup_directory=(
+                    "" if version in {1, 2} else payload["backup_directory"]
+                ),
             )
         except RuntimePreferencesError:
             raise
@@ -173,6 +193,7 @@ class RuntimePreferencesStore:
                     "theme": preferences.theme.value,
                     "font_family": preferences.font_family,
                     "font_size": preferences.font_size,
+                    "backup_directory": preferences.backup_directory,
                     "version": PREFERENCES_VERSION,
                 },
                 sort_keys=True,

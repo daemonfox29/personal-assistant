@@ -1,10 +1,11 @@
 """Narrow lifecycle boundary exposed to trusted local user interfaces."""
 
 from collections.abc import Callable, Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime, time, timezone
 from enum import StrEnum
 from hashlib import sha256
+import json
 from pathlib import Path
 from threading import Lock
 from uuid import UUID, uuid4
@@ -19,7 +20,11 @@ from personal_assistant.audit import (
     AuditOutcome,
     AuditReasonCode,
 )
-from personal_assistant.audit_file import AuditFileSettings, JsonLinesAuditSink
+from personal_assistant.audit_file import (
+    AuditFileSettings,
+    JsonLinesAuditReader,
+    JsonLinesAuditSink,
+)
 from personal_assistant.assistant_preferences import (
     AssistantPreferenceError,
     CommunicationStyle,
@@ -145,6 +150,41 @@ class MemoryInventoryItem:
     kind: str
     status: str
     updated_at: str
+    identity: str = ""
+
+
+@dataclass(frozen=True)
+class MemoryInventoryPage:
+    items: tuple[MemoryInventoryItem, ...]
+    next_cursor: str | None
+
+
+@dataclass(frozen=True)
+class BackupInventoryItem:
+    snapshot_name: str
+    byte_count: int
+    created_at: str
+
+
+@dataclass(frozen=True)
+class BackupOverview:
+    directory: str
+    snapshots: tuple[BackupInventoryItem, ...]
+
+
+@dataclass(frozen=True)
+class AuditInventoryItem:
+    timestamp: str
+    component: str
+    operation: str
+    outcome: str
+    reason_code: str
+
+
+@dataclass(frozen=True)
+class AuditInventoryPage:
+    items: tuple[AuditInventoryItem, ...]
+    next_cursor: str | None
 
 
 @dataclass(frozen=True)
@@ -183,11 +223,13 @@ class AssistantApplicationService:
         runtime: MemoryRuntime | None,
         info: ApplicationSessionInfo,
         conversation_history: ConversationHistoryRepository | None = None,
+        audit_path: Path | None = None,
     ) -> None:
         self._conversation = conversation
         self._runtime = runtime
         self._info = info
         self._conversation_history = conversation_history
+        self._audit_path = audit_path
         self._conversation_recall = (
             None
             if conversation_history is None
@@ -195,6 +237,9 @@ class AssistantApplicationService:
         )
         self._active_conversation_id: UUID | None = None
         self._private_chat = conversation_history is None
+        self._backup_directory = (
+            None if runtime is None else runtime.settings.backup_directory
+        )
         self._lock = Lock()
         self._request_lock = Lock()
         self._closed = False
@@ -508,14 +553,40 @@ class AssistantApplicationService:
     def list_memories(self) -> tuple[MemoryInventoryItem, ...]:
         """Return a bounded trusted-UI inventory from the unlocked runtime."""
 
+        return self.list_memories_page().items
+
+    def list_memories_page(
+        self,
+        cursor: str | None = None,
+    ) -> MemoryInventoryPage:
+        """Return one bounded inventory page using an opaque validated cursor."""
+
         with self._lock:
             if self._closed:
                 raise ApplicationOpenError("This assistant session is closed.")
             runtime = self._runtime
         if runtime is None:
-            return ()
+            return MemoryInventoryPage((), None)
         try:
-            records = runtime.repository.list_records(uuid4())
+            before_updated_at: datetime | None = None
+            before_record_id: UUID | None = None
+            if cursor is not None:
+                if not isinstance(cursor, str) or len(cursor) > 256:
+                    raise ValueError("Memory cursor is invalid.")
+                decoded = json.loads(cursor)
+                if not isinstance(decoded, dict) or set(decoded) != {
+                    "record_id",
+                    "updated_at",
+                }:
+                    raise ValueError("Memory cursor is invalid.")
+                before_updated_at = datetime.fromisoformat(decoded["updated_at"])
+                before_record_id = UUID(decoded["record_id"])
+            page = runtime.repository.list_record_page(
+                uuid4(),
+                before_updated_at=before_updated_at,
+                before_record_id=before_record_id,
+            )
+            records = page.records
             selected: dict[tuple[str, ...], MemoryRecord] = {}
             for record in records:
                 if not self._memory_inventory_visible(record):
@@ -533,7 +604,7 @@ class AssistantApplicationService:
                     and previous.status is not RecordStatus.CONFIRMED
                 ):
                     selected[key] = record
-            return tuple(
+            items = tuple(
                 self._memory_inventory_item(record)
                 for record in sorted(
                     selected.values(),
@@ -541,6 +612,19 @@ class AssistantApplicationService:
                     reverse=True,
                 )
             )
+            next_cursor = (
+                None
+                if page.next_updated_at is None or page.next_record_id is None
+                else json.dumps(
+                    {
+                        "record_id": str(page.next_record_id),
+                        "updated_at": page.next_updated_at.isoformat(),
+                    },
+                    separators=(",", ":"),
+                    sort_keys=True,
+                )
+            )
+            return MemoryInventoryPage(items, next_cursor)
         except Exception as error:
             raise ApplicationOpenError(
                 "Saved memories could not be listed safely."
@@ -569,6 +653,182 @@ class AssistantApplicationService:
             raise ApplicationOpenError(
                 "Memory suggestions could not be listed safely."
             ) from error
+
+    def configure_backup_directory(self, destination: Path) -> None:
+        """Enable encrypted managed backups for this live unlocked session."""
+
+        with self._lock:
+            if self._closed:
+                raise ApplicationOpenError("This assistant session is closed.")
+            runtime = self._runtime
+        if runtime is None:
+            raise ApplicationOpenError("Backups require encrypted memory.")
+        try:
+            runtime.configure_backup_directory(destination)
+            self._backup_directory = destination
+        except Exception as error:
+            raise ApplicationOpenError(
+                "The backup destination could not be configured safely."
+            ) from error
+
+    def list_backups(self) -> BackupOverview:
+        """Return bounded metadata-verified managed snapshots."""
+
+        with self._lock:
+            if self._closed:
+                raise ApplicationOpenError("This assistant session is closed.")
+            runtime = self._runtime
+            directory = self._backup_directory
+        if runtime is None or runtime.backup_manager is None or directory is None:
+            return BackupOverview("", ())
+        try:
+            snapshots = tuple(
+                BackupInventoryItem(
+                    snapshot.path.name,
+                    snapshot.byte_count,
+                    datetime.strptime(
+                        snapshot.path.name[7:23],
+                        "%Y%m%dT%H%M%SZ",
+                    ).replace(tzinfo=timezone.utc).isoformat(),
+                )
+                for snapshot in runtime.backup_manager.list_snapshot_descriptors()
+            )
+            return BackupOverview(str(directory), snapshots)
+        except Exception as error:
+            raise ApplicationOpenError(
+                "Encrypted backup status could not be read safely."
+            ) from error
+
+    def list_audit_events(self, cursor: str | None = None) -> AuditInventoryPage:
+        """Return a bounded allowlisted view with no content or identifiers."""
+
+        with self._lock:
+            if self._closed:
+                raise ApplicationOpenError("This assistant session is closed.")
+            audit_path = self._audit_path
+        if audit_path is None:
+            return AuditInventoryPage((), None)
+        if cursor is None:
+            offset = 0
+        elif (
+            not isinstance(cursor, str)
+            or len(cursor) > 4
+            or not cursor.isascii()
+            or not cursor.isdecimal()
+        ):
+            raise ApplicationOpenError("The audit page cursor is invalid.")
+        else:
+            offset = int(cursor)
+        try:
+            page = JsonLinesAuditReader(AuditFileSettings(audit_path)).read_page(
+                offset
+            )
+            return AuditInventoryPage(
+                tuple(
+                    AuditInventoryItem(
+                        item.timestamp,
+                        item.component,
+                        item.operation,
+                        item.outcome,
+                        item.reason_code,
+                    )
+                    for item in page.items
+                ),
+                None if page.next_offset is None else str(page.next_offset),
+            )
+        except AuditError as error:
+            raise ApplicationOpenError(
+                "Audit history could not be read safely."
+            ) from error
+
+    def create_backup(self) -> BackupInventoryItem:
+        """Create and verify one encrypted snapshot now."""
+
+        if not self._request_lock.acquire(blocking=False):
+            raise ApplicationOpenError(
+                "Wait for the current response before creating a backup."
+            )
+        try:
+            with self._lock:
+                if self._closed:
+                    raise ApplicationOpenError("This assistant session is closed.")
+                runtime = self._runtime
+            if runtime is None or runtime.backup_manager is None:
+                raise ApplicationOpenError(
+                    "Choose a backup destination before creating a backup."
+                )
+            snapshot = runtime.backup_manager.create_snapshot(uuid4())
+            return BackupInventoryItem(
+                snapshot.path.name,
+                snapshot.byte_count,
+                datetime.strptime(
+                    snapshot.path.name[7:23],
+                    "%Y%m%dT%H%M%SZ",
+                ).replace(tzinfo=timezone.utc).isoformat(),
+            )
+        except ApplicationOpenError:
+            raise
+        except BackupError as error:
+            raise ApplicationOpenError(
+                "The encrypted backup could not be created safely."
+            ) from error
+        except Exception as error:
+            raise ApplicationOpenError(
+                "The encrypted backup could not be created safely."
+            ) from error
+        finally:
+            self._request_lock.release()
+
+    def restore_backup(
+        self,
+        snapshot_name: str,
+        typed_confirmation: str,
+        high_risk_passcode: str,
+    ) -> None:
+        """Restore one managed snapshot through exact passcode authorization."""
+
+        if typed_confirmation != "RESTORE":
+            raise ApplicationOpenError("Type RESTORE exactly to confirm replacement.")
+        if not self._request_lock.acquire(blocking=False):
+            raise ApplicationOpenError(
+                "Wait for the current response before restoring a backup."
+            )
+        try:
+            with self._lock:
+                if self._closed:
+                    raise ApplicationOpenError("This assistant session is closed.")
+                runtime = self._runtime
+            if runtime is None or runtime.backup_manager is None:
+                raise ApplicationOpenError("Encrypted backups are not configured.")
+            if not isinstance(snapshot_name, str) or len(snapshot_name) > 128:
+                raise ApplicationOpenError("The selected backup is invalid.")
+            snapshot = next(
+                (
+                    path
+                    for path in runtime.backup_manager.list_snapshots()
+                    if path.name == snapshot_name
+                ),
+                None,
+            )
+            if snapshot is None:
+                raise ApplicationOpenError("The selected backup is unavailable.")
+            if not self._conversation.wait_for_pending_memory():
+                raise ApplicationOpenError(
+                    "Pending memory work did not finish; restore was cancelled."
+                )
+            runtime.restore_backup(snapshot, high_risk_passcode, uuid4())
+            self._conversation.replace_history(())
+            with self._lock:
+                self._active_conversation_id = None
+                self._private_chat = False
+        except (ApplicationOpenError, BackupError) as error:
+            if isinstance(error, ApplicationOpenError):
+                raise
+            raise ApplicationOpenError(
+                "The encrypted backup could not be restored. Check the passcode."
+            ) from error
+        finally:
+            self._request_lock.release()
 
     def unlock_memory_candidate(
         self,
@@ -941,6 +1201,19 @@ class AssistantApplicationService:
             record.kind.value,
             record.status.value,
             record.updated_at.date().isoformat(),
+            sha256(
+                json.dumps(
+                    memory_payload_equivalence_key(payload)
+                    + (
+                        record.scope.type.value,
+                        "" if record.scope.id is None else str(record.scope.id),
+                        ""
+                        if record.primary_entity_id is None
+                        else str(record.primary_entity_id),
+                    ),
+                    separators=(",", ":"),
+                ).encode("utf-8")
+            ).hexdigest(),
         )
 
     @staticmethod
@@ -1208,6 +1481,11 @@ class AssistantApplicationFactory:
                 if stored_preferences is not None
                 else RuntimePreferences().font_size
             ),
+            backup_directory=(
+                ""
+                if settings.memory.backup_directory is None
+                else str(settings.memory.backup_directory)
+            ),
         )
 
     @property
@@ -1261,6 +1539,19 @@ class AssistantApplicationFactory:
             raise ApplicationSettingsError(
                 "The settings could not be saved safely."
             ) from error
+
+    def save_backup_directory(self, path: Path | None) -> None:
+        """Persist one non-secret absolute backup destination for future launches."""
+
+        value = "" if path is None else str(path)
+        try:
+            preferences = replace(
+                self._runtime_preferences,
+                backup_directory=value,
+            )
+        except ValueError as error:
+            raise ApplicationSettingsError("The backup directory is invalid.") from error
+        self.save_runtime_preferences(preferences)
 
     def launch_state(self) -> ApplicationLaunchState:
         if not self._settings.memory.enabled:
@@ -1439,6 +1730,7 @@ class AssistantApplicationFactory:
                     tuple(notices),
                 ),
                 None if runtime is None else runtime.conversation_history,
+                self._settings.memory.data_directory / "audit.jsonl",
             )
         except ApplicationServiceError:
             if runtime is not None:

@@ -1,6 +1,7 @@
 """Lean native PySide6 interface over the bounded application service."""
 
 import os
+from pathlib import Path
 import re
 import sys
 from threading import Event
@@ -20,6 +21,7 @@ from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
     QDateEdit,
+    QFileDialog,
     QHeaderView,
     QFormLayout,
     QFrame,
@@ -51,6 +53,8 @@ from personal_assistant.application_service import (
     ApplicationSettingsError,
     AssistantApplicationFactory,
     AssistantApplicationService,
+    AuditInventoryPage,
+    BackupOverview,
     MemoryInventoryItem,
     MemoryReviewItem,
 )
@@ -282,6 +286,11 @@ class SettingsPage(QWidget):
     communication_style_save_requested = Signal(str)
     memory_source_requested = Signal(str)
     memory_delete_requested = Signal(str)
+    memory_next_page_requested = Signal(str)
+    backup_directory_requested = Signal(str)
+    backup_create_requested = Signal()
+    backup_restore_requested = Signal(str)
+    audit_next_page_requested = Signal(str)
     candidate_unlock_requested = Signal(str)
     candidate_reject_requested = Signal(str, int)
     candidate_apply_requested = Signal(str, int, str, str, int, str, str, str)
@@ -294,7 +303,7 @@ class SettingsPage(QWidget):
 
         navigation = QFrame()
         navigation.setObjectName("settingsSidebar")
-        navigation.setFixedWidth(190)
+        navigation.setFixedWidth(210)
         navigation_layout = QVBoxLayout(navigation)
         navigation_layout.setContentsMargins(16, 24, 16, 18)
         navigation_layout.setSpacing(12)
@@ -312,9 +321,15 @@ class SettingsPage(QWidget):
         communication_section.setData(Qt.ItemDataRole.UserRole, 2)
         model_section = QListWidgetItem("Model & appearance")
         model_section.setData(Qt.ItemDataRole.UserRole, 3)
+        backup_section = QListWidgetItem("Backups")
+        backup_section.setData(Qt.ItemDataRole.UserRole, 4)
+        audit_section = QListWidgetItem("Audit trail")
+        audit_section.setData(Qt.ItemDataRole.UserRole, 5)
         self._section_list.addItem(memory_section)
         self._section_list.addItem(communication_section)
         self._section_list.addItem(model_section)
+        self._section_list.addItem(backup_section)
+        self._section_list.addItem(audit_section)
         navigation_layout.addWidget(self._section_list, 1)
         back = QPushButton("Back to chat")
         back.setObjectName("secondaryButton")
@@ -327,11 +342,184 @@ class SettingsPage(QWidget):
         self._section_pages.addWidget(self._build_memory_review_page())
         self._section_pages.addWidget(self._build_communication_page())
         self._section_pages.addWidget(self._build_model_page())
+        self._section_pages.addWidget(self._build_backup_page())
+        self._section_pages.addWidget(self._build_audit_page())
         layout.addWidget(self._section_pages, 1)
         self._section_list.currentItemChanged.connect(
             self._select_settings_section
         )
+        self._configure_accessibility()
         self._section_list.setCurrentRow(0)
+
+    def _configure_accessibility(self) -> None:
+        self._section_list.setAccessibleName("Settings sections")
+        self._section_list.setAccessibleDescription(
+            "Choose Memory, Communication style, Model and appearance, "
+            "Backups, or Audit trail."
+        )
+        self._memory_search.setAccessibleName("Search loaded memories")
+        self._memory_table.setAccessibleName("Saved memories table")
+        self._memory_load_more.setAccessibleName("Load more saved memories")
+        self._communication_style.setAccessibleName(
+            "Global assistant communication instructions"
+        )
+        self._context_tokens.setAccessibleName("Model context window")
+        self._default_response_tokens.setAccessibleName(
+            "Default response token limit"
+        )
+        self._maximum_response_tokens.setAccessibleName(
+            "Maximum response token ceiling"
+        )
+        self._backup_table.setAccessibleName("Managed encrypted backups table")
+        self._backup_create.setAccessibleName("Create encrypted backup now")
+        self._backup_restore.setAccessibleName(
+            "Restore selected encrypted backup"
+        )
+        self._audit_table.setAccessibleName("Redacted audit events table")
+        self._audit_load_more.setAccessibleName("Load older audit events")
+
+    def _build_backup_page(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(28, 28, 28, 28)
+        layout.setSpacing(12)
+        title = QLabel("Encrypted backups")
+        title.setObjectName("settingsTitle")
+        layout.addWidget(title)
+        explanation = QLabel(
+            "Choose one destination for managed encrypted snapshots. Backups "
+            "remain encrypted with the same database key and are never opened "
+            "by this screen."
+        )
+        explanation.setObjectName("settingsSubtitle")
+        explanation.setWordWrap(True)
+        layout.addWidget(explanation)
+
+        destination_card = QFrame()
+        destination_card.setObjectName("card")
+        destination_layout = QVBoxLayout(destination_card)
+        destination_layout.setContentsMargins(22, 20, 22, 20)
+        destination_title = QLabel("Backup destination")
+        destination_title.setObjectName("communicationStylePrompt")
+        destination_layout.addWidget(destination_title)
+        destination_row = QHBoxLayout()
+        self._backup_directory = QLineEdit()
+        self._backup_directory.setReadOnly(True)
+        self._backup_directory.setPlaceholderText("No backup folder selected")
+        self._backup_directory.setAccessibleName("Current backup destination")
+        destination_row.addWidget(self._backup_directory, 1)
+        self._backup_choose = QPushButton("Choose folder")
+        self._backup_choose.setObjectName("secondaryButton")
+        self._backup_choose.setAccessibleName("Choose encrypted backup folder")
+        self._backup_choose.clicked.connect(self._choose_backup_directory)
+        destination_row.addWidget(self._backup_choose)
+        destination_layout.addLayout(destination_row)
+        layout.addWidget(destination_card)
+
+        snapshots_card = QFrame()
+        snapshots_card.setObjectName("card")
+        snapshots_layout = QVBoxLayout(snapshots_card)
+        snapshots_layout.setContentsMargins(22, 20, 22, 20)
+        snapshots_title = QLabel("Managed snapshots")
+        snapshots_title.setObjectName("communicationStylePrompt")
+        snapshots_layout.addWidget(snapshots_title)
+        self._backup_table = QTableWidget(0, 3)
+        self._backup_table.setObjectName("backupTable")
+        self._backup_table.setHorizontalHeaderLabels(
+            ("Created", "Size", "Snapshot")
+        )
+        self._backup_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self._backup_table.setSelectionBehavior(
+            QTableWidget.SelectionBehavior.SelectRows
+        )
+        self._backup_table.setSelectionMode(
+            QTableWidget.SelectionMode.SingleSelection
+        )
+        self._backup_table.setAlternatingRowColors(True)
+        self._backup_table.setShowGrid(False)
+        self._backup_table.verticalHeader().setVisible(False)
+        backup_header = self._backup_table.horizontalHeader()
+        backup_header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        backup_header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        backup_header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        self._backup_table.itemSelectionChanged.connect(
+            self._backup_selection_changed
+        )
+        snapshots_layout.addWidget(self._backup_table, 1)
+        warning = QLabel(
+            "Restore replaces the live encrypted database. It requires typing "
+            "RESTORE and your high-risk passcode; a safety snapshot is created "
+            "before replacement."
+        )
+        warning.setObjectName("settingsSubtitle")
+        warning.setWordWrap(True)
+        snapshots_layout.addWidget(warning)
+        actions = QHBoxLayout()
+        self._backup_status = QLabel("Backups are not configured.")
+        self._backup_status.setObjectName("settingsResult")
+        self._backup_status.setWordWrap(True)
+        actions.addWidget(self._backup_status, 1)
+        self._backup_restore = QPushButton("Restore selected")
+        self._backup_restore.setObjectName("secondaryButton")
+        self._backup_restore.setEnabled(False)
+        self._backup_restore.clicked.connect(self._restore_selected_backup)
+        actions.addWidget(self._backup_restore)
+        self._backup_create = QPushButton("Create backup now")
+        self._backup_create.setEnabled(False)
+        self._backup_create.clicked.connect(self.backup_create_requested)
+        actions.addWidget(self._backup_create)
+        snapshots_layout.addLayout(actions)
+        layout.addWidget(snapshots_card, 1)
+        return page
+
+    def _build_audit_page(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(28, 28, 28, 28)
+        layout.setSpacing(12)
+        title = QLabel("Audit trail")
+        title.setObjectName("settingsTitle")
+        layout.addWidget(title)
+        explanation = QLabel(
+            "Inspect recent security and lifecycle events. This view deliberately "
+            "omits conversation text, memory values, prompts, file paths, and "
+            "identifiers. It shows at most 1,000 recent events."
+        )
+        explanation.setObjectName("settingsSubtitle")
+        explanation.setWordWrap(True)
+        layout.addWidget(explanation)
+        self._audit_table = QTableWidget(0, 5)
+        self._audit_table.setObjectName("auditTable")
+        self._audit_table.setHorizontalHeaderLabels(
+            ("Time (UTC)", "Component", "Action", "Outcome", "Reason")
+        )
+        self._audit_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self._audit_table.setSelectionBehavior(
+            QTableWidget.SelectionBehavior.SelectRows
+        )
+        self._audit_table.setAlternatingRowColors(True)
+        self._audit_table.setShowGrid(False)
+        self._audit_table.verticalHeader().setVisible(False)
+        audit_header = self._audit_table.horizontalHeader()
+        audit_header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        audit_header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        audit_header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        audit_header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        audit_header.setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch)
+        layout.addWidget(self._audit_table, 1)
+        footer = QHBoxLayout()
+        self._audit_status = QLabel("0 audit events loaded")
+        self._audit_status.setObjectName("sessionStatus")
+        footer.addWidget(self._audit_status)
+        footer.addStretch()
+        self._audit_load_more = QPushButton("Load older events")
+        self._audit_load_more.setObjectName("secondaryButton")
+        self._audit_load_more.clicked.connect(self._load_more_audit_events)
+        self._audit_load_more.hide()
+        footer.addWidget(self._audit_load_more)
+        layout.addLayout(footer)
+        self._audit_next_cursor: str | None = None
+        return page
 
     def _build_communication_page(self) -> QWidget:
         page = QWidget()
@@ -485,7 +673,7 @@ class SettingsPage(QWidget):
         layout.addWidget(explanation)
 
         self._memory_search = QLineEdit()
-        self._memory_search.setPlaceholderText("Search all memories")
+        self._memory_search.setPlaceholderText("Search loaded memories")
         self._memory_search.setClearButtonEnabled(True)
         self._memory_search.textChanged.connect(self._filter_memory_rows)
         layout.addWidget(self._memory_search)
@@ -539,6 +727,19 @@ class SettingsPage(QWidget):
         memory_splitter.setStretchFactor(1, 1)
         memory_splitter.setSizes((170, 720))
         layout.addWidget(memory_splitter, 1)
+        page_footer = QHBoxLayout()
+        self._memory_page_status = QLabel("0 memories loaded")
+        self._memory_page_status.setObjectName("sessionStatus")
+        page_footer.addWidget(self._memory_page_status)
+        page_footer.addStretch()
+        self._memory_load_more = QPushButton("Load more")
+        self._memory_load_more.setObjectName("secondaryButton")
+        self._memory_load_more.clicked.connect(self._load_more_memories)
+        self._memory_load_more.hide()
+        page_footer.addWidget(self._memory_load_more)
+        layout.addLayout(page_footer)
+        self._loaded_memories: tuple[MemoryInventoryItem, ...] = ()
+        self._memory_next_cursor: str | None = None
         return page
 
     def _build_memory_review_page(self) -> QWidget:
@@ -891,6 +1092,110 @@ class SettingsPage(QWidget):
         )
 
     @Slot()
+    def _choose_backup_directory(self) -> None:
+        selected = QFileDialog.getExistingDirectory(
+            self,
+            "Choose encrypted backup folder",
+            self._backup_directory.text(),
+            QFileDialog.Option.ShowDirsOnly,
+        )
+        if selected:
+            self.backup_directory_requested.emit(selected)
+
+    def set_backups(self, overview: BackupOverview) -> None:
+        self._backup_directory.setText(overview.directory)
+        self._backup_table.setRowCount(0)
+        for snapshot in overview.snapshots:
+            row = self._backup_table.rowCount()
+            self._backup_table.insertRow(row)
+            created = QTableWidgetItem(snapshot.created_at.replace("T", " ")[:19])
+            created.setData(Qt.ItemDataRole.UserRole, snapshot.snapshot_name)
+            self._backup_table.setItem(row, 0, created)
+            self._backup_table.setItem(
+                row,
+                1,
+                QTableWidgetItem(self._format_byte_count(snapshot.byte_count)),
+            )
+            self._backup_table.setItem(
+                row,
+                2,
+                QTableWidgetItem(
+                    f"Managed snapshot · {snapshot.snapshot_name[24:32]}"
+                ),
+            )
+            self._backup_table.item(row, 2).setToolTip(snapshot.snapshot_name)
+        configured = bool(overview.directory)
+        self._backup_create.setEnabled(configured)
+        self._backup_restore.setEnabled(False)
+        self._backup_status.setText(
+            "Choose a destination to enable encrypted backups."
+            if not configured
+            else (
+                "No managed snapshots yet."
+                if not overview.snapshots
+                else f"{len(overview.snapshots)} managed snapshot(s) available."
+            )
+        )
+
+    def show_backup_result(self, text: str) -> None:
+        self._backup_status.setText(text)
+
+    def set_audit_events(
+        self,
+        page: AuditInventoryPage,
+        *,
+        append: bool = False,
+    ) -> None:
+        if not append:
+            self._audit_table.setRowCount(0)
+        for event in page.items:
+            row = self._audit_table.rowCount()
+            self._audit_table.insertRow(row)
+            values = (
+                event.timestamp.replace("T", " ").replace("Z", "")[:19],
+                event.component.replace("_", " ").title(),
+                event.operation.replace("_", " ").title(),
+                event.outcome.title(),
+                event.reason_code.replace("_", " ").title(),
+            )
+            for column, value in enumerate(values):
+                self._audit_table.setItem(row, column, QTableWidgetItem(value))
+        self._audit_next_cursor = page.next_cursor
+        self._audit_load_more.setVisible(page.next_cursor is not None)
+        self._audit_status.setText(
+            f"{self._audit_table.rowCount()} audit events loaded"
+        )
+
+    @Slot()
+    def _load_more_audit_events(self) -> None:
+        if self._audit_next_cursor is not None:
+            self.audit_next_page_requested.emit(self._audit_next_cursor)
+
+    @Slot()
+    def _backup_selection_changed(self) -> None:
+        self._backup_restore.setEnabled(
+            bool(self._backup_directory.text())
+            and self._backup_table.currentRow() >= 0
+        )
+
+    @Slot()
+    def _restore_selected_backup(self) -> None:
+        row = self._backup_table.currentRow()
+        item = self._backup_table.item(row, 0) if row >= 0 else None
+        if item is not None:
+            self.backup_restore_requested.emit(
+                str(item.data(Qt.ItemDataRole.UserRole))
+            )
+
+    @staticmethod
+    def _format_byte_count(byte_count: int) -> str:
+        if byte_count < 1_024:
+            return f"{byte_count} B"
+        if byte_count < 1_048_576:
+            return f"{byte_count / 1_024:.1f} KB"
+        return f"{byte_count / 1_048_576:.1f} MB"
+
+    @Slot()
     def _communication_style_changed(self) -> None:
         length = len(self._communication_style.toPlainText())
         self._communication_count.setText(
@@ -920,7 +1225,33 @@ class SettingsPage(QWidget):
             "restart."
         )
 
-    def set_memories(self, memories: tuple[MemoryInventoryItem, ...]) -> None:
+    def set_memories(
+        self,
+        memories: tuple[MemoryInventoryItem, ...],
+        *,
+        next_cursor: str | None = None,
+        append: bool = False,
+    ) -> None:
+        if append:
+            existing_ids = {item.record_id for item in self._loaded_memories}
+            existing_identities = {
+                item.identity
+                for item in self._loaded_memories
+                if item.identity
+            }
+            self._loaded_memories += tuple(
+                memory
+                for memory in memories
+                if memory.record_id not in existing_ids
+                and (
+                    not memory.identity
+                    or memory.identity not in existing_identities
+                )
+            )
+        else:
+            self._loaded_memories = memories
+        self._memory_next_cursor = next_cursor
+        memories = self._loaded_memories
         self._memory_table.setRowCount(0)
         category_counts = {
             category: sum(memory.category == category for memory in memories)
@@ -995,6 +1326,16 @@ class SettingsPage(QWidget):
             action_layout.addWidget(delete)
             self._memory_table.setCellWidget(row, 4, actions)
         self._filter_memory_rows()
+        self._memory_page_status.setText(f"{len(memories)} memories loaded")
+        self._memory_load_more.setVisible(next_cursor is not None)
+        self._memory_load_more.setEnabled(next_cursor is not None)
+
+    @Slot()
+    def _load_more_memories(self) -> None:
+        if self._memory_next_cursor is None:
+            return
+        self._memory_load_more.setEnabled(False)
+        self.memory_next_page_requested.emit(self._memory_next_cursor)
 
     @Slot()
     def _filter_memory_rows(self) -> None:
@@ -1714,6 +2055,17 @@ class AssistantWindow(QMainWindow):
         )
         self._settings.memory_source_requested.connect(self._open_memory_source)
         self._settings.memory_delete_requested.connect(self._delete_memory)
+        self._settings.memory_next_page_requested.connect(
+            self._load_next_memory_page
+        )
+        self._settings.backup_directory_requested.connect(
+            self._configure_backup_directory
+        )
+        self._settings.backup_create_requested.connect(self._create_backup)
+        self._settings.backup_restore_requested.connect(self._restore_backup)
+        self._settings.audit_next_page_requested.connect(
+            self._load_next_audit_page
+        )
         self._settings.candidate_unlock_requested.connect(
             self._unlock_memory_candidate
         )
@@ -1876,7 +2228,15 @@ class AssistantWindow(QMainWindow):
                 persistent=self._service.info.persistent_memory,
             )
             try:
-                self._settings.set_memories(self._service.list_memories())
+                page = self._service.list_memories_page()
+                self._settings.set_memories(
+                    page.items,
+                    next_cursor=page.next_cursor,
+                )
+                self._settings.set_backups(self._service.list_backups())
+                self._settings.set_audit_events(
+                    self._service.list_audit_events()
+                )
             except ApplicationOpenError as error:
                 self._show_safe_error(str(error))
                 return
@@ -1988,7 +2348,11 @@ class AssistantWindow(QMainWindow):
         if self._service is None:
             return
         try:
-            self._settings.set_memories(self._service.list_memories())
+            page = self._service.list_memories_page()
+            self._settings.set_memories(
+                page.items,
+                next_cursor=page.next_cursor,
+            )
             self._settings.set_memory_candidates(
                 self._service.list_memory_candidates()
             )
@@ -1996,6 +2360,94 @@ class AssistantWindow(QMainWindow):
             self._show_safe_error(str(error))
             return
         self._settings.show_candidate_result(result)
+
+    @Slot(str)
+    def _load_next_memory_page(self, cursor: str) -> None:
+        if self._service is None:
+            return
+        try:
+            page = self._service.list_memories_page(cursor)
+            self._settings.set_memories(
+                page.items,
+                next_cursor=page.next_cursor,
+                append=True,
+            )
+        except ApplicationOpenError as error:
+            self._show_safe_error(str(error))
+
+    @Slot(str)
+    def _configure_backup_directory(self, selected: str) -> None:
+        if self._service is None:
+            return
+        destination = Path(selected)
+        try:
+            self._factory.save_backup_directory(destination)
+            self._service.configure_backup_directory(destination)
+            self._settings.set_backups(self._service.list_backups())
+            self._settings.show_backup_result(
+                "Encrypted backup destination saved and active."
+            )
+        except (ApplicationSettingsError, ApplicationOpenError) as error:
+            self._show_safe_error(str(error))
+
+    @Slot()
+    def _create_backup(self) -> None:
+        if self._service is None:
+            return
+        try:
+            self._service.create_backup()
+            self._settings.set_backups(self._service.list_backups())
+            self._settings.show_backup_result(
+                "Encrypted backup created and metadata verified."
+            )
+        except ApplicationOpenError as error:
+            self._show_safe_error(str(error))
+
+    @Slot(str)
+    def _restore_backup(self, snapshot_name: str) -> None:
+        if self._service is None:
+            return
+        confirmation, accepted = QInputDialog.getText(
+            self,
+            WINDOW_TITLE,
+            "Type RESTORE exactly to replace the live encrypted database:",
+        )
+        if not accepted or confirmation != "RESTORE":
+            confirmation = ""
+            return
+        passcode = self._candidate_passcode("restore this encrypted backup")
+        if passcode is None:
+            confirmation = ""
+            return
+        try:
+            self._service.restore_backup(snapshot_name, confirmation, passcode)
+            self._settings.set_backups(self._service.list_backups())
+            page = self._service.list_memories_page()
+            self._settings.set_memories(
+                page.items,
+                next_cursor=page.next_cursor,
+            )
+            self._refresh_history()
+            self._settings.show_backup_result(
+                "Encrypted backup restored. Conversation and memory views refreshed."
+            )
+        except ApplicationOpenError as error:
+            self._show_safe_error(str(error))
+        finally:
+            confirmation = ""
+            passcode = ""
+
+    @Slot(str)
+    def _load_next_audit_page(self, cursor: str) -> None:
+        if self._service is None:
+            return
+        try:
+            self._settings.set_audit_events(
+                self._service.list_audit_events(cursor),
+                append=True,
+            )
+        except ApplicationOpenError as error:
+            self._show_safe_error(str(error))
 
     @Slot(str)
     def _open_memory_source(self, identifier: str) -> None:
@@ -2034,7 +2486,11 @@ class AssistantWindow(QMainWindow):
             return
         try:
             self._service.delete_memory(UUID(identifier))
-            self._settings.set_memories(self._service.list_memories())
+            page = self._service.list_memories_page()
+            self._settings.set_memories(
+                page.items,
+                next_cursor=page.next_cursor,
+            )
         except (ValueError, ApplicationOpenError) as error:
             message = (
                 str(error)
@@ -2061,6 +2517,7 @@ class AssistantWindow(QMainWindow):
                 theme=ThemePreference(theme),
                 font_family=font_family,
                 font_size=font_size,
+                backup_directory=self._factory.runtime_preferences.backup_directory,
             )
             self._factory.save_runtime_preferences(preferences)
         except (ValueError, ApplicationSettingsError) as error:
@@ -2286,16 +2743,19 @@ class AssistantWindow(QMainWindow):
                                     border: 1px solid {colors['border']};
                                     border-radius: 10px; }}
             #memoryCategoryTitle {{ font-weight: 650; padding: 3px 6px; }}
-            #memoryTable, #candidateTable {{ background: {colors['card']};
+            #memoryTable, #candidateTable, #backupTable, #auditTable {{ background: {colors['card']};
                                              alternate-background-color: {colors['sidebar']};
                                              border: 1px solid {colors['border']};
                                              border-radius: 10px; }}
             #memoryTable QHeaderView::section,
-            #candidateTable QHeaderView::section {{ background: {colors['sidebar']};
+            #candidateTable QHeaderView::section,
+            #backupTable QHeaderView::section,
+            #auditTable QHeaderView::section {{ background: {colors['sidebar']};
                                                     border: 0;
                                                     border-bottom: 1px solid {colors['border']};
                                                     padding: 8px; font-weight: 650; }}
-            #memoryTable::item, #candidateTable::item {{ padding: 5px 7px; }}
+            #memoryTable::item, #candidateTable::item,
+            #backupTable::item, #auditTable::item {{ padding: 5px 7px; }}
             #memoryRowActions {{ background: transparent; }}
             #tableAction, #tableDeleteAction {{ padding: 5px 6px; }}
             #tableDeleteAction {{ background: transparent;
