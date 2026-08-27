@@ -95,6 +95,13 @@ such as `double-check`, `cross-check`, `verify this`, or `check your work` to
 the same search question to request one additional tool-free model review
 before the final answer is shown.
 
+If an otherwise normal searched draft omits or alters its source URLs, the app
+makes one bounded tool-free citation-repair attempt before showing the fixed
+validation notice. It never silently presents the uncited draft as verified and
+never loops through repeated repair passes. The native UI also accepts the
+terminal-style `/long <question>` prefix, removes it from the search query, and
+uses the configured long-response limit.
+
 ## Set up the project
 
 The project uses `uv` 0.12.5 for locked, cross-platform dependency management.

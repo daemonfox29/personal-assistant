@@ -494,6 +494,43 @@ class ConversationServiceTests(unittest.TestCase):
         )
         self.assertEqual(model.requests[0].messages[-1].role, MessageRole.TOOL)
 
+    def test_ui_long_command_is_cleaned_and_uses_long_response_limit(self) -> None:
+        class CitedModel:
+            def __init__(self) -> None:
+                self.requests: list[ModelRequest] = []
+
+            def generate(self, request: ModelRequest) -> ModelResponse:
+                self.requests.append(request)
+                return ModelResponse(
+                    "High-level information (https://example.test/current)."
+                )
+
+        provider = SearchProvider()
+        model = CitedModel()
+        service = ConversationService(
+            model,
+            tool_executor=ToolExecutor(
+                default_tool_registry(web_search=provider),
+                InMemoryAuditSink(),
+            ),
+        )
+
+        tuple(
+            service.events_for(
+                "/long look up some stuff about bipolar disorder on pubmed, "
+                "and put high-level information together",
+                max_response_tokens=400,
+            )
+        )
+
+        self.assertEqual(
+            provider.queries,
+            [
+                "look up some stuff about bipolar disorder on pubmed, "
+                "and put high-level information together"
+            ],
+        )
+        self.assertEqual(model.requests[0].max_response_tokens, 1_200)
 
     def test_broad_news_phrases_trigger_automatic_page_reading(self) -> None:
         for prompt in (
@@ -876,6 +913,40 @@ class ConversationServiceTests(unittest.TestCase):
                     ConversationEventKind.COMPLETED,
                     tuple(event.kind for event in events),
                 )
+
+    def test_missing_citation_gets_one_bounded_repair_pass(self) -> None:
+        class RepairingModel:
+            def __init__(self) -> None:
+                self.requests: list[ModelRequest] = []
+
+            def generate(self, request: ModelRequest) -> ModelResponse:
+                self.requests.append(request)
+                if len(self.requests) == 1:
+                    return ModelResponse("Useful draft without a citation.")
+                return ModelResponse(
+                    "Repaired grounded answer (https://example.test/current)."
+                )
+
+        model = RepairingModel()
+        service = ConversationService(
+            model,
+            tool_executor=ToolExecutor(
+                default_tool_registry(web_search=SearchProvider()),
+                InMemoryAuditSink(),
+            ),
+        )
+
+        events = tuple(service.events_for("Update me on current events today."))
+
+        visible = "".join(event.text for event in events)
+        self.assertEqual(len(model.requests), 2)
+        self.assertNotIn("Useful draft", visible)
+        self.assertIn("Correcting the source links", visible)
+        self.assertIn("Repaired grounded answer", visible)
+        self.assertIn(
+            ConversationEventKind.COMPLETED,
+            tuple(event.kind for event in events),
+        )
 
     def test_successful_empty_search_cannot_be_presented_as_grounded(self) -> None:
         class EmptySearch:

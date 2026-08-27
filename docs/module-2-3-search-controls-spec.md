@@ -21,8 +21,9 @@ response without freezing the rest of the interface.
   enabled.
 - Natural direct phrases such as “only search Google for this,” “check Google
   Scholar search for info on…,” “use Crossref to find…,” or “look it up with
-  PubMed” select exactly that enabled provider for the current request. Failure
-  does not silently fall back to another provider.
+  PubMed” select exactly that enabled provider for the current request, including
+  when ordinary prose continues after the provider name. Failure does not
+  silently fall back to another provider.
 - Without an override, trusted code routes general/current queries to Google,
   scholarly queries to at most three scholarly sources, health/science queries
   to PubMed plus Google Scholar, and explicit reference queries to Wikipedia

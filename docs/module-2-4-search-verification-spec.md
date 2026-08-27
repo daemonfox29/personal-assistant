@@ -57,7 +57,10 @@ or memory analysis.
 - No arbitrary URLs, follow-up network requests, larger page limits, provider
   credentials, query text, or result content enter the audit trail.
 - The normal path uses one model answer pass. Only an explicit owner phrase
-  enables the second pass and its additional latency and token use.
+  enables the full evidence-review pass and its additional latency and token
+  use. If the normal answer fails only the deterministic citation gate, one
+  bounded tool-free repair pass may correct its source links; a failed repair is
+  rejected, and an explicit review never cascades into a third model pass.
 - The verifier uses only bounded evidence from the same request and has no tool
   definitions, preventing a recursive search or browsing loop.
 
@@ -70,6 +73,8 @@ or memory analysis.
 - Explicit double-check wording produces exactly one additional model pass and
   exposes only the reviewed answer.
 - Unknown or missing citations fail closed with a fixed notice.
+- A normal draft with missing or altered citations receives at most one bounded
+  repair attempt before that fixed failure.
 - Cancellation during either pass excludes the incomplete turn from session and
   persistent-memory promotion.
 - Existing context, tool, search, and response limits remain enforced.

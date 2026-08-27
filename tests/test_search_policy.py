@@ -54,6 +54,11 @@ class SearchPolicyTests(unittest.TestCase):
             ("Check Google search for info on Iran.", SearchSource.GOOGLE),
             ("Use Crossref to find papers on sleep.", SearchSource.CROSSREF),
             ("Look it up with PubMed.", SearchSource.PUBMED),
+            (
+                "Look up some stuff about bipolar disorder on PubMed, and "
+                "put some high-level information together.",
+                SearchSource.PUBMED,
+            ),
             ("Search Wikipedia for Saturn.", SearchSource.WIKIPEDIA),
         )
         for prompt, expected in cases:

@@ -62,7 +62,7 @@ _RESEARCH_TERMS = re.compile(
     re.IGNORECASE,
 )
 _HEALTH_TERMS = re.compile(
-    r"\b(health|medical|medicine|clinical|disease|diagnosis|treatment|"
+    r"\b(health|medical|medicine|clinical|disease|disorder|diagnosis|treatment|"
     r"symptom|symptoms|drug|medication|nutrition|therapy)\b",
     re.IGNORECASE,
 )
@@ -208,6 +208,8 @@ def _explicit_source(user_text: str) -> SearchSource | None:
                 rf"\buse only {escaped}\b",
                 rf"\buse {escaped} to (?:search for|find|look up)\b",
                 rf"\blook (?:this |that |it )?up (?:on|with|using) {escaped}\b",
+                rf"\b(?:look up|find|search for|check)\b.{{0,192}}"
+                rf"\b(?:on|with|using) {escaped}\b",
             )
             if any(re.search(pattern, normalized) for pattern in patterns):
                 return source

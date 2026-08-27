@@ -488,6 +488,7 @@ class ConversationService:
             if not ordered_calls:
                 if search_grounding_required:
                     grounded_text = "".join(step_parts)
+                    review_performed = False
                     if verification_requested and evidence_urls:
                         yield ConversationEvent(
                             ConversationEventKind.NOTICE,
@@ -499,8 +500,33 @@ class ConversationService:
                             messages,
                             response_limit,
                         )
+                        review_performed = True
                         limit_reached = limit_reached or review_limited
-                    if grounded_answer_error(grounded_text, evidence_urls) is not None:
+                    grounding_error = grounded_answer_error(
+                        grounded_text,
+                        evidence_urls,
+                    )
+                    if (
+                        grounding_error is not None
+                        and evidence_urls
+                        and not review_performed
+                    ):
+                        yield ConversationEvent(
+                            ConversationEventKind.NOTICE,
+                            "Correcting the source links…",
+                        )
+                        grounded_text, repair_limited = self._review_search_answer(
+                            user_text,
+                            grounded_text,
+                            messages,
+                            response_limit,
+                        )
+                        limit_reached = limit_reached or repair_limited
+                        grounding_error = grounded_answer_error(
+                            grounded_text,
+                            evidence_urls,
+                        )
+                    if grounding_error is not None:
                         raise _SearchGroundingRejected()
                     response_pieces.append(grounded_text)
                     yield ConversationEvent(
@@ -908,6 +934,13 @@ class ConversationService:
         memory_handoff_query: str | None = None,
     ) -> _PreparedTurn | str:
         stripped = user_text.strip()
+        command, separator, remaining = stripped.partition(" ")
+        if command.casefold() == "/long":
+            if not separator or not remaining.strip():
+                return "Usage: /long <question>"
+            stripped = remaining.strip()
+            user_text = stripped
+            requested_response_tokens = self._settings.long_response_tokens
         if not stripped:
             return ""
         if conversation_recall_context is not None and (

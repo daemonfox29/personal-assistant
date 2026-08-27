@@ -237,15 +237,25 @@ Completed:
   find...`, and `look it up with PubMed` select only that enabled provider.
 - Preserved bounded published-date metadata when SearXNG supplies it, as well as
   response cancellation during either generation pass.
+- Fixed natural trailing-provider requests when ordinary prose follows the
+  provider name, and added `disorder` to the health-search fallback vocabulary.
+- Added native handling for `/long <question>` so the command changes the
+  response limit but never contaminates the outbound search query.
+- Added one bounded citation-repair pass for an otherwise successful search
+  whose first model draft omits or alters current-result links. Failed repair
+  still fails closed, and explicit evidence review never triggers a third pass.
 
 Verification:
 
 - All source and test modules compiled, repository whitespace checks passed,
-  and 449 local tests passed in 13.675 seconds with one intentionally opt-in
+  and 451 local tests passed in 13.630 seconds with one intentionally opt-in
   benchmark skipped.
 - A real Google Scholar-only double-check compared current evidence and produced
   a completed reviewed answer with three exact citations from distinct papers.
   Managed close stopped the dedicated Colima profile afterward.
+- The exact reported `/long look up ... on pubmed, and ...` request then passed
+  end to end, returned a completed high-level answer, and included three exact
+  current PubMed-route citations.
 
 Next:
 
