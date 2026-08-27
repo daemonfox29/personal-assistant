@@ -23,20 +23,24 @@ The current unknown-action fallback remains `DENY` for safety. The completeness 
 
 When a feature is added, use automation to create the standard project pieces while requiring a deliberate review of its security policy before the feature is treated as complete.
 
-## Native web-search service controls
+## Web-search maintenance controls
 
-Add a trusted Settings surface for the optional local SearXNG service. It should
-show whether search is installed, running, healthy, and pinned to the reviewed
-version; offer deliberate setup, manual start/stop overrides, idle-time
-configuration, and reviewed-update actions; and
-explain which upstream engines receive a query. Keep the service bound to
-numeric loopback and preserve the assistant's fail-closed search boundary. Do
-not give the model authority to install, start, reconfigure, or update it.
+The trusted Settings surface now provides status, manual start/finish-then-stop,
+idle-time choices, and an allowlisted provider selection without granting the
+model lifecycle or configuration authority. Later, add deliberate setup and
+reviewed version-update workflows with exact installed-versus-reviewed version
+information. Updates must remain owner-initiated, digest-pinned, auditable, and
+separate from model tools.
 
-The current app-owned lifecycle starts the isolated Colima profile on first
-search and stops it after two idle minutes or app shutdown. The future UI must
-preserve those safe defaults and must not turn lifecycle control into a model
-tool.
+## Private-search network layer
+
+Before treating web search as privacy-preserving, add an opt-in, user-owned
+network layer for SearXNG's outbound provider requests. It should support a
+reviewed VPN or proxy configuration without giving the model any authority to
+view, change, enable, or bypass it. The Settings UI should explain plainly that
+search providers may otherwise receive the query and source IP address. Any
+proxy address or credential must remain secret, excluded from the audit trail,
+and unavailable to the model.
 
 ## Approval interface
 

@@ -20,12 +20,14 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import (
     QApplication,
+    QCheckBox,
     QComboBox,
     QDateEdit,
     QFileDialog,
     QHeaderView,
     QFormLayout,
     QFrame,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -58,6 +60,7 @@ from personal_assistant.application_service import (
     BackupOverview,
     MemoryInventoryItem,
     MemoryReviewItem,
+    SearchServiceOverview,
 )
 from personal_assistant.assistant_preferences import (
     MAX_COMMUNICATION_STYLE_CHARS,
@@ -77,8 +80,11 @@ from personal_assistant.runtime_preferences import (
     MIN_UI_FONT_SIZE,
     RuntimePreferences,
     RuntimePreferencesError,
+    SEARCH_IDLE_CHOICES_SECONDS,
     ThemePreference,
 )
+from personal_assistant.search_policy import SEARCH_SOURCE_LABELS, SearchSource
+from personal_assistant.search_runtime import SearchRuntimeState
 from personal_assistant.terminal_output import sanitize_terminal_text
 
 
@@ -293,6 +299,10 @@ class MessageComposer(QPlainTextEdit):
 class SettingsPage(QWidget):
     save_requested = Signal(int, int, int, str, str, int)
     communication_style_save_requested = Signal(str)
+    search_save_requested = Signal(int, object)
+    search_start_requested = Signal()
+    search_stop_requested = Signal()
+    search_refresh_requested = Signal()
     memory_source_requested = Signal(str)
     memory_delete_requested = Signal(str)
     memory_next_page_requested = Signal(str)
@@ -330,13 +340,16 @@ class SettingsPage(QWidget):
         communication_section.setData(Qt.ItemDataRole.UserRole, 2)
         model_section = QListWidgetItem("Model & appearance")
         model_section.setData(Qt.ItemDataRole.UserRole, 3)
+        search_section = QListWidgetItem("Web search")
+        search_section.setData(Qt.ItemDataRole.UserRole, 4)
         backup_section = QListWidgetItem("Backups")
-        backup_section.setData(Qt.ItemDataRole.UserRole, 4)
+        backup_section.setData(Qt.ItemDataRole.UserRole, 5)
         audit_section = QListWidgetItem("Audit trail")
-        audit_section.setData(Qt.ItemDataRole.UserRole, 5)
+        audit_section.setData(Qt.ItemDataRole.UserRole, 6)
         self._section_list.addItem(memory_section)
         self._section_list.addItem(communication_section)
         self._section_list.addItem(model_section)
+        self._section_list.addItem(search_section)
         self._section_list.addItem(backup_section)
         self._section_list.addItem(audit_section)
         navigation_layout.addWidget(self._section_list, 1)
@@ -351,6 +364,7 @@ class SettingsPage(QWidget):
         self._section_pages.addWidget(self._build_memory_review_page())
         self._section_pages.addWidget(self._build_communication_page())
         self._section_pages.addWidget(self._build_model_page())
+        self._section_pages.addWidget(self._build_search_page())
         self._section_pages.addWidget(self._build_backup_page())
         self._section_pages.addWidget(self._build_audit_page())
         layout.addWidget(self._section_pages, 1)
@@ -364,7 +378,7 @@ class SettingsPage(QWidget):
         self._section_list.setAccessibleName("Settings sections")
         self._section_list.setAccessibleDescription(
             "Choose Memory, Communication style, Model and appearance, "
-            "Backups, or Audit trail."
+            "Web search, Backups, or Audit trail."
         )
         self._memory_search.setAccessibleName("Search loaded memories")
         self._memory_table.setAccessibleName("Saved memories table")
@@ -383,6 +397,10 @@ class SettingsPage(QWidget):
         self._maximum_response_tokens.setAccessibleName(
             "Maximum response token ceiling"
         )
+        self._search_idle.setAccessibleName("Search service idle timeout")
+        self._search_start.setAccessibleName("Start local web search service")
+        self._search_stop.setAccessibleName("Stop local web search service")
+        self._search_refresh.setAccessibleName("Refresh web search status")
         self._backup_table.setAccessibleName("Managed encrypted backups table")
         self._backup_create.setAccessibleName("Create encrypted backup now")
         self._backup_restore.setAccessibleName(
@@ -390,6 +408,97 @@ class SettingsPage(QWidget):
         )
         self._audit_table.setAccessibleName("Redacted audit events table")
         self._audit_load_more.setAccessibleName("Load older audit events")
+
+    def _build_search_page(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(28, 28, 28, 28)
+        layout.setSpacing(12)
+        title = QLabel("Web search")
+        title.setObjectName("settingsTitle")
+        layout.addWidget(title)
+        explanation = QLabel(
+            "Search starts automatically when a question needs current public "
+            "information. The model cannot operate or reconfigure the local "
+            "search service itself."
+        )
+        explanation.setObjectName("settingsSubtitle")
+        explanation.setWordWrap(True)
+        layout.addWidget(explanation)
+
+        status_card = QFrame()
+        status_card.setObjectName("card")
+        status_layout = QVBoxLayout(status_card)
+        status_layout.setContentsMargins(22, 20, 22, 20)
+        self._search_status = QLabel("Checking local search status…")
+        self._search_status.setObjectName("settingsResult")
+        self._search_status.setWordWrap(True)
+        status_layout.addWidget(self._search_status)
+        status_actions = QHBoxLayout()
+        self._search_refresh = QPushButton("Refresh")
+        self._search_refresh.setObjectName("secondaryButton")
+        self._search_refresh.clicked.connect(self.search_refresh_requested)
+        status_actions.addWidget(self._search_refresh)
+        status_actions.addStretch()
+        self._search_stop = QPushButton("Stop after current search")
+        self._search_stop.setObjectName("secondaryButton")
+        self._search_stop.clicked.connect(self.search_stop_requested)
+        status_actions.addWidget(self._search_stop)
+        self._search_start = QPushButton("Start search service")
+        self._search_start.clicked.connect(self.search_start_requested)
+        status_actions.addWidget(self._search_start)
+        status_layout.addLayout(status_actions)
+        layout.addWidget(status_card)
+
+        preferences_card = QFrame()
+        preferences_card.setObjectName("card")
+        preferences_layout = QVBoxLayout(preferences_card)
+        preferences_layout.setContentsMargins(22, 20, 22, 20)
+        idle_row = QHBoxLayout()
+        idle_row.addWidget(QLabel("Stop service after inactivity"))
+        self._search_idle = QComboBox()
+        for seconds in SEARCH_IDLE_CHOICES_SECONDS:
+            minutes = seconds // 60
+            self._search_idle.addItem(
+                f"{minutes} minute" if minutes == 1 else f"{minutes} minutes",
+                seconds,
+            )
+        idle_row.addStretch()
+        idle_row.addWidget(self._search_idle)
+        preferences_layout.addLayout(idle_row)
+        providers_label = QLabel("Enabled quality sources")
+        providers_label.setObjectName("communicationStylePrompt")
+        preferences_layout.addWidget(providers_label)
+        self._search_sources: dict[SearchSource, QCheckBox] = {}
+        providers_grid = QGridLayout()
+        providers_grid.setHorizontalSpacing(28)
+        providers_grid.setVerticalSpacing(6)
+        for index, (source, label) in enumerate(SEARCH_SOURCE_LABELS.items()):
+            checkbox = QCheckBox(label)
+            checkbox.setAccessibleName(f"Enable {label} search source")
+            self._search_sources[source] = checkbox
+            providers_grid.addWidget(checkbox, index // 2, index % 2)
+        preferences_layout.addLayout(providers_grid)
+        disclosure = QLabel(
+            "Queries are sent through your local SearXNG service to the enabled "
+            "public providers. Google Web and Google Scholar require no account "
+            "or API key, but may rate-limit or block automated requests. Query "
+            "text and results are not stored in the app audit trail."
+        )
+        disclosure.setObjectName("settingsSubtitle")
+        disclosure.setWordWrap(True)
+        preferences_layout.addWidget(disclosure)
+        save_row = QHBoxLayout()
+        self._search_result = QLabel()
+        self._search_result.setObjectName("settingsResult")
+        self._search_result.setWordWrap(True)
+        save_row.addWidget(self._search_result, 1)
+        self._search_save = QPushButton("Save search settings")
+        self._search_save.clicked.connect(self._save_search_settings)
+        save_row.addWidget(self._search_save)
+        preferences_layout.addLayout(save_row)
+        layout.addWidget(preferences_card, 1)
+        return page
 
     def _build_backup_page(self) -> QWidget:
         page = QWidget()
@@ -1244,7 +1353,67 @@ class SettingsPage(QWidget):
         self._set_combo_value(self._theme, preferences.theme.value)
         self._set_combo_value(self._font_family, preferences.font_family)
         self._font_size.setValue(preferences.font_size)
+        self._set_combo_value(
+            self._search_idle,
+            preferences.search_idle_seconds,
+        )
+        enabled = set(preferences.enabled_search_sources)
+        for source, checkbox in self._search_sources.items():
+            checkbox.setChecked(source in enabled)
         self._result.clear()
+        self._search_result.clear()
+
+    def set_search_overview(self, overview: SearchServiceOverview) -> None:
+        labels = {
+            SearchRuntimeState.UNAVAILABLE: "Unavailable",
+            SearchRuntimeState.OFF: "Off",
+            SearchRuntimeState.READY: "Ready",
+            SearchRuntimeState.BUSY: "Busy — search in progress",
+            SearchRuntimeState.STOPPING: "Stopping after the current search",
+            SearchRuntimeState.CLOSED: "Closed",
+        }
+        self._search_status.setText(
+            f"Local search service: {labels[overview.state]}. Idle timeout: "
+            f"{overview.idle_seconds // 60} minute(s)."
+        )
+        can_start = overview.state in {
+            SearchRuntimeState.OFF,
+            SearchRuntimeState.UNAVAILABLE,
+        }
+        can_stop = overview.state in {
+            SearchRuntimeState.READY,
+            SearchRuntimeState.BUSY,
+            SearchRuntimeState.STOPPING,
+        }
+        self._search_start.setEnabled(can_start)
+        self._search_stop.setEnabled(can_stop)
+        self._search_refresh.setEnabled(True)
+
+    def show_search_loading(self, message: str) -> None:
+        self._search_status.setText(message)
+        self._search_start.setEnabled(False)
+        self._search_stop.setEnabled(False)
+        self._search_refresh.setEnabled(False)
+
+    def show_search_result(self, message: str) -> None:
+        self._search_result.setText(message)
+
+    @Slot()
+    def _save_search_settings(self) -> None:
+        sources = tuple(
+            source
+            for source, checkbox in self._search_sources.items()
+            if checkbox.isChecked()
+        )
+        if not sources:
+            self._search_result.setText(
+                "Enable at least one reviewed search source."
+            )
+            return
+        self.search_save_requested.emit(
+            int(self._search_idle.currentData()),
+            sources,
+        )
 
     def show_saved(self) -> None:
         self._result.setText(
@@ -1438,13 +1607,14 @@ class SettingsPage(QWidget):
         return field
 
     @staticmethod
-    def _set_combo_value(combo: QComboBox, value: str) -> None:
+    def _set_combo_value(combo: QComboBox, value: object) -> None:
         index = combo.findData(value)
         combo.setCurrentIndex(0 if index < 0 else index)
 
 
 class ChatPage(QWidget):
     message_requested = Signal(str, int)
+    stop_requested = Signal()
     settings_requested = Signal()
     new_chat_requested = Signal(bool)
     conversation_requested = Signal(str)
@@ -1522,6 +1692,12 @@ class ChatPage(QWidget):
         self._send.clicked.connect(self._submit)
         composer.addWidget(self._input, 1)
         composer.addWidget(self._send)
+        self._stop = QPushButton("Stop")
+        self._stop.setObjectName("secondaryButton")
+        self._stop.setAccessibleName("Stop generating response")
+        self._stop.clicked.connect(self._request_stop)
+        self._stop.hide()
+        composer.addWidget(self._stop)
         layout.addLayout(composer)
         self._assistant_open = False
         self._assistant_start: int | None = None
@@ -1585,6 +1761,8 @@ class ChatPage(QWidget):
         self._private_chat.setEnabled(True)
         self._conversation_list.setEnabled(True)
         self._delete_chat.setEnabled(not busy)
+        self._stop.setVisible(busy)
+        self._stop.setEnabled(busy)
         if not busy:
             self._input.setFocus()
 
@@ -1641,6 +1819,14 @@ class ChatPage(QWidget):
                         ConversationRole.NOTICE,
                         limit_notice,
                     )
+        elif event.kind is ConversationEventKind.CANCELLED:
+            if self._assistant_open:
+                self._finish_assistant(record=record)
+            notice = event.text or "Stopped by you."
+            self._append_role("Notice")
+            self._append_plain(f"{notice}\n\n", italic=True)
+            if record:
+                self._record_display_message(ConversationRole.NOTICE, notice)
 
     def transcript_text(self) -> str:
         return self._transcript.toPlainText()
@@ -1822,6 +2008,14 @@ class ChatPage(QWidget):
         self.append_user(text)
         self._start_thinking()
         self.message_requested.emit(text, response_limit)
+
+    @Slot()
+    def _request_stop(self) -> None:
+        if not self._stop.isEnabled():
+            return
+        self._stop.setEnabled(False)
+        self._status.setText(f"{self._base_status} · stopping response…")
+        self.stop_requested.emit()
 
     def _start_thinking(self) -> None:
         self._stop_thinking()
@@ -2099,6 +2293,46 @@ class _ChatWorker(QObject):
             self.finished.emit()
 
 
+class _SearchWorker(QObject):
+    succeeded = Signal(object)
+    failed = Signal(str)
+    finished = Signal()
+
+    def __init__(
+        self,
+        service: AssistantApplicationService,
+        operation: str,
+        idle_seconds: int = 120,
+        sources: tuple[SearchSource, ...] = (),
+    ) -> None:
+        super().__init__()
+        self._service = service
+        self._operation = operation
+        self._idle_seconds = idle_seconds
+        self._sources = sources
+
+    @Slot()
+    def run(self) -> None:
+        try:
+            if self._operation == "start":
+                overview = self._service.start_search_service()
+            elif self._operation == "stop":
+                overview = self._service.stop_search_service()
+            elif self._operation == "configure":
+                overview = self._service.configure_search(
+                    self._idle_seconds,
+                    self._sources,
+                )
+            else:
+                overview = self._service.refresh_search_overview()
+            self.succeeded.emit(overview)
+        except ApplicationServiceError as error:
+            self.failed.emit(str(error))
+        finally:
+            self._sources = ()
+            self.finished.emit()
+
+
 class _BackupWorker(QObject):
     """Run slow encrypted-backup operations outside the Qt presentation thread."""
 
@@ -2162,6 +2396,8 @@ class AssistantWindow(QMainWindow):
         self._backup_thread: QThread | None = None
         self._backup_worker: _BackupWorker | None = None
         self._backup_action: str | None = None
+        self._search_thread: QThread | None = None
+        self._search_worker: _SearchWorker | None = None
         self._closing = False
         self._appearance_preferences = factory.runtime_preferences
         self.setWindowTitle(WINDOW_TITLE)
@@ -2184,6 +2420,7 @@ class AssistantWindow(QMainWindow):
         self._welcome.unlock_requested.connect(self._start_unlock)
         self._welcome.session_only_requested.connect(self._start_session_only)
         self._chat.message_requested.connect(self._start_message)
+        self._chat.stop_requested.connect(self._stop_message)
         self._chat.settings_requested.connect(self._show_settings)
         self._chat.new_chat_requested.connect(self._new_chat)
         self._chat.conversation_requested.connect(self._open_conversation)
@@ -2191,6 +2428,16 @@ class AssistantWindow(QMainWindow):
         self._settings.save_requested.connect(self._save_settings)
         self._settings.communication_style_save_requested.connect(
             self._save_communication_style
+        )
+        self._settings.search_save_requested.connect(self._save_search_settings)
+        self._settings.search_start_requested.connect(
+            lambda: self._start_search_task("start")
+        )
+        self._settings.search_stop_requested.connect(
+            lambda: self._start_search_task("stop")
+        )
+        self._settings.search_refresh_requested.connect(
+            lambda: self._start_search_task("status")
         )
         self._settings.memory_source_requested.connect(self._open_memory_source)
         self._settings.memory_delete_requested.connect(self._delete_memory)
@@ -2341,6 +2588,11 @@ class AssistantWindow(QMainWindow):
         self._chat_worker = worker
         thread.start()
 
+    @Slot()
+    def _stop_message(self) -> None:
+        if self._service is not None and self._chat_thread is not None:
+            self._service.cancel_active_response()
+
     @Slot(object)
     def _chat_event_ready(self, event: ConversationEvent) -> None:
         if self._deferred_chat_destination is None:
@@ -2394,6 +2646,17 @@ class AssistantWindow(QMainWindow):
         self._settings.show_memory_page()
         self._pages.setCurrentWidget(self._settings)
         if self._service is not None:
+            search_overview = getattr(self._service, "search_overview", None)
+            if callable(search_overview):
+                self._settings.set_search_overview(search_overview())
+            else:
+                self._settings.set_search_overview(
+                    SearchServiceOverview(
+                        SearchRuntimeState.UNAVAILABLE,
+                        self._factory.runtime_preferences.search_idle_seconds,
+                        (),
+                    )
+                )
             self._settings.set_communication_style(
                 self._service.communication_style,
                 persistent=self._service.info.persistent_memory,
@@ -2421,6 +2684,87 @@ class AssistantWindow(QMainWindow):
                 self._start_backup_task("status")
             else:
                 self._settings.set_backups(BackupOverview("", ()))
+
+    @Slot(int, object)
+    def _save_search_settings(self, idle_seconds: int, sources: object) -> None:
+        if self._service is None:
+            return
+        try:
+            selected = tuple(SearchSource(value) for value in sources)
+            current = self._factory.runtime_preferences
+            preferences = RuntimePreferences(
+                context_tokens=current.context_tokens,
+                default_response_tokens=current.default_response_tokens,
+                maximum_response_tokens=current.maximum_response_tokens,
+                theme=current.theme,
+                font_family=current.font_family,
+                font_size=current.font_size,
+                backup_directory=current.backup_directory,
+                search_idle_seconds=idle_seconds,
+                enabled_search_sources=selected,
+            )
+            self._factory.save_runtime_preferences(preferences)
+        except (TypeError, ValueError, ApplicationSettingsError) as error:
+            self._show_safe_error(str(error))
+            return
+        self._start_search_task(
+            "configure",
+            idle_seconds=idle_seconds,
+            sources=selected,
+        )
+
+    def _start_search_task(
+        self,
+        operation: str,
+        *,
+        idle_seconds: int = 120,
+        sources: tuple[SearchSource, ...] = (),
+    ) -> None:
+        if self._service is None or self._search_thread is not None:
+            return
+        messages = {
+            "start": "Starting the isolated local search service…",
+            "stop": "Stopping search safely…",
+            "configure": "Applying search settings…",
+            "status": "Checking local search status…",
+        }
+        self._settings.show_search_loading(messages[operation])
+        thread = QThread(self)
+        worker = _SearchWorker(
+            self._service,
+            operation,
+            idle_seconds,
+            sources,
+        )
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.succeeded.connect(self._search_task_succeeded)
+        worker.failed.connect(self._search_task_failed)
+        worker.finished.connect(thread.quit)
+        worker.finished.connect(worker.deleteLater)
+        thread.finished.connect(self._search_task_finished)
+        self._search_thread = thread
+        self._search_worker = worker
+        thread.start()
+
+    @Slot(object)
+    def _search_task_succeeded(self, overview: SearchServiceOverview) -> None:
+        self._settings.set_search_overview(overview)
+        self._settings.show_search_result("Search settings are active.")
+
+    @Slot(str)
+    def _search_task_failed(self, message: str) -> None:
+        self._settings.show_search_result(message)
+        if self._service is not None:
+            self._settings.set_search_overview(self._service.search_overview())
+
+    @Slot()
+    def _search_task_finished(self) -> None:
+        if self._search_thread is not None:
+            self._search_thread.deleteLater()
+        self._search_thread = None
+        self._search_worker = None
+        self._finish_close_if_ready()
 
     def _candidate_passcode(self, action: str) -> str | None:
         passcode, accepted = QInputDialog.getText(
@@ -2759,6 +3103,12 @@ class AssistantWindow(QMainWindow):
                 font_family=font_family,
                 font_size=font_size,
                 backup_directory=self._factory.runtime_preferences.backup_directory,
+                search_idle_seconds=(
+                    self._factory.runtime_preferences.search_idle_seconds
+                ),
+                enabled_search_sources=(
+                    self._factory.runtime_preferences.enabled_search_sources
+                ),
             )
             self._factory.save_runtime_preferences(preferences)
         except (ValueError, ApplicationSettingsError) as error:
@@ -2875,6 +3225,7 @@ class AssistantWindow(QMainWindow):
             self._startup_thread is not None
             or self._chat_thread is not None
             or self._backup_thread is not None
+            or self._search_thread is not None
         ):
             if self._chat_thread is not None:
                 self._pages.setCurrentWidget(self._chat)
@@ -2896,6 +3247,7 @@ class AssistantWindow(QMainWindow):
             and self._startup_thread is None
             and self._chat_thread is None
             and self._backup_thread is None
+            and self._search_thread is None
         ):
             self._close_service()
             self.hide()

@@ -9,9 +9,14 @@ import stat
 from tempfile import mkstemp
 
 from personal_assistant.model import validate_response_token_limit
+from personal_assistant.search_policy import (
+    QUALITY_DEFAULT_SOURCES,
+    SearchSource,
+    validate_search_sources,
+)
 
 
-PREFERENCES_VERSION = 3
+PREFERENCES_VERSION = 4
 PREFERENCES_FILENAME = "preferences.json"
 MIN_CONTEXT_TOKENS = 2_048
 MAX_CONTEXT_TOKENS = 131_072
@@ -21,6 +26,7 @@ MIN_UI_FONT_SIZE = 11
 MAX_UI_FONT_SIZE = 24
 MAX_FONT_FAMILY_CHARS = 128
 MAX_BACKUP_PATH_CHARS = 1_024
+SEARCH_IDLE_CHOICES_SECONDS = (60, 120, 300, 600, 900, 1_800)
 
 
 class ThemePreference(StrEnum):
@@ -44,6 +50,8 @@ class RuntimePreferences:
     font_family: str = "system"
     font_size: int = 13
     backup_directory: str = ""
+    search_idle_seconds: int = 120
+    enabled_search_sources: tuple[SearchSource, ...] = QUALITY_DEFAULT_SOURCES
 
     def __post_init__(self) -> None:
         if (
@@ -90,6 +98,13 @@ class RuntimePreferences:
                 or any(ord(character) < 32 for character in self.backup_directory)
             ):
                 raise ValueError("The backup directory is invalid.")
+        if self.search_idle_seconds not in SEARCH_IDLE_CHOICES_SECONDS:
+            raise ValueError("The search idle time is invalid.")
+        object.__setattr__(
+            self,
+            "enabled_search_sources",
+            validate_search_sources(self.enabled_search_sources),
+        )
 
 
 @dataclass(frozen=True)
@@ -132,7 +147,12 @@ class RuntimePreferencesStore:
             if not isinstance(payload, dict):
                 raise RuntimePreferencesError("The preferences file is invalid.")
             version = payload.get("version")
-            if isinstance(version, bool) or version not in {1, 2, PREFERENCES_VERSION}:
+            if isinstance(version, bool) or version not in {
+                1,
+                2,
+                3,
+                PREFERENCES_VERSION,
+            }:
                 raise RuntimePreferencesError(
                     "The preferences version is not supported."
                 )
@@ -148,10 +168,15 @@ class RuntimePreferencesStore:
                 "font_size",
             }
             version_three_keys = version_two_keys | {"backup_directory"}
+            version_four_keys = version_three_keys | {
+                "enabled_search_sources",
+                "search_idle_seconds",
+            }
             expected_keys = {
                 1: version_one_keys,
                 2: version_two_keys,
                 3: version_three_keys,
+                4: version_four_keys,
             }[version]
             if set(payload) != expected_keys:
                 raise RuntimePreferencesError("The preferences file is invalid.")
@@ -168,6 +193,14 @@ class RuntimePreferencesStore:
                 font_size=(13 if version == 1 else payload["font_size"]),
                 backup_directory=(
                     "" if version in {1, 2} else payload["backup_directory"]
+                ),
+                search_idle_seconds=(
+                    120 if version in {1, 2, 3} else payload["search_idle_seconds"]
+                ),
+                enabled_search_sources=(
+                    QUALITY_DEFAULT_SOURCES
+                    if version in {1, 2, 3}
+                    else tuple(payload["enabled_search_sources"])
                 ),
             )
         except RuntimePreferencesError:
@@ -194,6 +227,10 @@ class RuntimePreferencesStore:
                     "font_family": preferences.font_family,
                     "font_size": preferences.font_size,
                     "backup_directory": preferences.backup_directory,
+                    "enabled_search_sources": [
+                        source.value for source in preferences.enabled_search_sources
+                    ],
+                    "search_idle_seconds": preferences.search_idle_seconds,
                     "version": PREFERENCES_VERSION,
                 },
                 sort_keys=True,

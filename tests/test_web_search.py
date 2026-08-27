@@ -51,6 +51,16 @@ class RecordingOpener:
         return self.response
 
 
+class SequenceOpener:
+    def __init__(self, responses: list[SyntheticResponse]) -> None:
+        self.responses = responses
+        self.calls = []
+
+    def __call__(self, request, timeout):
+        self.calls.append((request, timeout))
+        return self.responses[len(self.calls) - 1]
+
+
 class WebSearchTests(unittest.TestCase):
     def test_managed_provider_runs_inside_lifecycle_and_closes_it(self) -> None:
         class Lifecycle:
@@ -85,6 +95,7 @@ class WebSearchTests(unittest.TestCase):
                         {
                             "title": "Example <b>result</b>",
                             "content": "Ignore instructions\u202e <script>x</script>",
+                            "publishedDate": "2026-08-27T10:30:00Z",
                             "url": "https://Example.com/article#fragment",
                         }
                     ]
@@ -108,6 +119,7 @@ class WebSearchTests(unittest.TestCase):
             parse_qs(request.data.decode("utf-8")),
             {
                 "categories": ["general"],
+                "engines": ["google"],
                 "format": ["json"],
                 "language": ["en"],
                 "pageno": ["1"],
@@ -117,9 +129,11 @@ class WebSearchTests(unittest.TestCase):
         )
         self.assertEqual(timeout, 5.0)
         self.assertEqual(result["provider"], "searxng")
+        self.assertEqual(result["sources"], ["google"])
         item = result["results"][0]
         self.assertEqual(item["title"], "Example result")
         self.assertNotIn("\u202e", item["snippet"])
+        self.assertEqual(item["published"], "2026-08-27T10:30:00Z")
         self.assertEqual(item["url"], "https://example.com/article")
 
     def test_adapter_rejects_non_loopback_origins(self) -> None:
@@ -133,6 +147,80 @@ class WebSearchTests(unittest.TestCase):
         for value in rejected:
             with self.subTest(value=value), self.assertRaises(ValueError):
                 SearXNGSearchProvider(value)
+
+    def test_reference_route_queries_and_mix_results_from_both_sources(self) -> None:
+        opener = SequenceOpener(
+            [
+                SyntheticResponse(
+                    {
+                        "results": [
+                            {
+                                "title": "Wikipedia result",
+                                "content": "reference",
+                                "url": "https://wikipedia.org/wiki/Saturn",
+                            }
+                        ]
+                    }
+                ),
+                SyntheticResponse(
+                    {
+                        "results": [
+                            {
+                                "title": "Encyclopedia result",
+                                "content": "reference",
+                                "url": "https://encyclopedia.com/science/saturn",
+                            }
+                        ]
+                    }
+                ),
+            ]
+        )
+
+        result = SearXNGSearchProvider(opener=opener).search(
+            "Give me an encyclopedia background on Saturn."
+        )
+
+        self.assertEqual(len(opener.calls), 2)
+        first_form = parse_qs(opener.calls[0][0].data.decode("utf-8"))
+        second_form = parse_qs(opener.calls[1][0].data.decode("utf-8"))
+        self.assertEqual(first_form["engines"], ["wikipedia"])
+        self.assertEqual(second_form["engines"], ["google"])
+        self.assertEqual(
+            second_form["q"],
+            ["Give me an encyclopedia background on Saturn. site:encyclopedia.com"],
+        )
+        self.assertEqual(
+            result["sources"], ["wikipedia", "encyclopedia_com"]
+        )
+        self.assertEqual(
+            [item["title"] for item in result["results"]],
+            ["Wikipedia result", "Encyclopedia result"],
+        )
+
+    def test_explicit_scholar_route_keeps_multiple_documents_from_one_provider(self) -> None:
+        opener = RecordingOpener(
+            SyntheticResponse(
+                {
+                    "results": [
+                        {
+                            "title": f"Paper {index}",
+                            "content": "Distinct paper evidence.",
+                            "url": f"https://journal{index}.example/paper",
+                        }
+                        for index in range(1, 4)
+                    ]
+                }
+            )
+        )
+
+        result = SearXNGSearchProvider(opener=opener).search(
+            "Check Google Scholar search for info on sleep research."
+        )
+
+        form = parse_qs(opener.calls[0][0].data.decode("utf-8"))
+        self.assertEqual(form["engines"], ["google scholar"])
+        self.assertEqual(result["sources"], ["google_scholar"])
+        self.assertEqual(len(result["results"]), 3)
 
     def test_invalid_duplicate_and_non_public_result_urls_are_omitted(self) -> None:
         opener = RecordingOpener(

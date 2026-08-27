@@ -21,8 +21,10 @@ from personal_assistant.model import (
     ModelToolCall,
     ModelUnavailableError,
 )
+from personal_assistant.session_memory import ConversationTurn
 from personal_assistant.tool_runtime import ToolExecutor, default_tool_registry
 from personal_assistant.web_reader import PublicWebPageReader
+from personal_assistant.web_search import WebSearchError, WebSearchFailureCode
 
 
 class SyntheticStreamingModel:
@@ -132,6 +134,7 @@ class RecordingPostResponseWorker:
         self.wait_calls = 0
         self.capture_calls: list[str] = []
         self.capture_result: tuple[str, ...] | None = None
+        self.submissions: list[tuple[str, str]] = []
 
     def capture_before_response(self, user_text: str) -> tuple[str, ...] | None:
         self.capture_calls.append(user_text)
@@ -139,6 +142,7 @@ class RecordingPostResponseWorker:
 
     def submit(self, user_text: str, assistant_text: str) -> bool:
         self.calls += 1
+        self.submissions.append((user_text, assistant_text))
         return True
 
     def wait_until_idle(self, timeout_seconds: float = 15.0) -> bool:
@@ -341,12 +345,116 @@ class ConversationServiceTests(unittest.TestCase):
             model.requests[0].messages[0].content,
         )
         self.assertIn(
+            "provider is a discovery route",
+            model.requests[0].messages[0].content,
+        )
+        self.assertIn(
+            "multiple distinct returned papers or documents",
+            model.requests[0].messages[0].content,
+        )
+        self.assertIn(
             "untrusted_web_search_results",
             model.requests[1].messages[-1].content,
         )
+        visible = "".join(event.text for event in events)
+        self.assertIn("Source S1 — Example", visible)
+        self.assertNotIn("https://example.test/current", visible)
+
+    def test_search_urls_are_revealed_only_when_requested(self) -> None:
+        class LinkedAnswerModel:
+            def generate(self, request: ModelRequest) -> ModelResponse:
+                return ModelResponse("Current information [S1].")
+
+        service = ConversationService(
+            LinkedAnswerModel(),
+            tool_executor=ToolExecutor(
+                default_tool_registry(web_search=SearchProvider()),
+                InMemoryAuditSink(),
+            ),
+        )
+
+        events = tuple(
+            service.events_for(
+                "Update me on current events today and include source links."
+            )
+        )
+
+        visible = "".join(event.text for event in events)
+        self.assertIn("Source S1 — Example", visible)
+        self.assertIn("https://example.test/current", visible)
+
+    def test_destination_request_cannot_display_an_invented_url(self) -> None:
+        class InventedDestinationModel:
+            def __init__(self) -> None:
+                self.requests: list[ModelRequest] = []
+
+            def generate(self, request: ModelRequest) -> ModelResponse:
+                self.requests.append(request)
+                return ModelResponse("Try https://www.amazon.com/dp/invented.")
+
+        provider = SearchProvider()
+        model = InventedDestinationModel()
+        service = ConversationService(
+            model,
+            tool_executor=ToolExecutor(
+                default_tool_registry(web_search=provider),
+                InMemoryAuditSink(),
+            ),
+        )
+
+        events = tuple(
+            service.events_for("Can you give me an Amazon link for Love, Janis?")
+        )
+
+        visible = "".join(event.text for event in events)
+        self.assertEqual(
+            provider.queries,
+            ["Can you give me an Amazon link for Love, Janis?"],
+        )
+        self.assertEqual(len(model.requests), 2)
+        self.assertNotIn("https://www.amazon.com/dp/invented", visible)
+        self.assertIn("couldn't validate", visible)
+        self.assertNotIn(
+            ConversationEventKind.COMPLETED,
+            tuple(event.kind for event in events),
+        )
+
+    def test_destination_request_shows_only_the_current_verified_url(self) -> None:
+        class AmazonProvider:
+            def search(self, _query: str):
+                return {
+                    "provider": "searxng",
+                    "results": [
+                        {
+                            "title": "Verified book listing",
+                            "url": "https://www.amazon.com/dp/verified",
+                        }
+                    ],
+                    "trust": "untrusted_web_search_results",
+                }
+
+        class VerifiedDestinationModel:
+            def generate(self, _request: ModelRequest) -> ModelResponse:
+                return ModelResponse("Here it is [S1].")
+
+        service = ConversationService(
+            VerifiedDestinationModel(),
+            tool_executor=ToolExecutor(
+                default_tool_registry(web_search=AmazonProvider()),
+                InMemoryAuditSink(),
+            ),
+        )
+
+        events = tuple(
+            service.events_for("Can you give me an Amazon link for Love, Janis?")
+        )
+
+        visible = "".join(event.text for event in events)
+        self.assertIn("https://www.amazon.com/dp/verified", visible)
+        self.assertNotIn("invented", visible)
         self.assertIn(
-            "https://example.test/current",
-            "".join(event.text for event in events),
+            ConversationEventKind.COMPLETED,
+            tuple(event.kind for event in events),
         )
 
     def test_model_search_query_is_not_used_as_outbound_data(self) -> None:
@@ -366,7 +474,9 @@ class ConversationServiceTests(unittest.TestCase):
                             ),
                         ),
                     )
-                return ModelResponse("Python result.")
+                return ModelResponse(
+                    "Python result (https://example.test/current)."
+                )
 
         provider = SearchProvider()
         model = InjectingSearchModel()
@@ -388,7 +498,80 @@ class ConversationServiceTests(unittest.TestCase):
         )
         self.assertNotIn("private model memory value", repr(provider.queries))
         self.assertEqual(len(model.requests), 2)
-        self.assertIn("Python result.", "".join(event.text for event in events))
+        self.assertIn("Python result", "".join(event.text for event in events))
+
+    def test_search_follow_up_resolves_from_recent_user_text_globally(self) -> None:
+        class FollowUpSearchModel:
+            def generate(self, request: ModelRequest) -> ModelResponse:
+                if request.messages[-1].role is MessageRole.TOOL:
+                    return ModelResponse("Recommended biographies [S1].")
+                return ModelResponse(
+                    "",
+                    (ModelToolCall.create("search_public_web", {}),),
+                )
+
+        provider = SearchProvider()
+        service = ConversationService(
+            FollowUpSearchModel(),
+            tool_executor=ToolExecutor(
+                default_tool_registry(web_search=provider),
+                InMemoryAuditSink(),
+            ),
+        )
+        service.replace_history(
+            (
+                ConversationTurn(
+                    "Tell me about Janis Joplin.",
+                    "Janis Joplin was an influential singer.",
+                ),
+            )
+        )
+
+        events = tuple(
+            service.events_for("Can you give me some popular books on her?")
+        )
+
+        self.assertEqual(
+            provider.queries,
+            ["Can you give me some popular books on Janis Joplin?"],
+        )
+        self.assertIn(
+            ConversationEventKind.COMPLETED,
+            tuple(event.kind for event in events),
+        )
+
+    def test_ambiguous_search_never_uses_assistant_text_as_query_context(self) -> None:
+        class SearchingModel:
+            def generate(self, request: ModelRequest) -> ModelResponse:
+                return ModelResponse(
+                    "",
+                    (ModelToolCall.create("search_public_web", {}),),
+                )
+
+        provider = SearchProvider()
+        service = ConversationService(
+            SearchingModel(),
+            tool_executor=ToolExecutor(
+                default_tool_registry(web_search=provider),
+                InMemoryAuditSink(),
+            ),
+        )
+        service.replace_history(
+            (
+                ConversationTurn(
+                    "Thanks.",
+                    "The person we discussed was Janis Joplin.",
+                ),
+            )
+        )
+
+        events = tuple(service.events_for("Can you find books about her?"))
+
+        self.assertEqual(provider.queries, [])
+        self.assertIn(
+            "clarify who or what you mean",
+            "".join(event.text for event in events),
+        )
 
     def test_recent_news_search_auto_reads_before_synthesized_answer(self) -> None:
         class ReadingModel:
@@ -441,12 +624,84 @@ class ConversationServiceTests(unittest.TestCase):
         self.assertEqual(model.requests[0].tools, ())
         answer = "".join(event.text for event in events)
         self.assertIn("synthesized", answer)
-        self.assertIn("https://example.test/current", answer)
+        self.assertIn("Source S1 — Example", answer)
+        self.assertNotIn("https://example.test/current", answer)
         self.assertIn(
             "Earlier conversation and saved context were omitted from this "
             "request to leave room for tool results.",
             tuple(event.text for event in events),
         )
+
+    def test_explicit_provider_command_searches_without_model_tool_choice(self) -> None:
+        class AnsweringModel:
+            def __init__(self) -> None:
+                self.requests: list[ModelRequest] = []
+
+            def generate(self, request: ModelRequest) -> ModelResponse:
+                self.requests.append(request)
+                return ModelResponse(
+                    "A source-backed answer (https://example.test/current)."
+                )
+
+        provider = SearchProvider()
+        model = AnsweringModel()
+        service = ConversationService(
+            model,
+            tool_executor=ToolExecutor(
+                default_tool_registry(web_search=provider),
+                InMemoryAuditSink(),
+            ),
+        )
+
+        tuple(
+            service.events_for(
+                "Check Google Scholar search for info on sleep research."
+            )
+        )
+
+        self.assertEqual(
+            provider.queries,
+            ["Check Google Scholar search for info on sleep research."],
+        )
+        self.assertEqual(model.requests[0].messages[-1].role, MessageRole.TOOL)
+
+    def test_ui_long_command_is_cleaned_and_uses_long_response_limit(self) -> None:
+        class CitedModel:
+            def __init__(self) -> None:
+                self.requests: list[ModelRequest] = []
+
+            def generate(self, request: ModelRequest) -> ModelResponse:
+                self.requests.append(request)
+                return ModelResponse(
+                    "High-level information (https://example.test/current)."
+                )
+
+        provider = SearchProvider()
+        model = CitedModel()
+        service = ConversationService(
+            model,
+            tool_executor=ToolExecutor(
+                default_tool_registry(web_search=provider),
+                InMemoryAuditSink(),
+            ),
+        )
+
+        tuple(
+            service.events_for(
+                "/long look up some stuff about bipolar disorder on pubmed, "
+                "and put high-level information together",
+                max_response_tokens=400,
+            )
+        )
+
+        self.assertEqual(
+            provider.queries,
+            [
+                "look up some stuff about bipolar disorder on pubmed, "
+                "and put high-level information together"
+            ],
+        )
+        self.assertEqual(model.requests[0].max_response_tokens, 1_200)
 
     def test_broad_news_phrases_trigger_automatic_page_reading(self) -> None:
         for prompt in (
@@ -664,6 +919,265 @@ class ConversationServiceTests(unittest.TestCase):
         first.join(timeout=1)
         self.assertFalse(first.is_alive())
         self.assertTrue(first_events)
+
+    def test_owner_cancellation_keeps_partial_text_out_of_memory_promotion(self) -> None:
+        model = SyntheticStreamingModel()
+        worker = RecordingPostResponseWorker()
+        service = ConversationService(model, post_response_worker=worker)
+        events = service.events_for("first private detail")
+
+        first = next(events)
+        service.cancel_active_response()
+        remaining = tuple(events)
+
+        self.assertEqual(first.kind, ConversationEventKind.ASSISTANT_CHUNK)
+        self.assertEqual(remaining[-1].kind, ConversationEventKind.CANCELLED)
+        self.assertEqual(worker.calls, 0)
+
+        tuple(service.events_for("second question"))
+        request_text = " ".join(
+            message.content for message in model.requests[-1].messages
+        )
+        self.assertNotIn("first private detail", request_text)
+
+    def test_failed_search_retries_once_and_emits_safe_code(self) -> None:
+        class FailingSearch:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            def search(self, _query: str):
+                self.calls += 1
+                raise WebSearchError(
+                    "private failure details",
+                    WebSearchFailureCode.CONNECT,
+                )
+
+        provider = FailingSearch()
+        service = ConversationService(
+            SyntheticStreamingModel(),
+            tool_executor=ToolExecutor(
+                default_tool_registry(web_search=provider),
+                InMemoryAuditSink(),
+            ),
+        )
+
+        events = tuple(service.events_for("Update me on current events today."))
+
+        self.assertEqual(provider.calls, 2)
+        notices = [
+            event.text
+            for event in events
+            if event.kind is ConversationEventKind.NOTICE
+        ]
+        self.assertTrue(any("Retrying once" in text for text in notices))
+        self.assertTrue(any("WEB-CONNECT-01" in text for text in notices))
+        self.assertFalse(any("private failure details" in text for text in notices))
+
+    def test_disabled_explicit_provider_is_not_retried_or_called_connection_error(self) -> None:
+        class DisabledSearch:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            def search(self, _query: str):
+                self.calls += 1
+                raise WebSearchError(
+                    "private provider details",
+                    WebSearchFailureCode.PROVIDER,
+                )
+
+        provider = DisabledSearch()
+        service = ConversationService(
+            SyntheticStreamingModel(),
+            tool_executor=ToolExecutor(
+                default_tool_registry(web_search=provider),
+                InMemoryAuditSink(),
+            ),
+        )
+
+        events = tuple(service.events_for("Only search Google Scholar for sleep."))
+
+        self.assertEqual(provider.calls, 1)
+        notices = [
+            event.text
+            for event in events
+            if event.kind is ConversationEventKind.NOTICE
+        ]
+        self.assertTrue(any("disabled or unavailable" in text for text in notices))
+        self.assertFalse(any("connecting" in text for text in notices))
+
+    def test_owner_double_check_uses_one_hidden_draft_and_one_tool_free_review(self) -> None:
+        class ReviewingModel:
+            def __init__(self) -> None:
+                self.requests: list[ModelRequest] = []
+
+            def generate(self, request: ModelRequest) -> ModelResponse:
+                self.requests.append(request)
+                if len(self.requests) == 1:
+                    return ModelResponse("Unverified draft with an inaccurate detail.")
+                return ModelResponse(
+                    "Reviewed supported answer (https://example.test/current)."
+                )
+
+        model = ReviewingModel()
+        memory_worker = RecordingPostResponseWorker()
+        service = ConversationService(
+            model,
+            post_response_worker=memory_worker,
+            tool_executor=ToolExecutor(
+                default_tool_registry(web_search=SearchProvider()),
+                InMemoryAuditSink(),
+            ),
+        )
+
+        events = tuple(
+            service.events_for("Double-check current events today before answering.")
+        )
+
+        visible = "".join(event.text for event in events)
+        self.assertEqual(len(model.requests), 2)
+        self.assertNotIn("inaccurate detail", visible)
+        self.assertIn("Double-checking the evidence", visible)
+        self.assertIn("Reviewed supported answer", visible)
+        self.assertEqual(model.requests[1].tools, ())
+        self.assertTrue(
+            any(
+                message.role is MessageRole.TOOL
+                and "untrusted_web_search_results" in message.content
+                for message in model.requests[1].messages
+            )
+        )
+        self.assertIn(
+            "Unverified draft",
+            " ".join(message.content for message in model.requests[1].messages),
+        )
+        self.assertEqual(len(memory_worker.submissions), 1)
+        self.assertNotIn("inaccurate detail", memory_worker.submissions[0][1])
+        self.assertIn("Reviewed supported answer", memory_worker.submissions[0][1])
+
+    def test_search_answer_with_missing_or_unknown_citation_fails_closed(self) -> None:
+        for answer in (
+            "An answer with no citation.",
+            "Supported (https://example.test/current) but invented "
+            "(https://invented.example/report).",
+        ):
+            with self.subTest(answer=answer):
+                class UngroundedModel:
+                    def generate(self, request: ModelRequest) -> ModelResponse:
+                        return ModelResponse(answer)
+
+                service = ConversationService(
+                    UngroundedModel(),
+                    tool_executor=ToolExecutor(
+                        default_tool_registry(web_search=SearchProvider()),
+                        InMemoryAuditSink(),
+                    ),
+                )
+
+                events = tuple(
+                    service.events_for("Update me on current events today.")
+                )
+
+                visible = "".join(event.text for event in events)
+                self.assertNotIn(answer, visible)
+                self.assertIn("couldn't validate", visible)
+                self.assertNotIn(
+                    ConversationEventKind.COMPLETED,
+                    tuple(event.kind for event in events),
+                )
+
+    def test_missing_citation_gets_one_bounded_repair_pass(self) -> None:
+        class RepairingModel:
+            def __init__(self) -> None:
+                self.requests: list[ModelRequest] = []
+
+            def generate(self, request: ModelRequest) -> ModelResponse:
+                self.requests.append(request)
+                if len(self.requests) == 1:
+                    return ModelResponse("Useful draft without a citation.")
+                return ModelResponse("Repaired grounded answer [S1].")
+
+        model = RepairingModel()
+        service = ConversationService(
+            model,
+            tool_executor=ToolExecutor(
+                default_tool_registry(web_search=SearchProvider()),
+                InMemoryAuditSink(),
+            ),
+        )
+
+        events = tuple(service.events_for("Update me on current events today."))
+
+        visible = "".join(event.text for event in events)
+        self.assertEqual(len(model.requests), 2)
+        self.assertNotIn("Useful draft", visible)
+        self.assertIn("Correcting the source citations", visible)
+        self.assertIn("Repaired grounded answer", visible)
+        self.assertIn("Source S1 — Example", visible)
+        self.assertNotIn("https://example.test/current", visible)
+        self.assertIn(
+            ConversationEventKind.COMPLETED,
+            tuple(event.kind for event in events),
+        )
+
+    def test_successful_empty_search_cannot_be_presented_as_grounded(self) -> None:
+        class EmptySearch:
+            def search(self, _query: str):
+                return {
+                    "provider": "searxng",
+                    "results": [],
+                    "trust": "untrusted_web_search_results",
+                }
+
+        class UnsupportedModel:
+            def generate(self, request: ModelRequest) -> ModelResponse:
+                return ModelResponse("A confident answer without evidence.")
+
+        service = ConversationService(
+            UnsupportedModel(),
+            tool_executor=ToolExecutor(
+                default_tool_registry(web_search=EmptySearch()),
+                InMemoryAuditSink(),
+            ),
+        )
+
+        events = tuple(service.events_for("Update me on current events today."))
+
+        visible = "".join(event.text for event in events)
+        self.assertNotIn("confident answer", visible)
+        self.assertIn("couldn't validate", visible)
+
+    def test_cancellation_between_draft_and_review_stops_second_pass(self) -> None:
+        class DraftStreamingModel:
+            def __init__(self) -> None:
+                self.requests: list[ModelRequest] = []
+
+            def generate(self, request: ModelRequest) -> ModelResponse:
+                return ModelResponse("unused")
+
+            def stream_generate(self, request: ModelRequest):  # type: ignore[no-untyped-def]
+                self.requests.append(request)
+                yield ModelStreamChunk(
+                    "Draft (https://example.test/current)."
+                )
+
+        model = DraftStreamingModel()
+        service = ConversationService(
+            model,
+            tool_executor=ToolExecutor(
+                default_tool_registry(web_search=SearchProvider()),
+                InMemoryAuditSink(),
+            ),
+        )
+        events = service.events_for("Double-check current events today.")
+
+        first = next(events)
+        service.cancel_active_response()
+        remaining = tuple(events)
+
+        self.assertEqual(first.kind, ConversationEventKind.NOTICE)
+        self.assertIn("Double-checking", first.text)
+        self.assertEqual(remaining[-1].kind, ConversationEventKind.CANCELLED)
+        self.assertEqual(len(model.requests), 1)
 
     def test_replaced_chat_waits_for_prior_memory_before_model_request(self) -> None:
         model = SyntheticStreamingModel()

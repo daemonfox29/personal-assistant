@@ -54,21 +54,67 @@ not trigger public search.
 SearXNG runs in a dedicated open-source Colima profile with a one-GiB memory
 ceiling. The application starts that isolated profile on the first search,
 reuses it while searches remain active, and stops its container and VM after
-two minutes without a search or immediately when the app closes. Only the
-reviewed SearXNG configuration directory is mounted into the VM, read-only. If
+the selected 1, 2, 5, 10, 15, or 30 minute idle period, or immediately when the
+app closes. Settings also provides trusted manual start, finish-then-stop, and
+provider controls. Only the reviewed SearXNG configuration directory is mounted
+into the VM, read-only. If
 the runtime is absent or unhealthy, search fails safely while chat, memory,
 time, and calculator features continue normally.
 
 An outbound query is still visible to SearXNG's configured upstream search
-engines. Deterministic code therefore permits only a bounded phrase copied from
-the user's current message—the model cannot append private memory to a query.
-Only inert titles, snippets, and HTTPS source URLs return from search, labeled
-as untrusted data. When snippets are insufficient, a separate bounded reader
-may extract limited inert text from up to three public HTTPS results in the same
-request. The model selects result numbers, never URLs. Private network targets,
-redirects, scripts, cookies, authentication, downloads, and non-text content are
-blocked. Broad current-events requests automatically read available top results
-before the assistant synthesizes and cites its answer.
+engines. Deterministic code therefore permits a bounded current user message,
+never model-authored additions or private memory. For an ambiguous conversational
+follow-up such as `books on her`, code may resolve the subject from a bounded
+topic literally present in up to three recent user-authored turns. Assistant,
+memory, and web text are never eligible. First-person/private, credential-like,
+URL, email, and long-number context is excluded; an unsafe or unresolved subject
+produces a clarification instead of a search. Only inert titles, snippets, and
+HTTPS source URLs return from search, labeled as untrusted data. When snippets
+are insufficient, a separate bounded reader may extract limited inert text from
+up to three public HTTPS results in the same request. The model selects result
+numbers, never URLs. Private network targets, redirects, scripts, cookies,
+authentication, downloads, and non-text content are blocked. Broad
+current-events requests automatically read available top results before the
+assistant synthesizes and cites its answer.
+
+Quality-first routing uses Google Web for general/current questions, up to
+three reviewed scholarly indexes for research, PubMed plus Google Scholar for
+health/science, and Wikipedia plus an Encyclopedia.com-restricted Google query
+for reference requests. The owner may enable or disable reviewed sources in
+Settings. Natural commands such as `check Google Scholar search for info on
+sleep`, `use Crossref to find papers on sleep`, or `look it up with PubMed`
+force that one enabled source for the current message without silent fallback.
+That override expires with the message: a follow-up that does not name a
+provider returns to automatic quality routing. DuckDuckGo remains available but
+is off by default.
+
+The chat Stop button cooperatively cancels streaming output, leaves already
+visible partial text in place, records `Stopped by you`, and keeps the
+incomplete exchange out of session history and automatic memory analysis.
+
+Search-backed answers are held until their code-owned source IDs are verified
+against HTTPS URLs from the current correlated results. The UI shows readable
+source names by default and reveals their exact validated URLs only when the
+current message asks for links, URLs, or web addresses. The model is instructed
+to compare distinct documents, qualify unsupported details, and disclose
+conflicts, stale evidence, or a point supported by only one relevant document.
+Selecting one provider does not limit comparison to one document: a Google
+Scholar-only search can still read and compare up to three separate Scholar
+results. Add a natural request such as `double-check`, `cross-check`, `verify
+this`, or `check your work` to the same search question to request one
+additional tool-free model review before the final answer is shown.
+
+Requests for an external destination—such as a link, URL, website, or where to
+buy something—also force a current verified search. The assistant may show only
+an exact HTTPS URL returned by that search. If it cannot find a current matching
+destination, it says so instead of manufacturing a link.
+
+If an otherwise normal searched draft omits or invents a source ID or URL, the
+app makes one bounded tool-free citation-repair attempt before showing the fixed
+validation notice. It never silently presents the uncited draft as verified and
+never loops through repeated repair passes. The native UI also accepts the
+terminal-style `/long <question>` prefix, removes it from the search query, and
+uses the configured long-response limit.
 
 ## Set up the project
 

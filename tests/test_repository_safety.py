@@ -149,7 +149,11 @@ class RepositorySafetyTests(unittest.TestCase):
         self.assertIn('"no-new-privileges"', runtime)
         self.assertIn('"--cap-drop"', runtime)
         self.assertIn("SEARXNG_IMAGE,", runtime)
-        self.assertIn("ColimaSearchRuntime()", application)
+        self.assertIn("search_runtime = ColimaSearchRuntime(", application)
+        self.assertIn(
+            "idle_seconds=self._runtime_preferences.search_idle_seconds",
+            application,
+        )
         self.assertIn("resource_closers=(search_provider.close,)", application)
 
     def test_public_page_reader_is_pinned_bounded_and_noninteractive(self) -> None:

@@ -22,6 +22,12 @@ This folder holds human-readable notes about the assistant's design, decisions, 
 - [Module 2.2 bounded public page reading](module-2-2-public-page-reading-spec.md):
   request-scoped numbered-result reading, public-address pinning, extraction
   limits, and the current-events synthesis gate.
+- [Module 2.3 quality search controls](module-2-3-search-controls-spec.md):
+  quality-first source routing, trusted lifecycle settings, retry diagnostics,
+  and owner-controlled response cancellation.
+- [Module 2.4 search verification](module-2-4-search-verification-spec.md):
+  multi-document grounding, current-result citation validation, and an explicit
+  owner-requested second model pass.
 - [Encrypted SQLite provider spike](encrypted-database-spike.md): SQLCipher
   selection, verified guarantees, tradeoffs, and remaining platform checks.
 - [Typed memory repository](memory-repository.md): validated payloads,
@@ -30,6 +36,8 @@ This folder holds human-readable notes about the assistant's design, decisions, 
   assistant says.
 - [Project status](project-status.md): current implementation state and session
   handoff notes.
+- [Owner search test checklist](owner-search-test-checklist.md): practical native
+  UI acceptance checks for the current search milestone.
 - [Open bugs](open-bugs.md): confirmed defects intentionally deferred with
   acceptance criteria.
 - [Future features](future-features.md): ideas outside the current project step.

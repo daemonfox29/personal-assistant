@@ -51,6 +51,7 @@ class AuditOperation(StrEnum):
     APPROVAL_ISSUE = "approval_issue"
     APPROVAL_VERIFY = "approval_verify"
     TOOL_EXECUTE = "tool_execute"
+    SEARCH_SERVICE_CONTROL = "search_service_control"
     DATABASE_OPEN = "database_open"
     DATABASE_MIGRATE = "database_migrate"
     REPOSITORY_READ = "repository_read"

@@ -99,7 +99,12 @@ from personal_assistant.runtime_preferences import (
     RuntimePreferencesError,
     RuntimePreferencesStore,
 )
-from personal_assistant.search_runtime import ColimaSearchRuntime
+from personal_assistant.search_policy import SearchSource, validate_search_sources
+from personal_assistant.search_runtime import (
+    ColimaSearchRuntime,
+    SearchRuntimeError,
+    SearchRuntimeState,
+)
 from personal_assistant.tool_runtime import ToolExecutor, default_tool_registry
 from personal_assistant.web_search import SearXNGSearchProvider
 from personal_assistant.web_reader import PublicWebPageReader
@@ -193,6 +198,13 @@ class AuditInventoryPage:
 
 
 @dataclass(frozen=True)
+class SearchServiceOverview:
+    state: SearchRuntimeState
+    idle_seconds: int
+    enabled_sources: tuple[SearchSource, ...]
+
+
+@dataclass(frozen=True)
 class MemorySourceLocation:
     conversation: StoredConversation
     source_sequence: int
@@ -229,12 +241,16 @@ class AssistantApplicationService:
         info: ApplicationSessionInfo,
         conversation_history: ConversationHistoryRepository | None = None,
         audit_path: Path | None = None,
+        search_runtime: ColimaSearchRuntime | None = None,
+        search_provider: SearXNGSearchProvider | None = None,
     ) -> None:
         self._conversation = conversation
         self._runtime = runtime
         self._info = info
         self._conversation_history = conversation_history
         self._audit_path = audit_path
+        self._search_runtime = search_runtime
+        self._search_provider = search_provider
         self._conversation_recall = (
             None
             if conversation_history is None
@@ -416,6 +432,14 @@ class AssistantApplicationService:
         ):
             if event.kind is ConversationEventKind.ASSISTANT_CHUNK:
                 assistant_parts.append(event.text)
+            elif event.kind is ConversationEventKind.CANCELLED:
+                flush_assistant()
+                responses.append(
+                    ConversationResponseMessage(
+                        ConversationRole.NOTICE,
+                        event.text or "Stopped by you.",
+                    )
+                )
             elif event.kind is ConversationEventKind.NOTICE and event.text:
                 flush_assistant()
                 responses.append(
@@ -462,6 +486,141 @@ class AssistantApplicationService:
                 raise ApplicationOpenError(
                     "Conversation history could not be finalized safely."
                 ) from error
+
+    def cancel_active_response(self) -> None:
+        if self._audit_path is not None:
+            try:
+                JsonLinesAuditSink(AuditFileSettings(self._audit_path)).write(
+                    AuditEvent(
+                        correlation_id=uuid4(),
+                        component=AuditComponent.APPLICATION,
+                        operation=AuditOperation.MODEL_REQUEST,
+                        outcome=AuditOutcome.CANCELLED,
+                        reason_code=AuditReasonCode.USER_CANCELLED,
+                        metadata=(
+                            AuditMetadataItem(
+                                AuditMetadataKey.ACTION_KIND,
+                                "response_cancel",
+                            ),
+                        ),
+                    )
+                )
+            except AuditError:
+                pass
+        self._conversation.cancel_active_response()
+
+    def search_overview(self) -> SearchServiceOverview:
+        runtime = self._search_runtime
+        provider = self._search_provider
+        if runtime is None or provider is None:
+            return SearchServiceOverview(SearchRuntimeState.UNAVAILABLE, 120, ())
+        status = runtime.status()
+        return SearchServiceOverview(
+            status.state,
+            status.idle_seconds,
+            provider.enabled_sources,
+        )
+
+    def refresh_search_overview(self) -> SearchServiceOverview:
+        if self._search_runtime is not None:
+            self._search_runtime.refresh_status()
+        return self.search_overview()
+
+    def start_search_service(self) -> SearchServiceOverview:
+        if self._search_runtime is None:
+            raise ApplicationOpenError(
+                "Web search is unavailable (WEB-START-01)."
+            )
+        correlation_id = uuid4()
+        self._audit_search_control(
+            correlation_id,
+            "search_start",
+            AuditOutcome.STARTED,
+            AuditReasonCode.NORMAL,
+        )
+        try:
+            self._search_runtime.start()
+        except SearchRuntimeError as error:
+            self._audit_search_control(
+                correlation_id,
+                "search_start",
+                AuditOutcome.FAILED,
+                AuditReasonCode.SAFE_INTERNAL_FAILURE,
+            )
+            raise ApplicationOpenError(
+                "The local web-search service could not start (WEB-START-01)."
+            ) from error
+        self._audit_search_control(
+            correlation_id,
+            "search_start",
+            AuditOutcome.SUCCEEDED,
+            AuditReasonCode.NORMAL,
+        )
+        return self.search_overview()
+
+    def stop_search_service(self) -> SearchServiceOverview:
+        correlation_id = uuid4()
+        self._audit_search_control(
+            correlation_id,
+            "search_stop",
+            AuditOutcome.STARTED,
+            AuditReasonCode.NORMAL,
+        )
+        if self._search_runtime is not None:
+            self._search_runtime.request_stop()
+        self._audit_search_control(
+            correlation_id,
+            "search_stop",
+            AuditOutcome.SUCCEEDED,
+            AuditReasonCode.NORMAL,
+        )
+        return self.search_overview()
+
+    def configure_search(
+        self,
+        idle_seconds: int,
+        enabled_sources: tuple[SearchSource, ...],
+    ) -> SearchServiceOverview:
+        runtime = self._search_runtime
+        provider = self._search_provider
+        if runtime is None or provider is None:
+            raise ApplicationSettingsError("Web search is unavailable.")
+        try:
+            sources = validate_search_sources(enabled_sources)
+            runtime.set_idle_seconds(idle_seconds)
+            provider.configure_sources(sources)
+        except (TypeError, ValueError) as error:
+            raise ApplicationSettingsError(
+                "The web-search settings are invalid."
+            ) from error
+        return self.search_overview()
+
+    def _audit_search_control(
+        self,
+        correlation_id: UUID,
+        action: str,
+        outcome: AuditOutcome,
+        reason: AuditReasonCode,
+    ) -> None:
+        if self._audit_path is None:
+            return
+        try:
+            JsonLinesAuditSink(AuditFileSettings(self._audit_path)).write(
+                AuditEvent(
+                    correlation_id=correlation_id,
+                    component=AuditComponent.APPLICATION,
+                    operation=AuditOperation.SEARCH_SERVICE_CONTROL,
+                    outcome=outcome,
+                    reason_code=reason,
+                    metadata=(
+                        AuditMetadataItem(AuditMetadataKey.ACTION_KIND, action),
+                    ),
+                )
+            )
+        except AuditError as error:
+            raise ApplicationOpenError(
+                "Search control was blocked because its audit trail was unavailable."
+            ) from error
 
     @property
     def active_conversation_id(self) -> UUID | None:
@@ -1506,6 +1665,16 @@ class AssistantApplicationFactory:
                 if settings.memory.backup_directory is None
                 else str(settings.memory.backup_directory)
             ),
+            search_idle_seconds=(
+                stored_preferences.search_idle_seconds
+                if stored_preferences is not None
+                else RuntimePreferences().search_idle_seconds
+            ),
+            enabled_search_sources=(
+                stored_preferences.enabled_search_sources
+                if stored_preferences is not None
+                else RuntimePreferences().enabled_search_sources
+            ),
         )
 
     @property
@@ -1719,11 +1888,14 @@ class AssistantApplicationFactory:
                     runtime.capture,
                     audit_sink=runtime.audit_sink,
                 )
-            search_runtime = ColimaSearchRuntime()
+            search_runtime = ColimaSearchRuntime(
+                idle_seconds=self._runtime_preferences.search_idle_seconds,
+            )
             search_provider = SearXNGSearchProvider(
                 self._settings.search.base_url,
                 timeout_seconds=self._settings.search.timeout_seconds,
                 lifecycle=search_runtime,
+                enabled_sources=self._runtime_preferences.enabled_search_sources,
             )
             conversation = ConversationService(
                 model,
@@ -1765,6 +1937,8 @@ class AssistantApplicationFactory:
                 ),
                 None if runtime is None else runtime.conversation_history,
                 self._settings.memory.data_directory / "audit.jsonl",
+                search_runtime,
+                search_provider,
             )
         except ApplicationServiceError:
             if runtime is not None:

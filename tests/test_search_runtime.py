@@ -16,6 +16,7 @@ from personal_assistant.search_runtime import (
     SAFE_SEARCH_COMMAND_PATH,
     ColimaSearchRuntime,
     SearchRuntimeError,
+    SearchRuntimeState,
     _run_command,
 )
 
@@ -213,6 +214,46 @@ class SearchRuntimeTests(unittest.TestCase):
         self.assertEqual(len(stops), 1)
         with self.assertRaises(SearchRuntimeError):
             runtime.run_while_active(lambda: None)
+
+    def test_manual_stop_waits_for_active_search_then_next_search_restarts(self) -> None:
+        runtime = self.runtime()
+        observed = []
+
+        def operation() -> None:
+            observed.append(runtime.request_stop().state)
+
+        runtime.run_while_active(operation)
+
+        self.assertEqual(observed, [SearchRuntimeState.STOPPING])
+        self.assertEqual(runtime.status().state, SearchRuntimeState.OFF)
+
+        runtime.run_while_active(lambda: None)
+
+        starts = [
+            command
+            for command, _environment in self.commands
+            if command[1:3] == ("start", COLIMA_PROFILE_NAME)
+        ]
+        self.assertEqual(len(starts), 2)
+
+    def test_shorter_idle_setting_applies_to_running_service(self) -> None:
+        clock = [100.0]
+        runtime = ColimaSearchRuntime(
+            settings_path=self.settings_path,
+            idle_seconds=120,
+            runner=self.runner,
+            timer_factory=self.timer_factory,
+            health_opener=lambda _request, _timeout: HealthResponse(),
+            monotonic=lambda: clock[0],
+            colima_path=self.colima,
+            docker_path=self.docker,
+        )
+        runtime.run_while_active(lambda: None)
+        clock[0] = 170.0
+
+        runtime.set_idle_seconds(60)
+
+        self.assertEqual(runtime.status().state, SearchRuntimeState.OFF)
 
     def test_unavailable_machine_fails_before_container_start(self) -> None:
         def failing_runner(arguments, _timeout, _environment) -> int:

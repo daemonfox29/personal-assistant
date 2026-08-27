@@ -1,9 +1,14 @@
 use_default_settings:
   engines:
     keep_only:
-      - brave
+      - arxiv
+      - crossref
       - duckduckgo
-      - qwant
+      - google
+      - google scholar
+      - openalex
+      - pubmed
+      - semantic scholar
       - wikipedia
 
 general:

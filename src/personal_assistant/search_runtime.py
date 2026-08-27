@@ -1,6 +1,8 @@
 """App-owned lifecycle for the optional local SearXNG Colima service."""
 
 from collections.abc import Callable, Mapping
+from dataclasses import dataclass
+from enum import StrEnum
 from pathlib import Path
 import os
 import secrets
@@ -32,6 +34,21 @@ SAFE_SEARCH_COMMAND_PATH = (
 
 class SearchRuntimeError(RuntimeError):
     """The reviewed local search service could not be managed safely."""
+
+
+class SearchRuntimeState(StrEnum):
+    UNAVAILABLE = "unavailable"
+    OFF = "off"
+    READY = "ready"
+    BUSY = "busy"
+    STOPPING = "stopping"
+    CLOSED = "closed"
+
+
+@dataclass(frozen=True)
+class SearchRuntimeStatus:
+    state: SearchRuntimeState
+    idle_seconds: int
 
 
 class TimerHandle(Protocol):
@@ -152,10 +169,96 @@ class ColimaSearchRuntime:
         self._running = False
         self._active = 0
         self._closed = False
+        self._stop_requested = False
+        self._idle_started_at: float | None = None
 
     @property
     def idle_seconds(self) -> float:
-        return self._idle_seconds
+        with self._lock:
+            return self._idle_seconds
+
+    def status(self) -> SearchRuntimeStatus:
+        """Return bounded lifecycle state without exposing command authority."""
+
+        with self._lock:
+            if self._closed:
+                state = SearchRuntimeState.CLOSED
+            elif not self._installed_locked():
+                state = SearchRuntimeState.UNAVAILABLE
+            elif self._active:
+                state = (
+                    SearchRuntimeState.STOPPING
+                    if self._stop_requested
+                    else SearchRuntimeState.BUSY
+                )
+            elif self._running:
+                state = SearchRuntimeState.READY
+            else:
+                state = SearchRuntimeState.OFF
+            return SearchRuntimeStatus(state, int(self._idle_seconds))
+
+    def refresh_status(self) -> SearchRuntimeStatus:
+        """Recheck bounded loopback health for a trusted status request."""
+
+        with self._lock:
+            if self._running and self._active == 0 and not self._health_is_ready():
+                self._running = False
+                self._cancel_timer_locked()
+        return self.status()
+
+    def start(self) -> SearchRuntimeStatus:
+        """Start the fixed reviewed service from a trusted interface."""
+
+        with self._lock:
+            if self._closed:
+                raise SearchRuntimeError("The local search runtime is closed.")
+            self._stop_requested = False
+            self._cancel_timer_locked()
+            if self._running and not self._health_is_ready():
+                self._running = False
+            if not self._running:
+                self._start_locked()
+            if self._active == 0:
+                self._schedule_stop_locked()
+        return self.status()
+
+    def request_stop(self) -> SearchRuntimeStatus:
+        """Stop now when idle or immediately after current search work."""
+
+        with self._lock:
+            if self._closed:
+                return SearchRuntimeStatus(
+                    SearchRuntimeState.CLOSED,
+                    int(self._idle_seconds),
+                )
+            self._cancel_timer_locked()
+            if self._active:
+                self._stop_requested = True
+            else:
+                self._stop_locked()
+        return self.status()
+
+    def set_idle_seconds(self, idle_seconds: int) -> SearchRuntimeStatus:
+        if (
+            isinstance(idle_seconds, bool)
+            or not isinstance(idle_seconds, int)
+            or not 1 <= idle_seconds <= 3_600
+        ):
+            raise ValueError("Search runtime idle time is outside its safe range.")
+        with self._lock:
+            self._idle_seconds = float(idle_seconds)
+            if self._running and self._active == 0:
+                elapsed = (
+                    0.0
+                    if self._idle_started_at is None
+                    else max(0.0, self._monotonic() - self._idle_started_at)
+                )
+                if elapsed >= self._idle_seconds:
+                    self._cancel_timer_locked()
+                    self._stop_locked()
+                else:
+                    self._schedule_stop_locked(self._idle_seconds - elapsed)
+        return self.status()
 
     def run_while_active(self, operation: Callable[[], ResultT]) -> ResultT:
         """Run one search while preventing the idle callback from stopping it."""
@@ -165,6 +268,7 @@ class ColimaSearchRuntime:
         with self._lock:
             if self._closed:
                 raise SearchRuntimeError("The local search runtime is closed.")
+            self._stop_requested = False
             self._cancel_timer_locked()
             if self._running and not self._health_is_ready():
                 self._running = False
@@ -177,8 +281,9 @@ class ColimaSearchRuntime:
             with self._lock:
                 self._active -= 1
                 if self._active == 0:
-                    if self._closed:
+                    if self._closed or self._stop_requested:
                         self._stop_locked()
+                        self._stop_requested = False
                     else:
                         self._schedule_stop_locked()
 
@@ -189,15 +294,13 @@ class ColimaSearchRuntime:
             if self._closed:
                 return
             self._closed = True
+            self._stop_requested = True
             self._cancel_timer_locked()
             if self._active == 0:
                 self._stop_locked()
 
     def _start_locked(self) -> None:
-        if not all(
-            Path(value).is_file() and os.access(value, os.X_OK)
-            for value in (self._colima, self._docker)
-        ):
+        if not self._installed_locked():
             raise SearchRuntimeError(
                 "The open-source Colima search runtime is not installed."
             )
@@ -293,6 +396,12 @@ class ColimaSearchRuntime:
             raise SearchRuntimeError("The local search service could not start.")
         self._running = True
 
+    def _installed_locked(self) -> bool:
+        return all(
+            Path(value).is_file() and os.access(value, os.X_OK)
+            for value in (self._colima, self._docker)
+        )
+
     def _wait_for_health(self) -> bool:
         deadline = self._monotonic() + MAX_SEARCH_STARTUP_SECONDS
         while self._monotonic() < deadline:
@@ -318,11 +427,16 @@ class ColimaSearchRuntime:
         except (HTTPError, URLError, OSError, TimeoutError):
             return False
 
-    def _schedule_stop_locked(self) -> None:
+    def _schedule_stop_locked(self, delay: float | None = None) -> None:
         self._cancel_timer_locked()
+        selected_delay = self._idle_seconds if delay is None else max(0.0, delay)
+        self._idle_started_at = self._monotonic() - max(
+            0.0,
+            self._idle_seconds - selected_delay,
+        )
         generation = self._timer_generation
         timer = self._timer_factory(
-            self._idle_seconds,
+            selected_delay,
             lambda: self._idle_stop(generation),
         )
         self._timer = timer
@@ -343,6 +457,7 @@ class ColimaSearchRuntime:
                 self._stop_locked()
 
     def _stop_locked(self) -> None:
+        self._idle_started_at = None
         if not self._running:
             return
         self._stop_commands()

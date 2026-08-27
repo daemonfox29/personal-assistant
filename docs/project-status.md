@@ -205,8 +205,123 @@ complete; the batched Linux pull-request check is its final platform gate.
   results, pin public DNS addresses under hostname-verified TLS, extract bounded
   inert text, auto-read broad news results, and verify a cited real-app current-
   events synthesis.
+- [x] Module 2.3: add persistent quality-source routing, trusted search lifecycle
+  controls, exact single-provider commands, one safe retry with fixed diagnostic
+  codes, configurable idle shutdown, and cooperative generation cancellation.
+- [x] Module 2.4: ground searched answers across distinct current documents,
+  validate exact current-request citation provenance, and add an explicit
+  owner-requested tool-free second model review.
 
 ## Session history
+
+### 2026-08-27 — Module 2.4 evidence-grounded search verification
+
+Completed:
+
+- Clarified provider versus evidence-source semantics. A Scholar-only route uses
+  one discovery provider while retaining several distinct papers or documents
+  for comparison.
+- Strengthened every searched answer's instructions to prefer primary or
+  authoritative material, map important claims to exact citations, remove or
+  qualify unsupported precision, and disclose conflicts, freshness limits, or
+  single-document support.
+- Added deterministic current-request citation provenance validation. Searched
+  answers are buffered and rejected rather than presented as verified when they
+  contain no current citation, cite an unknown URL, or have no usable results.
+- Added explicit `double-check`, `verify this`, and `check your work` handling.
+  The first answer remains an unshown draft; one tool-free second pass receives
+  only the current question, bounded current evidence, and draft. Only its
+  validated final answer reaches history and memory processing.
+- Expanded provider intent recognition beyond rigid templates. Natural phrases
+  such as `check Google Scholar search for info on...`, `use Crossref to
+  find...`, and `look it up with PubMed` select only that enabled provider.
+- Preserved bounded published-date metadata when SearXNG supplies it, as well as
+  response cancellation during either generation pass.
+- Fixed natural trailing-provider requests when ordinary prose follows the
+  provider name, and added `disorder` to the health-search fallback vocabulary.
+- Added native handling for `/long <question>` so the command changes the
+  response limit but never contaminates the outbound search query.
+- Added one bounded citation-repair pass for an otherwise successful search
+  whose first model draft omits or alters current-result links. Failed repair
+  still fails closed, and explicit evidence review never triggers a third pass.
+- Replaced model-authored visible URLs with code-owned source IDs. Search answers
+  now show readable source names by default and expose exact validated URLs only
+  when the current message asks for links, URLs, or web addresses.
+- Confirmed that provider selection is message-scoped: an explicit PubMed
+  request does not pin a later unnamed treatment follow-up to PubMed-only
+  routing.
+- Added a domain-neutral conversational search resolver for pronouns and
+  elliptical follow-ups. It uses only bounded recent user-authored topics,
+  rejects private/credential-like context, ignores assistant, memory, and tool
+  text, preserves newly named current topics, and asks for clarification when
+  safe resolution is not possible.
+- Forced all destination requests (links, URLs, websites, and purchase paths)
+  through current verified search, so model-invented Amazon or other external
+  URLs are rejected rather than displayed. Also collapsed repeated model-written
+  source labels into one trusted rendered source reference.
+
+Verification:
+
+- All source and test modules compiled, the dependency lock and repository
+  whitespace checks passed, and 472 local tests passed in 13.588 seconds with
+  one intentionally opt-in benchmark skipped.
+- A real Google Scholar-only double-check compared current evidence and produced
+  a completed reviewed answer with three exact citations from distinct papers.
+  Managed close stopped the dedicated Colima profile afterward.
+- The exact reported `/long look up ... on pubmed, and ...` request then passed
+  end to end, returned a completed high-level answer, and included three exact
+  current PubMed-route citations.
+- A real follow-up, `Is lamotrigine a typical treatment for it? What does it
+  do?`, completed through automatic health routing, synthesized the retrieved
+  material, displayed source names with zero visible URLs, emitted no failure
+  notice, and stopped the dedicated search VM on close.
+- The exact reported Janis Joplin follow-up resolved `her` to the topic copied
+  from the preceding user turn, sent `can you give me some popular books on
+  Janis Joplin?`, returned a synthesized five-book answer with a readable source
+  name and zero visible URLs, emitted no notice, and completed normally.
+- The reported Amazon-link follow-up resolved its book reference to Janis Joplin,
+  searched the complete follow-up wording, and returned only Amazon URLs from
+  the current result set; no fabricated destination was displayed.
+
+Next:
+
+- Run the owner UI acceptance checks in
+  `docs/owner-search-test-checklist.md`. The complete search-controls milestone
+  is ready for one reviewable pull request; keep auto-merge conditional on the
+  required GitHub Actions checks and the owner UI result.
+
+### 2026-08-27 — Module 2.3 quality search controls and cancellation
+
+Completed:
+
+- Added persistent allowlisted search-source settings with quality-first routes
+  for general, scholarly, health/science, and reference requests. DuckDuckGo is
+  available but disabled by default.
+- Added exact current-message provider commands. Disabled explicit providers
+  fail with `WEB-PROVIDER-01` and never silently fall back.
+- Added trusted Settings controls for service status, manual start,
+  finish-then-stop, and 1/2/5/10/15/30-minute idle shutdown. Changes run outside
+  the UI thread; eligible later questions can restart search automatically.
+- Added one bounded retry for transient start/connect/response failures and
+  content-free fixed diagnostic codes.
+- Added cooperative generation Stop. Partial text remains visible with a
+  stopped notice, while the incomplete turn is excluded from conversational
+  history and automatic memory promotion.
+- Deferred an opt-in user-owned VPN/proxy search layer and reviewed runtime
+  update workflow without adding either authority to the model.
+
+Verification:
+
+- All source and test modules compiled, repository whitespace checks passed,
+  and 440 local tests passed in 13.630 seconds with one intentionally opt-in
+  benchmark skipped.
+- The real pinned SearXNG runtime returned five bounded Google Web results and
+  five bounded results for an exact Google Scholar-only request. Managed close
+  then stopped the dedicated Colima profile.
+
+Next:
+
+- Owner UI test before opening the pull request.
 
 ### 2026-08-26 — Module 2.2 bounded public page reading
 
