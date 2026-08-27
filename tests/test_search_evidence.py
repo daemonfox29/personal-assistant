@@ -109,6 +109,25 @@ class SearchEvidenceTests(unittest.TestCase):
         self.assertIsNone(linked_error)
         self.assertIn("https://pubmed.ncbi.nlm.nih.gov/12345/", linked)
 
+    def test_model_written_source_label_is_not_duplicated_during_rendering(self) -> None:
+        sources = (
+            EvidenceSource(
+                "S1",
+                "Verified book listing",
+                "https://www.amazon.com/dp/verified",
+            ),
+        )
+
+        rendered, error = render_grounded_answer(
+            "Book: Source S1 — Verified book listing: [S1]",
+            sources,
+            show_links=True,
+        )
+
+        self.assertIsNone(error)
+        self.assertEqual(rendered.count("Source S1 — Verified book listing"), 1)
+        self.assertIn("https://www.amazon.com/dp/verified", rendered)
+
     def test_unknown_source_id_and_unknown_url_fail_closed(self) -> None:
         sources = (
             EvidenceSource("S1", "Known study", "https://example.com/study"),

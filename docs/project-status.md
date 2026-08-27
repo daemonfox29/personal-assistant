@@ -255,11 +255,15 @@ Completed:
   rejects private/credential-like context, ignores assistant, memory, and tool
   text, preserves newly named current topics, and asks for clarification when
   safe resolution is not possible.
+- Forced all destination requests (links, URLs, websites, and purchase paths)
+  through current verified search, so model-invented Amazon or other external
+  URLs are rejected rather than displayed. Also collapsed repeated model-written
+  source labels into one trusted rendered source reference.
 
 Verification:
 
 - All source and test modules compiled, the dependency lock and repository
-  whitespace checks passed, and 467 local tests passed in 13.586 seconds with
+  whitespace checks passed, and 472 local tests passed in 13.700 seconds with
   one intentionally opt-in benchmark skipped.
 - A real Google Scholar-only double-check compared current evidence and produced
   a completed reviewed answer with three exact citations from distinct papers.
@@ -275,6 +279,9 @@ Verification:
   from the preceding user turn, sent `can you give me some popular books on
   Janis Joplin?`, returned a synthesized five-book answer with a readable source
   name and zero visible URLs, emitted no notice, and completed normally.
+- The reported Amazon-link follow-up resolved its book reference to Janis Joplin,
+  searched the complete follow-up wording, and returned only Amazon URLs from
+  the current result set; no fabricated destination was displayed.
 
 Next:
 

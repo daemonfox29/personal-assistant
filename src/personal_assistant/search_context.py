@@ -15,6 +15,10 @@ _REFERENCE = re.compile(
     re.IGNORECASE,
 )
 _ELLIPTICAL_PREFIX = re.compile(r"^\s*(?:and\s+)?what about\b", re.IGNORECASE)
+_DEICTIC_REFERENCE = re.compile(
+    r"\b(?:the|these|those)\s+(?:[a-z]+\s+){0,3}(?:itself|themselves)\b",
+    re.IGNORECASE,
+)
 _TOPIC_PATTERNS = (
     re.compile(
         r"\b(?:tell me|information|info|details?|background)\s+about\s+(.+)",
@@ -104,10 +108,14 @@ def resolve_search_query(
     referential = bool(
         _REFERENCE.search(normalized_current)
         or _ELLIPTICAL_PREFIX.search(normalized_current)
+        or _DEICTIC_REFERENCE.search(normalized_current)
     )
     if not referential:
         return SearchQueryResolution(normalized_current)
-    if _current_has_explicit_topic(normalized_current):
+    if (
+        _DEICTIC_REFERENCE.search(normalized_current) is None
+        and _current_has_explicit_topic(normalized_current)
+    ):
         return SearchQueryResolution(normalized_current)
     topic = next(
         (
@@ -125,8 +133,10 @@ def resolve_search_query(
             resolved = _REFERENCE.sub(topic, remainder)
         else:
             resolved = f"{remainder} {topic}" if remainder else topic
-    else:
+    elif _REFERENCE.search(normalized_current):
         resolved = _REFERENCE.sub(topic, normalized_current)
+    else:
+        resolved = f"{normalized_current} {topic}"
     resolved = _normalize(resolved)
     if not resolved or len(resolved) > 256:
         return SearchQueryResolution(None)
@@ -189,6 +199,7 @@ def _validated_topic(candidate: str) -> str | None:
         or _UNSAFE_TOPIC.search(candidate)
         or _URL_OR_EMAIL.search(candidate)
         or _LONG_NUMBER.search(candidate)
+        or _REFERENCE.search(candidate)
         or _ONLY_GENERIC.fullmatch(candidate.replace(" ", ""))
         or _ACKNOWLEDGEMENT.fullmatch(candidate)
         or not any(character.isalpha() for character in candidate)

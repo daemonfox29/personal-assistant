@@ -29,6 +29,14 @@ class SearchContextTests(unittest.TestCase):
                 ("Research the Django web framework.",),
                 "Django web framework release history",
             ),
+            (
+                "Links to the books themselves, any Amazon links you could provide?",
+                (
+                    "Tell me about Janis Joplin.",
+                    "Can you give me some popular books on her?",
+                ),
+                "Links to the books themselves, any Amazon links you could provide? Janis Joplin",
+            ),
         )
         for current, prior, expected in cases:
             with self.subTest(current=current):
@@ -92,6 +100,20 @@ class SearchContextTests(unittest.TestCase):
         )
 
         self.assertIsNone(resolution.query)
+
+    def test_ambiguous_prior_request_cannot_be_reused_as_a_search_topic(self) -> None:
+        resolution = resolve_search_query(
+            "Links to the books themselves, please.",
+            (
+                "Tell me about Janis Joplin.",
+                "Can you give me some popular books on her?",
+            ),
+        )
+
+        self.assertEqual(
+            resolution.query,
+            "Links to the books themselves, please. Janis Joplin",
+        )
 
 
 if __name__ == "__main__":

@@ -8,6 +8,7 @@ from personal_assistant.search_policy import (
     SearchSource,
     requests_quality_search,
     requests_search_verification,
+    requests_destination_search,
     strip_explicit_provider_language,
 )
 
@@ -126,6 +127,15 @@ class SearchPolicyTests(unittest.TestCase):
         self.assertTrue(requests_quality_search("Find peer-reviewed sleep studies."))
         self.assertTrue(requests_quality_search("Give me a Wikipedia overview."))
         self.assertFalse(requests_quality_search("Tell me a joke."))
+
+    def test_destination_requests_search_unless_they_are_private_context(self) -> None:
+        self.assertTrue(
+            requests_destination_search("Can you give me an Amazon link for it?")
+        )
+        self.assertTrue(requests_destination_search("Where can I buy this book?"))
+        self.assertTrue(requests_destination_search("Show the source URL."))
+        self.assertFalse(
+            requests_destination_search("Link this memory to my profile."))
 
     def test_personal_context_stays_local_without_an_explicit_search_command(self) -> None:
         self.assertFalse(requests_quality_search("What do you remember about my health?"))

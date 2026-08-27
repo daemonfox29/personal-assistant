@@ -51,6 +51,9 @@ or memory analysis.
 - The default rendering contains a readable source name without an active URL.
   Exact validated URLs appear only when the current user message asks for links,
   URLs, or web addresses.
+- A request for an external destination (link, URL, website, or purchase path)
+  forces current search grounding. A URL not returned by that current search is
+  rejected rather than presented as a plausible destination.
 - If validation fails, the unverified draft is not presented as a verified
   answer. A fixed notice asks the owner to retry or refine the request.
 - Deterministic validation checks provenance, not semantic truth. The model is
@@ -102,6 +105,9 @@ or memory analysis.
 - Unknown or missing citations fail closed with a fixed notice.
 - A normal draft with missing or altered citations receives at most one bounded
   repair attempt before that fixed failure.
+- An Amazon or other requested external destination is either a URL returned by
+  current search or is withheld with the fixed validation notice; it is never
+  model-invented.
 - Cancellation during either pass excludes the incomplete turn from session and
   persistent-memory promotion.
 - Existing context, tool, search, and response limits remain enforced.

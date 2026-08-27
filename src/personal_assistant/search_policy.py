@@ -83,6 +83,16 @@ _VERIFICATION_TERMS = re.compile(
     r"check (?:your work|the sources|the evidence|(?:this|that|it) carefully))\b",
     re.IGNORECASE,
 )
+_DESTINATION_TERMS = re.compile(
+    r"\b(?:links?|urls?|web ?sites?|web ?pages?|"
+    r"where\s+can\s+i\s+(?:buy|get)|buy|purchase|order)\b",
+    re.IGNORECASE,
+)
+_INTERNAL_LINK_TERMS = re.compile(
+    r"\b(?:link|attach|connect)\b.{0,80}\b(?:memory|memories|profile|"
+    r"chat|conversation)\b",
+    re.IGNORECASE,
+)
 _EXPLICIT_PATTERNS: tuple[tuple[SearchSource, tuple[str, ...]], ...] = (
     (SearchSource.GOOGLE_SCHOLAR, ("google scholar", "scholar")),
     (SearchSource.SEMANTIC_SCHOLAR, ("semantic scholar",)),
@@ -267,6 +277,17 @@ def requests_quality_search(user_text: str) -> bool:
         _HEALTH_TERMS.search(user_text)
         or _RESEARCH_TERMS.search(user_text)
         or _REFERENCE_TERMS.search(user_text)
+    )
+
+
+def requests_destination_search(user_text: str) -> bool:
+    """Return whether a requested external destination needs verified retrieval."""
+
+    return (
+        isinstance(user_text, str)
+        and _PRIVATE_CONTEXT_TERMS.search(user_text) is None
+        and _INTERNAL_LINK_TERMS.search(user_text) is None
+        and _DESTINATION_TERMS.search(user_text) is not None
     )
 
 

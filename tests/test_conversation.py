@@ -383,6 +383,80 @@ class ConversationServiceTests(unittest.TestCase):
         self.assertIn("Source S1 — Example", visible)
         self.assertIn("https://example.test/current", visible)
 
+    def test_destination_request_cannot_display_an_invented_url(self) -> None:
+        class InventedDestinationModel:
+            def __init__(self) -> None:
+                self.requests: list[ModelRequest] = []
+
+            def generate(self, request: ModelRequest) -> ModelResponse:
+                self.requests.append(request)
+                return ModelResponse("Try https://www.amazon.com/dp/invented.")
+
+        provider = SearchProvider()
+        model = InventedDestinationModel()
+        service = ConversationService(
+            model,
+            tool_executor=ToolExecutor(
+                default_tool_registry(web_search=provider),
+                InMemoryAuditSink(),
+            ),
+        )
+
+        events = tuple(
+            service.events_for("Can you give me an Amazon link for Love, Janis?")
+        )
+
+        visible = "".join(event.text for event in events)
+        self.assertEqual(
+            provider.queries,
+            ["Can you give me an Amazon link for Love, Janis?"],
+        )
+        self.assertEqual(len(model.requests), 2)
+        self.assertNotIn("https://www.amazon.com/dp/invented", visible)
+        self.assertIn("couldn't validate", visible)
+        self.assertNotIn(
+            ConversationEventKind.COMPLETED,
+            tuple(event.kind for event in events),
+        )
+
+    def test_destination_request_shows_only_the_current_verified_url(self) -> None:
+        class AmazonProvider:
+            def search(self, _query: str):
+                return {
+                    "provider": "searxng",
+                    "results": [
+                        {
+                            "title": "Verified book listing",
+                            "url": "https://www.amazon.com/dp/verified",
+                        }
+                    ],
+                    "trust": "untrusted_web_search_results",
+                }
+
+        class VerifiedDestinationModel:
+            def generate(self, _request: ModelRequest) -> ModelResponse:
+                return ModelResponse("Here it is [S1].")
+
+        service = ConversationService(
+            VerifiedDestinationModel(),
+            tool_executor=ToolExecutor(
+                default_tool_registry(web_search=AmazonProvider()),
+                InMemoryAuditSink(),
+            ),
+        )
+
+        events = tuple(
+            service.events_for("Can you give me an Amazon link for Love, Janis?")
+        )
+
+        visible = "".join(event.text for event in events)
+        self.assertIn("https://www.amazon.com/dp/verified", visible)
+        self.assertNotIn("invented", visible)
+        self.assertIn(
+            ConversationEventKind.COMPLETED,
+            tuple(event.kind for event in events),
+        )
+
     def test_model_search_query_is_not_used_as_outbound_data(self) -> None:
         class InjectingSearchModel:
             def __init__(self) -> None:

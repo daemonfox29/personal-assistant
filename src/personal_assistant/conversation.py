@@ -46,6 +46,7 @@ from personal_assistant.search_evidence import (
 )
 from personal_assistant.search_context import resolve_search_query
 from personal_assistant.search_policy import (
+    requests_destination_search,
     requests_quality_search,
     requests_search_verification,
 )
@@ -382,6 +383,7 @@ class ConversationService:
             and (
                 _is_broad_current_events_request(user_text)
                 or requests_quality_search(user_text)
+                or requests_destination_search(user_text)
             )
             and self._tool_executor.has_tool("search_public_web")
         ):
@@ -1078,7 +1080,9 @@ class ConversationService:
                 "derive the weekday. Search results include code-owned citation_id "
                 "values. Cite supported claims with those IDs in square brackets, "
                 "such as [S1]. Trusted code renders readable source names and shows "
-                "URLs only when the user asks for links. Never invent an ID."
+                "URLs only when the user asks for links. When the owner asks for a "
+                "link or external destination, search first and never invent a URL "
+                "or destination. Never invent an ID."
             )
         persistent_context: str | None = None
         notices: list[str] = []

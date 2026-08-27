@@ -147,19 +147,37 @@ def render_grounded_answer(
     if not cited:
         return answer, "missing_citation"
     rendered = answer
-    for source in catalog:
-        label = _rendered_source(source, show_links=show_links)
-        rendered = re.sub(
-            _MARKDOWN_LINK_TEMPLATE.format(url=re.escape(source.url)),
-            label,
-            rendered,
+    placeholders: list[tuple[str, EvidenceSource]] = []
+    for index, source in enumerate(catalog, start=1):
+        placeholder = f"\x00verified-source-{index}\x00"
+        placeholders.append((placeholder, source))
+        source_prefix = (
+            rf"Source\s+{re.escape(source.citation_id)}\s*[—-]\s*"
+            rf"{re.escape(source.label)}"
         )
-        rendered = rendered.replace(source.url, label)
         rendered = re.sub(
-            rf"\[{re.escape(source.citation_id)}\]",
-            label,
+            rf"{source_prefix}(?:\s*:\s*)?(?:{re.escape(source.url)}|"
+            rf"\[{re.escape(source.citation_id)}\])",
+            placeholder,
             rendered,
             flags=re.IGNORECASE,
+        )
+        rendered = re.sub(
+            _MARKDOWN_LINK_TEMPLATE.format(url=re.escape(source.url)),
+            placeholder,
+            rendered,
+        )
+        rendered = rendered.replace(source.url, placeholder)
+        rendered = re.sub(
+            rf"\[{re.escape(source.citation_id)}\]",
+            placeholder,
+            rendered,
+            flags=re.IGNORECASE,
+        )
+    for placeholder, source in placeholders:
+        rendered = rendered.replace(
+            placeholder,
+            _rendered_source(source, show_links=show_links),
         )
     return rendered, None
 
