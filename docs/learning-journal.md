@@ -385,6 +385,85 @@ Local does not automatically mean trusted. Validate model responses, sanitize
 their output at the final renderer, and expose only the minimum safe error
 category to the user.
 
+## 2026-08-27 — Search providers, evidence sources, and verification passes
+
+**Confidence: Building**
+
+### What prompted this
+
+A Google Scholar-only answer was close but slightly inaccurate. At first, it
+seemed possible that selecting only one search provider meant the assistant had
+only one source to compare.
+
+### What I understand now
+
+A search provider and an evidence source are different things. Google Scholar
+is a discovery provider: one Scholar request can return several distinct
+papers, authors, journals, or publishers. Restricting a request to Scholar does
+not require the assistant to rely on one paper. It can still read and compare
+up to three returned documents.
+
+Multiple URLs do not automatically mean independent confirmation. Several
+pages may repeat the same underlying study, press release, or syndicated news
+report. Good corroboration asks whether the documents have genuinely different
+authors, methods, data, or institutional origins.
+
+Citation provenance and factual truth are also different guarantees.
+Deterministic code can prove that a cited URL came from the current correlated
+search and reject invented or stale links. It cannot understand whether every
+sentence accurately represents the source. Claim-to-evidence comparison still
+requires model reasoning, so the assistant must qualify unsupported precision,
+identify conflicting evidence, and admit when only one relevant document was
+available.
+
+A second model pass is useful because it gives the model a different job. The
+first pass drafts an answer; the second pass audits that draft against the same
+bounded evidence, removes unsupported details, checks conflicts and dates, and
+rewrites the final answer. It improves reliability but costs additional time
+and model tokens, so it is owner-requested rather than automatic for every
+search.
+
+Natural language can express two separate choices:
+
+- `Check Google Scholar search for info on sleep` selects the retrieval
+  provider while keeping the normal one-pass evidence checks.
+- `Cross-check that evidence` or `double-check the answer` requests the
+  additional model review pass.
+
+### Why it matters
+
+Without these distinctions, an answer can look well sourced while relying on
+one weak document, duplicated reporting, an invented citation, or an accurate
+source summarized inaccurately. Separating code-verifiable provenance from
+model-based interpretation makes the remaining uncertainty visible instead of
+claiming a guarantee the system cannot provide.
+
+### Where this appears
+
+- `docs/module-2-3-search-controls-spec.md`
+- `docs/module-2-4-search-verification-spec.md`
+- `src/personal_assistant/search_policy.py`
+- `src/personal_assistant/search_evidence.py`
+- `src/personal_assistant/conversation.py`
+
+### Knowledge gaps to revisit
+
+- How to score primary sources and systematic reviews without hard-coding a
+  simplistic domain reputation list.
+- How to detect when several URLs derive from the same underlying report.
+- Whether a future structured claim-to-evidence map should be inspectable in
+  the UI without cluttering ordinary answers.
+- How a standalone follow-up such as `double-check that` should safely reuse or
+  refresh prior public evidence without broadening the outbound-query boundary.
+
+### Practical takeaway
+
+Choose providers for retrieval quality, compare documents for corroboration,
+validate citations in deterministic code, and use a second model pass when the
+extra precision is worth its latency. None of those layers alone guarantees
+truth, but together they substantially reduce unsupported detail and false
+confidence.
+
 ## Entry template
 
 Copy this section for future entries:
