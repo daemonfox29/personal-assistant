@@ -6,7 +6,7 @@ import sys
 from threading import Event
 from uuid import UUID
 
-from PySide6.QtCore import QObject, QThread, QTimer, Qt, Signal, Slot
+from PySide6.QtCore import QDate, QObject, QThread, QTimer, Qt, Signal, Slot
 from PySide6.QtGui import (
     QColor,
     QCloseEvent,
@@ -19,6 +19,7 @@ from PySide6.QtGui import (
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
+    QDateEdit,
     QHeaderView,
     QFormLayout,
     QFrame,
@@ -29,6 +30,7 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QMainWindow,
     QMessageBox,
+    QInputDialog,
     QPlainTextEdit,
     QPushButton,
     QTableWidget,
@@ -50,6 +52,7 @@ from personal_assistant.application_service import (
     AssistantApplicationFactory,
     AssistantApplicationService,
     MemoryInventoryItem,
+    MemoryReviewItem,
 )
 from personal_assistant.assistant_preferences import (
     MAX_COMMUNICATION_STYLE_CHARS,
@@ -279,6 +282,9 @@ class SettingsPage(QWidget):
     communication_style_save_requested = Signal(str)
     memory_source_requested = Signal(str)
     memory_delete_requested = Signal(str)
+    candidate_unlock_requested = Signal(str)
+    candidate_reject_requested = Signal(str, int)
+    candidate_apply_requested = Signal(str, int, str, str, int, str, str, str)
     back_requested = Signal()
 
     def __init__(self) -> None:
@@ -302,11 +308,14 @@ class SettingsPage(QWidget):
         )
         memory_section = QListWidgetItem("Memory")
         memory_section.setData(Qt.ItemDataRole.UserRole, 0)
+        review_section = QListWidgetItem("Memory review")
+        review_section.setData(Qt.ItemDataRole.UserRole, 1)
         communication_section = QListWidgetItem("Communication style")
-        communication_section.setData(Qt.ItemDataRole.UserRole, 1)
+        communication_section.setData(Qt.ItemDataRole.UserRole, 2)
         model_section = QListWidgetItem("Model & appearance")
-        model_section.setData(Qt.ItemDataRole.UserRole, 2)
+        model_section.setData(Qt.ItemDataRole.UserRole, 3)
         self._section_list.addItem(memory_section)
+        self._section_list.addItem(review_section)
         self._section_list.addItem(communication_section)
         self._section_list.addItem(model_section)
         navigation_layout.addWidget(self._section_list, 1)
@@ -318,6 +327,7 @@ class SettingsPage(QWidget):
 
         self._section_pages = QStackedWidget()
         self._section_pages.addWidget(self._build_memory_page())
+        self._section_pages.addWidget(self._build_memory_review_page())
         self._section_pages.addWidget(self._build_communication_page())
         self._section_pages.addWidget(self._build_model_page())
         layout.addWidget(self._section_pages, 1)
@@ -534,6 +544,139 @@ class SettingsPage(QWidget):
         layout.addWidget(memory_splitter, 1)
         return page
 
+    def _build_memory_review_page(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(24, 28, 24, 28)
+        layout.setSpacing(12)
+        title = QLabel("Memory review")
+        title.setObjectName("settingsTitle")
+        layout.addWidget(title)
+        explanation = QLabel(
+            "Review automatic suggestions before they become established memory. "
+            "You can edit and confirm, reject, correct a related memory, or record "
+            "a dated change. Nothing here can grant the assistant authority."
+        )
+        explanation.setWordWrap(True)
+        explanation.setObjectName("settingsSubtitle")
+        layout.addWidget(explanation)
+
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+        self._candidate_table = QTableWidget(0, 4)
+        self._candidate_table.setObjectName("candidateTable")
+        self._candidate_table.setHorizontalHeaderLabels(
+            ("Suggestion", "Type", "Sensitivity", "Expires")
+        )
+        self._candidate_table.setEditTriggers(
+            QTableWidget.EditTrigger.NoEditTriggers
+        )
+        self._candidate_table.setSelectionBehavior(
+            QTableWidget.SelectionBehavior.SelectRows
+        )
+        self._candidate_table.setSelectionMode(
+            QTableWidget.SelectionMode.SingleSelection
+        )
+        self._candidate_table.setAlternatingRowColors(True)
+        self._candidate_table.setShowGrid(False)
+        self._candidate_table.setWordWrap(False)
+        self._candidate_table.verticalHeader().setVisible(False)
+        self._candidate_table.verticalHeader().setDefaultSectionSize(38)
+        candidate_header = self._candidate_table.horizontalHeader()
+        candidate_header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        for column in (1, 2, 3):
+            candidate_header.setSectionResizeMode(
+                column,
+                QHeaderView.ResizeMode.ResizeToContents,
+            )
+        self._candidate_table.itemSelectionChanged.connect(
+            self._candidate_selected
+        )
+        splitter.addWidget(self._candidate_table)
+
+        detail = QFrame()
+        detail.setObjectName("card")
+        detail_layout = QVBoxLayout(detail)
+        detail_layout.setContentsMargins(20, 20, 20, 20)
+        detail_layout.setSpacing(10)
+        detail_title = QLabel("Review decision")
+        detail_title.setObjectName("communicationStylePrompt")
+        detail_layout.addWidget(detail_title)
+        self._candidate_editor = QPlainTextEdit()
+        self._candidate_editor.setObjectName("candidateEditor")
+        self._candidate_editor.setPlaceholderText(
+            "Select a suggestion to inspect it."
+        )
+        self._candidate_editor.setMaximumHeight(130)
+        self._candidate_editor.setTabChangesFocus(True)
+        detail_layout.addWidget(self._candidate_editor)
+        self._candidate_metadata = QLabel()
+        self._candidate_metadata.setObjectName("settingsSubtitle")
+        self._candidate_metadata.setWordWrap(True)
+        detail_layout.addWidget(self._candidate_metadata)
+        self._candidate_unlock = QPushButton("Unlock protected suggestion")
+        self._candidate_unlock.setObjectName("secondaryButton")
+        self._candidate_unlock.clicked.connect(self._unlock_candidate)
+        self._candidate_unlock.hide()
+        detail_layout.addWidget(self._candidate_unlock)
+
+        decision_form = QFormLayout()
+        self._candidate_decision = QComboBox()
+        self._candidate_decision.addItem(
+            "Confirm as an additional global memory",
+            "confirm",
+        )
+        self._candidate_decision.addItem(
+            "Correct the related current memory",
+            "correct",
+        )
+        self._candidate_decision.addItem(
+            "Record a change beginning on a date",
+            "successor",
+        )
+        self._candidate_decision.currentIndexChanged.connect(
+            self._candidate_decision_changed
+        )
+        decision_form.addRow("Decision", self._candidate_decision)
+        self._candidate_target = QComboBox()
+        decision_form.addRow("Related memory", self._candidate_target)
+        self._candidate_date = QDateEdit(QDate.currentDate())
+        self._candidate_date.setCalendarPopup(True)
+        self._candidate_date.setDisplayFormat("yyyy-MM-dd")
+        decision_form.addRow("Change date", self._candidate_date)
+        detail_layout.addLayout(decision_form)
+
+        scope_note = QLabel(
+            "A true context-specific exception remains tentative for now. "
+            "Enforceable named scopes require a future scope registry; this screen "
+            "will not fake that boundary."
+        )
+        scope_note.setObjectName("settingsSubtitle")
+        scope_note.setWordWrap(True)
+        detail_layout.addWidget(scope_note)
+        detail_layout.addStretch()
+        self._candidate_result = QLabel()
+        self._candidate_result.setObjectName("settingsResult")
+        self._candidate_result.setWordWrap(True)
+        detail_layout.addWidget(self._candidate_result)
+        actions = QHBoxLayout()
+        self._candidate_reject = QPushButton("Reject")
+        self._candidate_reject.setObjectName("secondaryButton")
+        self._candidate_reject.clicked.connect(self._reject_candidate)
+        actions.addWidget(self._candidate_reject)
+        actions.addStretch()
+        self._candidate_apply = QPushButton("Apply reviewed decision")
+        self._candidate_apply.clicked.connect(self._apply_candidate)
+        actions.addWidget(self._candidate_apply)
+        detail_layout.addLayout(actions)
+        splitter.addWidget(detail)
+        splitter.setStretchFactor(0, 3)
+        splitter.setStretchFactor(1, 2)
+        splitter.setSizes((560, 390))
+        layout.addWidget(splitter, 1)
+        self._memory_candidates: dict[str, MemoryReviewItem] = {}
+        self._set_candidate_controls_enabled(False)
+        return page
+
     @Slot(QListWidgetItem, QListWidgetItem)
     def _select_settings_section(
         self,
@@ -547,6 +690,193 @@ class SettingsPage(QWidget):
 
     def show_memory_page(self) -> None:
         self._section_list.setCurrentRow(0)
+
+    def set_memory_candidates(
+        self,
+        candidates: tuple[MemoryReviewItem, ...],
+    ) -> None:
+        self._memory_candidates = {
+            str(candidate.record_id): candidate for candidate in candidates
+        }
+        self._candidate_table.setRowCount(0)
+        for candidate in candidates:
+            row = self._candidate_table.rowCount()
+            self._candidate_table.insertRow(row)
+            value = QTableWidgetItem(candidate.value)
+            value.setData(Qt.ItemDataRole.UserRole, str(candidate.record_id))
+            value.setToolTip(candidate.value)
+            self._candidate_table.setItem(row, 0, value)
+            self._candidate_table.setItem(
+                row,
+                1,
+                QTableWidgetItem(candidate.kind.replace("_", " ").title()),
+            )
+            self._candidate_table.setItem(
+                row,
+                2,
+                QTableWidgetItem(candidate.sensitivity.title()),
+            )
+            self._candidate_table.setItem(
+                row,
+                3,
+                QTableWidgetItem(candidate.expires_at or "—"),
+            )
+        self._candidate_result.setText(
+            "No automatic suggestions await review."
+            if not candidates
+            else f"{len(candidates)} suggestion(s) await review."
+        )
+        self._candidate_editor.clear()
+        self._candidate_metadata.clear()
+        self._candidate_target.clear()
+        self._candidate_unlock.hide()
+        self._set_candidate_controls_enabled(False)
+
+    def replace_unlocked_candidate(self, candidate: MemoryReviewItem) -> None:
+        identifier = str(candidate.record_id)
+        self._memory_candidates[identifier] = candidate
+        for row in range(self._candidate_table.rowCount()):
+            item = self._candidate_table.item(row, 0)
+            if item is not None and item.data(Qt.ItemDataRole.UserRole) == identifier:
+                item.setText(candidate.value)
+                item.setToolTip(candidate.value)
+                self._candidate_table.selectRow(row)
+                self._candidate_selected()
+                return
+
+    def show_candidate_result(self, text: str) -> None:
+        self._candidate_result.setText(text)
+
+    def _selected_candidate(self) -> MemoryReviewItem | None:
+        row = self._candidate_table.currentRow()
+        item = self._candidate_table.item(row, 0) if row >= 0 else None
+        if item is None:
+            return None
+        return self._memory_candidates.get(
+            str(item.data(Qt.ItemDataRole.UserRole))
+        )
+
+    @Slot()
+    def _candidate_selected(self) -> None:
+        candidate = self._selected_candidate()
+        if candidate is None:
+            self._set_candidate_controls_enabled(False)
+            return
+        self._candidate_editor.setPlainText(candidate.value if not candidate.locked else "")
+        self._candidate_editor.setReadOnly(candidate.locked)
+        self._candidate_metadata.setText(
+            f"{candidate.kind.replace('_', ' ').title()} · "
+            f"{candidate.sensitivity.title()} · "
+            f"{candidate.mention_policy.replace('_', ' ')}"
+        )
+        self._candidate_unlock.setVisible(candidate.locked)
+        self._candidate_target.clear()
+        for related in candidate.related_confirmed:
+            self._candidate_target.addItem(
+                f"{related.value}  ·  updated {related.updated_at}",
+                (str(related.record_id), related.row_version),
+            )
+        self._set_candidate_controls_enabled(not candidate.locked)
+        self._candidate_decision_changed()
+
+    def _set_candidate_controls_enabled(self, enabled: bool) -> None:
+        self._candidate_editor.setEnabled(enabled)
+        self._candidate_decision.setEnabled(enabled)
+        self._candidate_reject.setEnabled(enabled)
+        self._candidate_apply.setEnabled(enabled)
+        self._candidate_target.setEnabled(enabled)
+        self._candidate_date.setEnabled(enabled)
+
+    @Slot()
+    def _candidate_decision_changed(self) -> None:
+        if not self._candidate_decision.isEnabled():
+            return
+        decision = str(self._candidate_decision.currentData())
+        needs_target = decision in {"correct", "successor"}
+        has_target = self._candidate_target.count() > 0
+        self._candidate_target.setEnabled(needs_target and has_target)
+        self._candidate_date.setEnabled(decision == "successor" and has_target)
+        self._candidate_apply.setEnabled(not needs_target or has_target)
+
+    @Slot()
+    def _unlock_candidate(self) -> None:
+        candidate = self._selected_candidate()
+        if candidate is not None and candidate.locked:
+            self.candidate_unlock_requested.emit(str(candidate.record_id))
+
+    @Slot()
+    def _reject_candidate(self) -> None:
+        candidate = self._selected_candidate()
+        if candidate is None or candidate.locked:
+            return
+        answer = QMessageBox.question(
+            self,
+            WINDOW_TITLE,
+            "Reject this suggestion? It will leave normal review and retrieval, "
+            "while its encrypted revision and audit history remain.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        if answer == QMessageBox.StandardButton.Yes:
+            self.candidate_reject_requested.emit(
+                str(candidate.record_id),
+                candidate.row_version,
+            )
+
+    @Slot()
+    def _apply_candidate(self) -> None:
+        candidate = self._selected_candidate()
+        if candidate is None or candidate.locked:
+            return
+        edited = self._candidate_editor.toPlainText().strip()
+        if not edited:
+            self._candidate_result.setText("A reviewed memory cannot be empty.")
+            return
+        decision = str(self._candidate_decision.currentData())
+        target_id = ""
+        target_version = 0
+        target_value = ""
+        if decision in {"correct", "successor"}:
+            data = self._candidate_target.currentData()
+            if not isinstance(data, tuple) or len(data) != 2:
+                self._candidate_result.setText(
+                    "Select a current related memory before reconciling."
+                )
+                return
+            target_id, target_version = str(data[0]), int(data[1])
+            target_value = self._candidate_target.currentText().split("  ·  ")[0]
+        effective_date = self._candidate_date.date().toString("yyyy-MM-dd")
+        if decision == "confirm":
+            preview = f"Confirm this as an additional global memory?\n\n{edited}"
+        elif decision == "correct":
+            preview = (
+                "Correct the established memory below? The prior value remains in "
+                f"revision history.\n\nCurrent: {target_value}\n\nNew: {edited}"
+            )
+        else:
+            preview = (
+                f"Record a dated change beginning {effective_date}?\n\n"
+                f"Previous: {target_value}\n\nNew: {edited}"
+            )
+        answer = QMessageBox.question(
+            self,
+            WINDOW_TITLE,
+            preview,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        self.candidate_apply_requested.emit(
+            str(candidate.record_id),
+            candidate.row_version,
+            edited,
+            target_id,
+            target_version,
+            decision,
+            effective_date,
+            candidate.sensitivity,
+        )
 
     def set_communication_style(self, text: str, *, persistent: bool) -> None:
         self._communication_style.setPlainText(text)
@@ -1387,6 +1717,15 @@ class AssistantWindow(QMainWindow):
         )
         self._settings.memory_source_requested.connect(self._open_memory_source)
         self._settings.memory_delete_requested.connect(self._delete_memory)
+        self._settings.candidate_unlock_requested.connect(
+            self._unlock_memory_candidate
+        )
+        self._settings.candidate_reject_requested.connect(
+            self._reject_memory_candidate
+        )
+        self._settings.candidate_apply_requested.connect(
+            self._apply_memory_candidate
+        )
         self._settings.back_requested.connect(self._return_to_chat)
         QApplication.instance().styleHints().colorSchemeChanged.connect(
             self._system_theme_changed
@@ -1541,10 +1880,128 @@ class AssistantWindow(QMainWindow):
             )
             try:
                 self._settings.set_memories(self._service.list_memories())
+                self._settings.set_memory_candidates(
+                    self._service.list_memory_candidates()
+                )
             except ApplicationOpenError as error:
                 self._show_safe_error(str(error))
                 return
         self._pages.setCurrentWidget(self._settings)
+
+    def _candidate_passcode(self, action: str) -> str | None:
+        passcode, accepted = QInputDialog.getText(
+            self,
+            WINDOW_TITLE,
+            f"High-risk passcode required to {action}:",
+            QLineEdit.EchoMode.Password,
+        )
+        if not accepted or not passcode:
+            passcode = ""
+            return None
+        return passcode
+
+    @Slot(str)
+    def _unlock_memory_candidate(self, identifier: str) -> None:
+        if self._service is None:
+            return
+        passcode = self._candidate_passcode("review this protected suggestion")
+        if passcode is None:
+            return
+        try:
+            candidate = self._service.unlock_memory_candidate(
+                UUID(identifier),
+                passcode,
+            )
+        except (ValueError, ApplicationOpenError) as error:
+            self._show_safe_error(
+                str(error)
+                if isinstance(error, ApplicationOpenError)
+                else "The candidate identifier is invalid."
+            )
+            return
+        finally:
+            passcode = ""
+        self._settings.replace_unlocked_candidate(candidate)
+
+    @Slot(str, int)
+    def _reject_memory_candidate(self, identifier: str, version: int) -> None:
+        if self._service is None:
+            return
+        try:
+            self._service.reject_memory_candidate(UUID(identifier), version)
+            self._refresh_memory_settings(
+                "Suggestion rejected; encrypted history was retained."
+            )
+        except (ValueError, ApplicationOpenError) as error:
+            self._show_safe_error(
+                str(error)
+                if isinstance(error, ApplicationOpenError)
+                else "The candidate identifier is invalid."
+            )
+
+    @Slot(str, int, str, str, int, str, str, str)
+    def _apply_memory_candidate(
+        self,
+        identifier: str,
+        version: int,
+        edited_value: str,
+        target_identifier: str,
+        target_version: int,
+        decision: str,
+        effective_date: str,
+        sensitivity: str,
+    ) -> None:
+        if self._service is None:
+            return
+        passcode: str | None = None
+        if sensitivity in {"sensitive", "restricted"}:
+            passcode = self._candidate_passcode("confirm this protected memory change")
+            if passcode is None:
+                return
+        try:
+            candidate_id = UUID(identifier)
+            if decision == "confirm":
+                self._service.confirm_memory_candidate(
+                    candidate_id,
+                    version,
+                    edited_value,
+                    high_risk_passcode=passcode,
+                )
+            else:
+                self._service.reconcile_memory_candidate(
+                    candidate_id,
+                    version,
+                    UUID(target_identifier),
+                    target_version,
+                    edited_value,
+                    decision,
+                    effective_date=effective_date,
+                    high_risk_passcode=passcode,
+                )
+            self._refresh_memory_settings(
+                "Reviewed decision applied with encrypted revision history."
+            )
+        except (ValueError, ApplicationOpenError) as error:
+            self._show_safe_error(
+                str(error)
+                if isinstance(error, ApplicationOpenError)
+                else "The reconciliation identifiers are invalid."
+            )
+        finally:
+            passcode = ""
+
+    def _refresh_memory_settings(self, result: str) -> None:
+        if self._service is None:
+            return
+        try:
+            self._settings.set_memories(self._service.list_memories())
+            self._settings.set_memory_candidates(
+                self._service.list_memory_candidates()
+            )
+        except ApplicationOpenError as error:
+            self._show_safe_error(str(error))
+            return
+        self._settings.show_candidate_result(result)
 
     @Slot(str)
     def _open_memory_source(self, identifier: str) -> None:
@@ -1835,15 +2292,16 @@ class AssistantWindow(QMainWindow):
                                     border: 1px solid {colors['border']};
                                     border-radius: 10px; }}
             #memoryCategoryTitle {{ font-weight: 650; padding: 3px 6px; }}
-            #memoryTable {{ background: {colors['card']};
-                            alternate-background-color: {colors['sidebar']};
-                            border: 1px solid {colors['border']};
-                            border-radius: 10px; }}
-            #memoryTable QHeaderView::section {{ background: {colors['sidebar']};
-                                                border: 0;
-                                                border-bottom: 1px solid {colors['border']};
-                                                padding: 8px; font-weight: 650; }}
-            #memoryTable::item {{ padding: 5px 7px; }}
+            #memoryTable, #candidateTable {{ background: {colors['card']};
+                                             alternate-background-color: {colors['sidebar']};
+                                             border: 1px solid {colors['border']};
+                                             border-radius: 10px; }}
+            #memoryTable QHeaderView::section,
+            #candidateTable QHeaderView::section {{ background: {colors['sidebar']};
+                                                    border: 0;
+                                                    border-bottom: 1px solid {colors['border']};
+                                                    padding: 8px; font-weight: 650; }}
+            #memoryTable::item, #candidateTable::item {{ padding: 5px 7px; }}
             #memoryRowActions {{ background: transparent; }}
             #tableAction, #tableDeleteAction {{ padding: 5px 6px; }}
             #tableDeleteAction {{ background: transparent;

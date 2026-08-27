@@ -2,6 +2,7 @@
 
 import os
 import unittest
+from unittest.mock import patch
 from datetime import datetime, timezone
 from uuid import uuid4
 
@@ -10,11 +11,18 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtCore import Qt  # noqa: E402
 from PySide6.QtGui import QCloseEvent, QFont  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
-from PySide6.QtWidgets import QApplication, QLineEdit, QPushButton  # noqa: E402
+from PySide6.QtWidgets import (  # noqa: E402
+    QApplication,
+    QLineEdit,
+    QMessageBox,
+    QPushButton,
+)
 
 from personal_assistant.application_service import (  # noqa: E402
     ApplicationLaunchState,
     MemoryInventoryItem,
+    MemoryReviewItem,
+    MemoryReviewRelatedItem,
 )
 from personal_assistant.conversation import (  # noqa: E402
     ConversationEvent,
@@ -191,15 +199,70 @@ class NativeUiTests(unittest.TestCase):
             "Be warm and use plain language.",
             persistent=True,
         )
-        page._section_list.setCurrentRow(1)
+        page._section_list.setCurrentRow(2)
 
         page._communication_save.click()
 
         self.assertEqual(saved, ["Be warm and use plain language."])
-        self.assertEqual(page._section_pages.currentIndex(), 1)
-        self.assertEqual(page._section_list.count(), 3)
+        self.assertEqual(page._section_pages.currentIndex(), 2)
+        self.assertEqual(page._section_list.count(), 4)
         page._communication_style.setPlainText("x" * 2_001)
         self.assertFalse(page._communication_save.isEnabled())
+
+    def test_memory_review_previews_correction_and_emits_bounded_values(self) -> None:
+        page = SettingsPage()
+        candidate_id = uuid4()
+        target_id = uuid4()
+        page.set_memory_candidates(
+            (
+                MemoryReviewItem(
+                    candidate_id,
+                    3,
+                    "I now prefer synthetic evenings.",
+                    "preference",
+                    "personal",
+                    "ask_before_mentioning",
+                    "2026-09-25",
+                    False,
+                    (
+                        MemoryReviewRelatedItem(
+                            target_id,
+                            4,
+                            "I prefer synthetic mornings.",
+                            "2026-08-20",
+                        ),
+                    ),
+                ),
+            )
+        )
+        applied: list[tuple[object, ...]] = []
+        page.candidate_apply_requested.connect(
+            lambda *values: applied.append(values)
+        )
+        page._candidate_table.selectRow(0)
+        page._candidate_decision.setCurrentIndex(1)
+
+        with patch(
+            "personal_assistant.ui.QMessageBox.question",
+            return_value=QMessageBox.StandardButton.Yes,
+        ):
+            page._candidate_apply.click()
+
+        self.assertEqual(
+            applied,
+            [
+                (
+                    str(candidate_id),
+                    3,
+                    "I now prefer synthetic evenings.",
+                    str(target_id),
+                    4,
+                    "correct",
+                    page._candidate_date.date().toString("yyyy-MM-dd"),
+                    "personal",
+                )
+            ],
+        )
 
     def test_settings_memory_table_is_compact_filterable_and_emits_row_actions(
         self,

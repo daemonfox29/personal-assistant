@@ -29,6 +29,7 @@ from personal_assistant.memory_types import (
     InsightConfidence,
     InsightPayload,
     MentionPolicy,
+    PreferencePayload,
     Provenance,
     RecordDraft,
     RecordStatus,
@@ -193,6 +194,148 @@ class ApplicationServiceTests(unittest.TestCase):
                     "deleted, the exact message is no longer available",
                 ):
                     service.open_memory_source(inventory[0].record_id)
+                service.close()
+
+    def test_candidate_review_lists_related_memory_and_applies_correction(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            settings = AppSettings(
+                memory=MemorySettings(
+                    data_directory=Path(temporary_directory) / "private"
+                )
+            )
+            factory = AssistantApplicationFactory(settings)
+            factory.setup(RECOVERY, RECOVERY, PASSCODE, PASSCODE)
+            with patch(
+                "personal_assistant.application_service.OllamaModel",
+                return_value=SyntheticModel(),
+            ):
+                service = factory.open(RECOVERY)
+                runtime = service._runtime
+                self.assertIsNotNone(runtime)
+                target = runtime.repository.create_record(  # type: ignore[union-attr]
+                    RecordDraft(
+                        PreferencePayload(
+                            "synthetic schedule",
+                            "I prefer synthetic mornings.",
+                        ),
+                        RecordStatus.CONFIRMED,
+                        Sensitivity.PERSONAL,
+                        MentionPolicy.MAY_MENTION_WHEN_RELEVANT,
+                        Scope(ScopeType.GLOBAL),
+                    ),
+                    Provenance(
+                        SourceType.TRUSTED_INTERFACE,
+                        "synthetic-review-target",
+                        ActorType.USER,
+                    ),
+                    uuid4(),
+                )
+                candidate = runtime.repository.create_record(  # type: ignore[union-attr]
+                    RecordDraft(
+                        PreferencePayload(
+                            "synthetic schedule",
+                            "I may prefer synthetic evenings.",
+                        ),
+                        RecordStatus.CANDIDATE,
+                        Sensitivity.PERSONAL,
+                        MentionPolicy.ASK_BEFORE_MENTIONING,
+                        Scope(ScopeType.GLOBAL),
+                    ),
+                    Provenance(
+                        SourceType.MODEL_CANDIDATE,
+                        "turn:88888888-8888-8888-8888-888888888888",
+                        ActorType.MODEL_CANDIDATE,
+                        "synthetic-model-v1",
+                    ),
+                    uuid4(),
+                )
+
+                review = service.list_memory_candidates()
+
+                self.assertEqual(len(review), 1)
+                self.assertEqual(review[0].record_id, candidate.record_id)
+                self.assertEqual(review[0].related_confirmed[0].record_id, target.record_id)
+                service.reconcile_memory_candidate(
+                    candidate.record_id,
+                    candidate.row_version,
+                    target.record_id,
+                    target.row_version,
+                    "I prefer synthetic evenings.",
+                    "correct",
+                )
+                self.assertEqual(service.list_memory_candidates(), ())
+                corrected = runtime.repository.inspect_record(  # type: ignore[union-attr]
+                    target.record_id,
+                    uuid4(),
+                )
+                consumed = runtime.repository.inspect_record(  # type: ignore[union-attr]
+                    candidate.record_id,
+                    uuid4(),
+                )
+                self.assertEqual(
+                    corrected.revision.payload.preference,  # type: ignore[union-attr]
+                    "I prefer synthetic evenings.",
+                )
+                self.assertEqual(consumed.status, RecordStatus.SUPERSEDED)
+                service.close()
+
+    def test_sensitive_candidate_is_redacted_until_passcode_review(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            settings = AppSettings(
+                memory=MemorySettings(
+                    data_directory=Path(temporary_directory) / "private"
+                )
+            )
+            factory = AssistantApplicationFactory(settings)
+            factory.setup(RECOVERY, RECOVERY, PASSCODE, PASSCODE)
+            with patch(
+                "personal_assistant.application_service.OllamaModel",
+                return_value=SyntheticModel(),
+            ):
+                service = factory.open(RECOVERY)
+                runtime = service._runtime
+                self.assertIsNotNone(runtime)
+                candidate = runtime.repository.create_record(  # type: ignore[union-attr]
+                    RecordDraft(
+                        FactPayload(
+                            "synthetic protected topic",
+                            "Synthetic protected candidate content.",
+                        ),
+                        RecordStatus.CANDIDATE,
+                        Sensitivity.SENSITIVE,
+                        MentionPolicy.ASK_BEFORE_MENTIONING,
+                        Scope(ScopeType.GLOBAL),
+                    ),
+                    Provenance(
+                        SourceType.MODEL_CANDIDATE,
+                        "turn:77777777-7777-7777-7777-777777777777",
+                        ActorType.MODEL_CANDIDATE,
+                        "synthetic-model-v1",
+                    ),
+                    uuid4(),
+                )
+
+                listed = service.list_memory_candidates()[0]
+
+                self.assertTrue(listed.locked)
+                self.assertNotIn("protected candidate content", listed.value)
+                revealed = service.unlock_memory_candidate(
+                    candidate.record_id,
+                    PASSCODE,
+                )
+                self.assertFalse(revealed.locked)
+                self.assertIn("protected candidate content", revealed.value)
+                service.confirm_memory_candidate(
+                    candidate.record_id,
+                    candidate.row_version,
+                    revealed.value,
+                    high_risk_passcode=PASSCODE,
+                )
+                confirmed = runtime.repository.inspect_record(  # type: ignore[union-attr]
+                    candidate.record_id,
+                    uuid4(),
+                )
+                self.assertEqual(confirmed.status, RecordStatus.CONFIRMED)
                 service.close()
 
     def test_legacy_memory_opens_only_one_verbatim_saved_message(self) -> None:

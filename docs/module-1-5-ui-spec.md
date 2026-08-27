@@ -96,10 +96,21 @@ The first usable slice includes:
    Each row shows the saved value, kind, status, update date, source navigation,
    and audited soft-delete control through immutable application-service values.
 
-Candidate confirmation/rejection, backup/restore, pagination beyond the initial
-bounded inventory, and the bounded audit viewer follow as additional panels over
-service methods. They must not be implemented by exposing repository objects to
-widgets.
+The native Memory Review panel exposes a bounded candidate inbox through
+immutable application-service values. Normal and personal suggestions may be
+edited, confirmed, rejected, compared with related confirmed memories, applied
+as an explicit correction, or recorded as a dated successor. Corrections and
+dated changes update both records atomically, preserve revision history, reject
+stale row versions, and require a before/after preview. Sensitive and restricted
+content remains redacted until exact passcode-backed review; its confirmation
+receipt is bound to the decision, edited-content digest, target, versions, and
+effective date. Widgets never receive receipts or approval authority.
+
+A context-specific exception remains tentative until the project has a named
+scope registry and deterministic request-to-scope resolver. A free-form label is
+not presented as an enforceable scope. Backup/restore, pagination beyond the
+initial bounded inventories, and the bounded audit viewer follow as additional
+panels over service methods. They must not expose repository objects to widgets.
 
 Communication style is applied immediately to subsequent replies across all
 chats, including Private Chat, because it is a global owner preference rather

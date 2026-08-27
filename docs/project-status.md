@@ -161,8 +161,11 @@ complete; the batched Linux pull-request check is its final platform gate.
 - [x] Module 1.5 owner controls: add a compact native memory inventory, exact
   source navigation for newly linked chat memories, and audited soft deletion
   without exposing authority objects to widgets.
-- [ ] Module 1.5 owner controls: add pagination, native candidate reconciliation,
-  backup/restore, and bounded audit viewing.
+- [x] Module 1.5 owner controls: add bounded native candidate review with edit,
+  confirm, reject, conflict comparison, atomic correction, dated successors,
+  stale-write protection, and exact protected-memory passcode approvals.
+- [ ] Module 1.5 owner controls: add pagination, a real named-scope registry for
+  contextual exceptions, backup/restore, and bounded audit viewing.
 - [ ] Module 1.5 release gates: package and sign the macOS app, complete
   accessibility review, and verify packaged recovery and shutdown. Keep Windows
   packaging and runtime verification as a required later gate.
@@ -191,6 +194,17 @@ Completed:
   bounded, validated, encrypted, append-only revisioned, content-free audited,
   and applied immediately to subsequent replies through a style-only system-data
   envelope that cannot grant authority or weaken safety rules.
+- Added a dedicated Memory Review screen for the quarantined proposal ledger.
+  It supports editable confirmation, recoverable rejection, related-current-
+  memory comparison, atomic global correction, and dated change-over-time
+  reconciliation with explicit previews and optimistic concurrency.
+- Protected candidate values remain redacted until passcode-backed review.
+  Protected decisions bind approval to the exact decision, content digest,
+  record versions, target, and effective date; widgets never receive approval
+  receipts or authority objects.
+- Kept contextual exceptions honest: the UI states that they remain tentative
+  until a named-scope registry and deterministic resolver exist, rather than
+  storing a decorative label that retrieval cannot enforce.
 - Linked newly created chat-derived memories to the exact opaque encrypted user
   message ID. View source resolves the ID directly, opens the correct saved
   conversation, and highlights the exact sequence even when text is duplicated.
@@ -201,13 +215,14 @@ Completed:
   inferred, deleted, and imported sources are never guessed.
 - Kept memory deletion recoverable: the row leaves ordinary retrieval while its
   revision history and content-free audit event remain.
-- Verified all 340 local tests under the locked `uv` environment; one opt-in
+- Verified all 345 local tests under the locked `uv` environment; one opt-in
   performance test remained skipped.
 
 Next:
 
-- Add native pagination beyond the initial newest-100 inventory, candidate
-  reconciliation, backup/restore, and bounded audit viewing.
+- Add native pagination beyond the initial newest-100 inventory, a named-scope
+  registry for enforceable contextual exceptions, backup/restore, and bounded
+  audit viewing.
 - Run a native manual check that creates a new fact, opens its source, deletes
   its chat, and verifies the unavailable-source message.
 

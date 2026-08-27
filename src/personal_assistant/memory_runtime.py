@@ -28,7 +28,7 @@ from personal_assistant.memory_capture import (
     MemoryCaptureCoordinator,
 )
 from personal_assistant.memory_context import RepositoryMemoryContextProvider
-from personal_assistant.memory_repository import MemoryRepository
+from personal_assistant.memory_repository import MemoryRecord, MemoryRepository
 from personal_assistant.retrieval_language import safe_topic_labels
 from personal_assistant.memory_types import (
     ActorType,
@@ -234,11 +234,14 @@ class MemoryRuntime:
         record_id: UUID,
         correlation_id: UUID,
         *,
+        expected_version: int | None = None,
         high_risk_passcode: str | None = None,
     ) -> None:
         """Confirm one candidate; sensitive categories require the passcode gate."""
 
         record = self.repository.inspect_record(record_id, correlation_id)
+        if expected_version is not None and record.row_version != expected_version:
+            raise ValueError("The candidate changed before it was reviewed.")
         if record.sensitivity in {Sensitivity.SENSITIVE, Sensitivity.RESTRICTED}:
             arguments = {
                 "record_id": str(record.record_id),
@@ -284,6 +287,106 @@ class MemoryRuntime:
             ),
             correlation_id,
         )
+
+    def review_candidate(
+        self,
+        record_id: UUID,
+        correlation_id: UUID,
+        *,
+        high_risk_passcode: str | None = None,
+    ) -> MemoryRecord:
+        """Return one candidate after exact passcode approval when protected."""
+
+        record = self.repository.inspect_record(record_id, correlation_id)
+        if record.sensitivity in {Sensitivity.SENSITIVE, Sensitivity.RESTRICTED}:
+            arguments = {
+                "decision": "view",
+                "record_id": str(record.record_id),
+                "row_version": record.row_version,
+                "sensitivity": record.sensitivity.value,
+            }
+            if high_risk_passcode is None:
+                raise ValueError("High-risk passcode is required.")
+            grant = self.approval_gate.approve(
+                ActionKind.MEMORY_REVIEW_SENSITIVE,
+                arguments,
+                high_risk_passcode,
+                correlation_id,
+            )
+            authorization = authorize_action(
+                ActionKind.MEMORY_REVIEW_SENSITIVE,
+                arguments=arguments,
+                approval_receipt=grant.receipt,
+                approval_authority=grant.authority,
+            )
+            if not authorization.allowed:
+                raise ValueError("Sensitive memory review was not authorized.")
+        return record
+
+    def authorize_sensitive_candidate_decision(
+        self,
+        record_id: UUID,
+        expected_version: int,
+        decision: str,
+        content_digest: str,
+        high_risk_passcode: str | None,
+        correlation_id: UUID,
+        *,
+        target_id: UUID | None = None,
+        target_version: int = 0,
+        effective_date: str = "",
+    ) -> MemoryRecord:
+        """Authorize one exact protected candidate decision without exposing authority."""
+
+        record = self.repository.inspect_record(record_id, correlation_id)
+        if record.row_version != expected_version:
+            raise ValueError("The candidate changed before it was reviewed.")
+        if record.sensitivity not in {Sensitivity.SENSITIVE, Sensitivity.RESTRICTED}:
+            return record
+        if decision not in {"confirm", "correct", "successor"}:
+            raise ValueError("Sensitive candidate decision is invalid.")
+        if (
+            not isinstance(content_digest, str)
+            or len(content_digest) != 64
+            or any(character not in "0123456789abcdef" for character in content_digest)
+        ):
+            raise ValueError("Sensitive candidate content digest is invalid.")
+        if decision == "confirm":
+            if target_id is not None or target_version != 0 or effective_date:
+                raise ValueError("Sensitive confirmation arguments are invalid.")
+        elif not isinstance(target_id, UUID) or target_version < 1:
+            raise ValueError("Sensitive reconciliation target is invalid.")
+        if decision == "successor" and not effective_date:
+            raise ValueError("Sensitive reconciliation date is required.")
+        if decision != "successor" and effective_date:
+            raise ValueError("Sensitive reconciliation date is invalid.")
+        if high_risk_passcode is None:
+            raise ValueError("High-risk passcode is required.")
+        arguments = {
+            "content_digest": content_digest,
+            "decision": decision,
+            "effective_date": effective_date,
+            "record_id": str(record.record_id),
+            "row_version": record.row_version,
+            "sensitivity": record.sensitivity.value,
+            "target_id": "" if target_id is None else str(target_id),
+            "target_version": target_version,
+        }
+        grant = self.approval_gate.approve(
+            ActionKind.MEMORY_CONFIRM_SENSITIVE,
+            arguments,
+            high_risk_passcode,
+            correlation_id,
+        )
+        authorization = authorize_action(
+            ActionKind.MEMORY_CONFIRM_SENSITIVE,
+            arguments=arguments,
+            approval_receipt=grant.receipt,
+            approval_authority=grant.authority,
+        )
+        if not authorization.allowed:
+            raise ValueError("Sensitive memory decision was not authorized.")
+        return record
 
     def restore_backup(
         self,

@@ -1,8 +1,10 @@
 """Narrow lifecycle boundary exposed to trusted local user interfaces."""
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
+from datetime import date, datetime, time, timezone
 from enum import StrEnum
+from hashlib import sha256
 from pathlib import Path
 from threading import Lock
 from uuid import UUID, uuid4
@@ -62,11 +64,14 @@ from personal_assistant.memory_types import (
     EventPayload,
     FactPayload,
     InsightPayload,
+    MemoryPayload,
     NotePayload,
     PolicyPreferencePayload,
     PreferencePayload,
     Provenance,
+    RecordDraft,
     RecordStatus,
+    Sensitivity,
     SourceType,
 )
 from personal_assistant.ollama_adapter import OllamaModel
@@ -146,6 +151,27 @@ class MemoryInventoryItem:
 class MemorySourceLocation:
     conversation: StoredConversation
     source_sequence: int
+
+
+@dataclass(frozen=True)
+class MemoryReviewRelatedItem:
+    record_id: UUID
+    row_version: int
+    value: str
+    updated_at: str
+
+
+@dataclass(frozen=True)
+class MemoryReviewItem:
+    record_id: UUID
+    row_version: int
+    value: str
+    kind: str
+    sensitivity: str
+    mention_policy: str
+    expires_at: str
+    locked: bool
+    related_confirmed: tuple[MemoryReviewRelatedItem, ...] = ()
 
 
 class AssistantApplicationService:
@@ -520,6 +546,220 @@ class AssistantApplicationService:
                 "Saved memories could not be listed safely."
             ) from error
 
+    def list_memory_candidates(self) -> tuple[MemoryReviewItem, ...]:
+        """Return the bounded review inbox, redacting protected candidate text."""
+
+        with self._lock:
+            if self._closed:
+                raise ApplicationOpenError("This assistant session is closed.")
+            runtime = self._runtime
+        if runtime is None:
+            return ()
+        try:
+            return tuple(
+                self._memory_review_item(
+                    record,
+                    runtime,
+                    reveal=record.sensitivity
+                    not in {Sensitivity.SENSITIVE, Sensitivity.RESTRICTED},
+                )
+                for record in runtime.repository.list_candidates(uuid4())
+            )
+        except Exception as error:
+            raise ApplicationOpenError(
+                "Memory suggestions could not be listed safely."
+            ) from error
+
+    def unlock_memory_candidate(
+        self,
+        record_id: UUID,
+        high_risk_passcode: str,
+    ) -> MemoryReviewItem:
+        """Reveal one protected candidate after exact passcode authorization."""
+
+        with self._lock:
+            if self._closed:
+                raise ApplicationOpenError("This assistant session is closed.")
+            runtime = self._runtime
+        if runtime is None:
+            raise ApplicationOpenError("Saved memories require encrypted memory.")
+        correlation_id = uuid4()
+        try:
+            record = runtime.review_candidate(
+                record_id,
+                correlation_id,
+                high_risk_passcode=high_risk_passcode,
+            )
+            return self._memory_review_item(record, runtime, reveal=True)
+        except Exception as error:
+            raise ApplicationOpenError(
+                "The protected suggestion could not be opened. Check the passcode."
+            ) from error
+
+    def confirm_memory_candidate(
+        self,
+        record_id: UUID,
+        expected_version: int,
+        edited_value: str,
+        *,
+        high_risk_passcode: str | None = None,
+    ) -> None:
+        """Optionally edit, then explicitly confirm one current candidate."""
+
+        def operation(runtime: MemoryRuntime, correlation_id: UUID) -> None:
+            normalized = " ".join(edited_value.split())
+            record = runtime.authorize_sensitive_candidate_decision(
+                record_id,
+                expected_version,
+                "confirm",
+                sha256(normalized.encode("utf-8")).hexdigest(),
+                high_risk_passcode,
+                correlation_id,
+            )
+            revised = self._revise_candidate_if_needed(
+                runtime,
+                record,
+                edited_value,
+                correlation_id,
+            )
+            runtime.repository.confirm_candidate(
+                revised.record_id,
+                revised.row_version,
+                Provenance(
+                    SourceType.TRUSTED_INTERFACE,
+                    "settings-candidate-confirm",
+                    ActorType.USER,
+                ),
+                correlation_id,
+            )
+
+        self._run_candidate_change(operation)
+
+    def reject_memory_candidate(
+        self,
+        record_id: UUID,
+        expected_version: int,
+    ) -> None:
+        """Reject one current candidate while retaining its revision history."""
+
+        def operation(runtime: MemoryRuntime, correlation_id: UUID) -> None:
+            record = runtime.repository.inspect_record(record_id, correlation_id)
+            if record.row_version != expected_version:
+                raise ValueError("The candidate changed before it was reviewed.")
+            runtime.reject_candidate(record_id, correlation_id)
+
+        self._run_candidate_change(operation)
+
+    def reconcile_memory_candidate(
+        self,
+        record_id: UUID,
+        expected_version: int,
+        target_id: UUID,
+        target_version: int,
+        edited_value: str,
+        decision: str,
+        *,
+        effective_date: str | None = None,
+        high_risk_passcode: str | None = None,
+    ) -> None:
+        """Apply an explicit correction or dated successor after preview."""
+
+        if decision not in {"correct", "successor"}:
+            raise ApplicationOpenError("The reconciliation decision is invalid.")
+
+        def operation(runtime: MemoryRuntime, correlation_id: UUID) -> None:
+            normalized = " ".join(edited_value.split())
+            record = runtime.authorize_sensitive_candidate_decision(
+                record_id,
+                expected_version,
+                decision,
+                sha256(normalized.encode("utf-8")).hexdigest(),
+                high_risk_passcode,
+                correlation_id,
+                target_id=target_id,
+                target_version=target_version,
+                effective_date=(
+                    effective_date if decision == "successor" and effective_date else ""
+                ),
+            )
+            revised = self._revise_candidate_if_needed(
+                runtime,
+                record,
+                edited_value,
+                correlation_id,
+            )
+            related = self._related_confirmed_records(
+                revised,
+                runtime,
+                correlation_id,
+            )
+            target = next(
+                (
+                    item
+                    for item in related
+                    if item.record_id == target_id
+                    and item.row_version == target_version
+                ),
+                None,
+            )
+            if target is None:
+                raise ValueError("The selected related memory is no longer current.")
+            provenance = Provenance(
+                SourceType.TRUSTED_INTERFACE,
+                "settings-candidate-reconciliation",
+                ActorType.USER,
+            )
+            if decision == "correct":
+                runtime.repository.reconcile_candidate_as_correction(
+                    revised.record_id,
+                    revised.row_version,
+                    target.record_id,
+                    target.row_version,
+                    provenance,
+                    correlation_id,
+                )
+                return
+            if effective_date is None:
+                raise ValueError("A change date is required.")
+            parsed_date = date.fromisoformat(effective_date)
+            effective_at = datetime.combine(parsed_date, time.min, timezone.utc)
+            runtime.repository.reconcile_candidate_as_successor(
+                revised.record_id,
+                revised.row_version,
+                target.record_id,
+                target.row_version,
+                effective_at,
+                provenance,
+                correlation_id,
+            )
+
+        self._run_candidate_change(operation)
+
+    def _run_candidate_change(
+        self,
+        operation: Callable[[MemoryRuntime, UUID], None],
+    ) -> None:
+        if not self._request_lock.acquire(blocking=False):
+            raise ApplicationOpenError(
+                "Wait for the current response before reviewing memory."
+            )
+        try:
+            with self._lock:
+                if self._closed:
+                    raise ApplicationOpenError("This assistant session is closed.")
+                runtime = self._runtime
+            if runtime is None:
+                raise ApplicationOpenError("Saved memories require encrypted memory.")
+            operation(runtime, uuid4())
+        except ApplicationOpenError:
+            raise
+        except Exception as error:
+            raise ApplicationOpenError(
+                "The memory review could not be applied safely. Refresh and try again."
+            ) from error
+        finally:
+            self._request_lock.release()
+
     def delete_memory(self, record_id: UUID) -> None:
         """Soft-delete one memory from ordinary retrieval with an audit revision."""
 
@@ -656,8 +896,14 @@ class AssistantApplicationService:
 
         payload = record.revision.payload
         if record.status is RecordStatus.CANDIDATE:
-            return isinstance(payload, InsightPayload)
+            return (
+                isinstance(payload, InsightPayload)
+                and record.candidate_expires_at is not None
+                and record.candidate_expires_at >= datetime.now(timezone.utc)
+            )
         if record.status is not RecordStatus.CONFIRMED:
+            return False
+        if not AssistantApplicationService._record_is_current(record):
             return False
         if isinstance(payload, FactPayload) and payload.subject.startswith(
             "direct-statement:"
@@ -696,6 +942,169 @@ class AssistantApplicationService:
             record.status.value,
             record.updated_at.date().isoformat(),
         )
+
+    @staticmethod
+    def _memory_review_item(
+        record: MemoryRecord,
+        runtime: MemoryRuntime,
+        *,
+        reveal: bool,
+    ) -> MemoryReviewItem:
+        if record.status is not RecordStatus.CANDIDATE:
+            raise ValueError("Memory review items must be current candidates.")
+        if not reveal:
+            return MemoryReviewItem(
+                record.record_id,
+                record.row_version,
+                "Protected suggestion — unlock to review",
+                record.kind.value,
+                record.sensitivity.value,
+                record.mention_policy.value,
+                (
+                    ""
+                    if record.candidate_expires_at is None
+                    else record.candidate_expires_at.date().isoformat()
+                ),
+                True,
+            )
+        related = AssistantApplicationService._related_confirmed_records(
+            record,
+            runtime,
+            uuid4(),
+        )
+        return MemoryReviewItem(
+            record.record_id,
+            record.row_version,
+            AssistantApplicationService._memory_payload_value(
+                record.revision.payload
+            ),
+            record.kind.value,
+            record.sensitivity.value,
+            record.mention_policy.value,
+            (
+                ""
+                if record.candidate_expires_at is None
+                else record.candidate_expires_at.date().isoformat()
+            ),
+            False,
+            tuple(
+                MemoryReviewRelatedItem(
+                    item.record_id,
+                    item.row_version,
+                    AssistantApplicationService._memory_payload_value(
+                        item.revision.payload
+                    ),
+                    item.updated_at.date().isoformat(),
+                )
+                for item in related[:5]
+            ),
+        )
+
+    @staticmethod
+    def _related_confirmed_records(
+        record: MemoryRecord,
+        runtime: MemoryRuntime,
+        correlation_id: UUID,
+    ) -> tuple[MemoryRecord, ...]:
+        neighbors = runtime.repository.find_capture_neighbors(
+            RecordDraft(
+                record.revision.payload,
+                RecordStatus.CANDIDATE,
+                record.sensitivity,
+                record.mention_policy,
+                record.scope,
+                record.primary_entity_id,
+                record.valid_from,
+                record.valid_until,
+            ),
+            correlation_id,
+        )
+        return tuple(
+            item
+            for item in neighbors
+            if item.record_id != record.record_id
+            and item.status is RecordStatus.CONFIRMED
+            and AssistantApplicationService._record_is_current(item)
+        )
+
+    @staticmethod
+    def _record_is_current(record: MemoryRecord) -> bool:
+        now = datetime.now(timezone.utc)
+        return not (
+            (record.valid_from is not None and record.valid_from > now)
+            or (record.valid_until is not None and record.valid_until < now)
+        )
+
+    @staticmethod
+    def _revise_candidate_if_needed(
+        runtime: MemoryRuntime,
+        record: MemoryRecord,
+        edited_value: str,
+        correlation_id: UUID,
+    ) -> MemoryRecord:
+        normalized = " ".join(edited_value.split())
+        if not normalized:
+            raise ValueError("A confirmed memory cannot be empty.")
+        if normalized == AssistantApplicationService._memory_payload_value(
+            record.revision.payload
+        ):
+            return record
+        payload = AssistantApplicationService._memory_payload_with_value(
+            record.revision.payload,
+            normalized,
+        )
+        return runtime.repository.revise_record(
+            record.record_id,
+            record.row_version,
+            payload,
+            Provenance(
+                SourceType.TRUSTED_INTERFACE,
+                "settings-candidate-edit",
+                ActorType.USER,
+            ),
+            correlation_id,
+        )
+
+    @staticmethod
+    def _memory_payload_value(payload: object) -> str:
+        if isinstance(payload, FactPayload):
+            return payload.statement
+        if isinstance(payload, PreferencePayload):
+            return payload.preference
+        if isinstance(payload, EventPayload):
+            return payload.summary
+        if isinstance(payload, InsightPayload):
+            return payload.observation
+        if isinstance(payload, NotePayload):
+            return payload.body
+        if isinstance(payload, PolicyPreferencePayload):
+            return payload.subject
+        raise TypeError("Memory payload kind is not supported for review.")
+
+    @staticmethod
+    def _memory_payload_with_value(
+        payload: object,
+        value: str,
+    ) -> MemoryPayload:
+        if isinstance(payload, FactPayload):
+            return FactPayload(payload.subject, value)
+        if isinstance(payload, PreferencePayload):
+            return PreferencePayload(payload.subject, value)
+        if isinstance(payload, EventPayload):
+            return EventPayload(value, payload.occurred_at)
+        if isinstance(payload, InsightPayload):
+            return InsightPayload(
+                value,
+                payload.confidence,
+                payload.contradictions_considered,
+                payload.range_start,
+                payload.range_end,
+            )
+        if isinstance(payload, NotePayload):
+            return NotePayload(payload.title, value)
+        if isinstance(payload, PolicyPreferencePayload):
+            return PolicyPreferencePayload(value, payload.mention_policy)
+        raise TypeError("Memory payload kind is not supported for review.")
 
     @staticmethod
     def _memory_category(value: str) -> str:

@@ -886,6 +886,238 @@ class MemoryRepository:
             correlation_id=correlation_id,
         )
 
+    def reconcile_candidate_as_correction(
+        self,
+        candidate_id: UUID,
+        candidate_version: int,
+        target_id: UUID,
+        target_version: int,
+        provenance: Provenance,
+        correlation_id: UUID,
+    ) -> tuple[MemoryRecord, MemoryRecord, RecordLink]:
+        """Atomically apply candidate content as a correction to one record."""
+
+        self._validate_reconciliation_request(
+            candidate_id,
+            candidate_version,
+            target_id,
+            target_version,
+            provenance,
+        )
+        with self._audited(
+            correlation_id,
+            AuditOperation.REPOSITORY_WRITE,
+            "candidate_reconcile_correction",
+            record_id=candidate_id,
+            item_count=2,
+        ):
+            with self._connection_provider.connect(correlation_id) as connection:
+                with self._transaction(connection):
+                    candidate, target = self._load_reconciliation_pair(
+                        connection,
+                        candidate_id,
+                        candidate_version,
+                        target_id,
+                        target_version,
+                    )
+                    now = self._now()
+                    corrected = self._append_revision(
+                        connection,
+                        target,
+                        payload=candidate.revision.payload,
+                        status=RecordStatus.CONFIRMED,
+                        sensitivity=target.sensitivity,
+                        mention_policy=target.mention_policy,
+                        scope=target.scope,
+                        primary_entity_id=target.primary_entity_id,
+                        valid_from=target.valid_from,
+                        valid_until=target.valid_until,
+                        candidate_expires_at=None,
+                        provenance=provenance,
+                        reason=ChangeReason.CORRECTED,
+                        now=now,
+                    )
+                    consumed = self._append_revision(
+                        connection,
+                        candidate,
+                        payload=candidate.revision.payload,
+                        status=RecordStatus.SUPERSEDED,
+                        sensitivity=candidate.sensitivity,
+                        mention_policy=candidate.mention_policy,
+                        scope=candidate.scope,
+                        primary_entity_id=candidate.primary_entity_id,
+                        valid_from=candidate.valid_from,
+                        valid_until=candidate.valid_until,
+                        candidate_expires_at=None,
+                        provenance=provenance,
+                        reason=ChangeReason.SUPERSEDED,
+                        now=now,
+                    )
+                    link = self._insert_record_link(
+                        connection,
+                        self._new_id(),
+                        RecordLinkDraft(
+                            candidate_id,
+                            target_id,
+                            RecordRelationship.EVIDENCE,
+                            self._link_source_for_provenance(provenance),
+                            provenance.source_ref,
+                        ),
+                        now,
+                    )
+                    self._insert_feedback(connection, corrected, FeedbackType.EDIT, now)
+                    self._insert_feedback(connection, consumed, FeedbackType.CONFIRM, now)
+            return consumed, corrected, link
+
+    def reconcile_candidate_as_successor(
+        self,
+        candidate_id: UUID,
+        candidate_version: int,
+        target_id: UUID,
+        target_version: int,
+        effective_at: datetime,
+        provenance: Provenance,
+        correlation_id: UUID,
+    ) -> tuple[MemoryRecord, MemoryRecord, RecordLink]:
+        """Atomically end one current record and confirm its dated successor."""
+
+        self._validate_reconciliation_request(
+            candidate_id,
+            candidate_version,
+            target_id,
+            target_version,
+            provenance,
+        )
+        if (
+            not isinstance(effective_at, datetime)
+            or effective_at.tzinfo is None
+            or effective_at.utcoffset() is None
+        ):
+            raise MemoryValidationError("Reconciliation date must include a timezone.")
+        with self._audited(
+            correlation_id,
+            AuditOperation.REPOSITORY_WRITE,
+            "candidate_reconcile_successor",
+            record_id=candidate_id,
+            item_count=2,
+        ):
+            with self._connection_provider.connect(correlation_id) as connection:
+                with self._transaction(connection):
+                    candidate, target = self._load_reconciliation_pair(
+                        connection,
+                        candidate_id,
+                        candidate_version,
+                        target_id,
+                        target_version,
+                    )
+                    if target.valid_from is not None and effective_at < target.valid_from:
+                        raise LifecycleTransitionError(
+                            "The change date predates the current memory."
+                        )
+                    if target.valid_until is not None and effective_at > target.valid_until:
+                        raise LifecycleTransitionError(
+                            "The change date follows the current memory's end."
+                        )
+                    if (
+                        candidate.valid_until is not None
+                        and effective_at > candidate.valid_until
+                    ):
+                        raise LifecycleTransitionError(
+                            "The change date follows the candidate's end."
+                        )
+                    now = self._now()
+                    ended = self._append_revision(
+                        connection,
+                        target,
+                        payload=target.revision.payload,
+                        status=RecordStatus.CONFIRMED,
+                        sensitivity=target.sensitivity,
+                        mention_policy=target.mention_policy,
+                        scope=target.scope,
+                        primary_entity_id=target.primary_entity_id,
+                        valid_from=target.valid_from,
+                        valid_until=effective_at,
+                        candidate_expires_at=None,
+                        provenance=provenance,
+                        reason=ChangeReason.CORRECTED,
+                        now=now,
+                    )
+                    successor = self._append_revision(
+                        connection,
+                        candidate,
+                        payload=candidate.revision.payload,
+                        status=RecordStatus.CONFIRMED,
+                        sensitivity=candidate.sensitivity,
+                        mention_policy=candidate.mention_policy,
+                        scope=candidate.scope,
+                        primary_entity_id=candidate.primary_entity_id,
+                        valid_from=effective_at,
+                        valid_until=candidate.valid_until,
+                        candidate_expires_at=None,
+                        provenance=provenance,
+                        reason=ChangeReason.CONFIRMED,
+                        now=now,
+                    )
+                    link = self._insert_record_link(
+                        connection,
+                        self._new_id(),
+                        RecordLinkDraft(
+                            target_id,
+                            candidate_id,
+                            RecordRelationship.SUPERSESSION,
+                            self._link_source_for_provenance(provenance),
+                            provenance.source_ref,
+                        ),
+                        now,
+                    )
+                    self._insert_feedback(connection, ended, FeedbackType.EDIT, now)
+                    self._insert_feedback(connection, successor, FeedbackType.CONFIRM, now)
+            return ended, successor, link
+
+    def _validate_reconciliation_request(
+        self,
+        candidate_id: UUID,
+        candidate_version: int,
+        target_id: UUID,
+        target_version: int,
+        provenance: Provenance,
+    ) -> None:
+        self._require_uuid(candidate_id, "Candidate ID")
+        self._require_uuid(target_id, "Target ID")
+        if candidate_id == target_id:
+            raise MemoryValidationError("A candidate cannot reconcile with itself.")
+        self._validate_expected_version(candidate_version)
+        self._validate_expected_version(target_version)
+        self._require_trusted_change_provenance(provenance)
+
+    def _load_reconciliation_pair(
+        self,
+        connection: Any,
+        candidate_id: UUID,
+        candidate_version: int,
+        target_id: UUID,
+        target_version: int,
+    ) -> tuple[MemoryRecord, MemoryRecord]:
+        candidate = self._load_record(connection, candidate_id)
+        target = self._load_record(connection, target_id)
+        self._require_version(candidate.row_version, candidate_version)
+        self._require_version(target.row_version, target_version)
+        if candidate.status is not RecordStatus.CANDIDATE:
+            raise LifecycleTransitionError("Only a candidate can be reconciled.")
+        if target.status is not RecordStatus.CONFIRMED:
+            raise LifecycleTransitionError(
+                "A reconciliation target must be confirmed."
+            )
+        if (
+            candidate.kind is not target.kind
+            or candidate.scope != target.scope
+            or candidate.primary_entity_id != target.primary_entity_id
+        ):
+            raise LifecycleTransitionError(
+                "Candidate and target must share kind, scope, and entity."
+            )
+        return candidate, target
+
     def archive_record(
         self,
         record_id: UUID,
