@@ -232,13 +232,16 @@ Completed:
   The first answer remains an unshown draft; one tool-free second pass receives
   only the current question, bounded current evidence, and draft. Only its
   validated final answer reaches history and memory processing.
+- Expanded provider intent recognition beyond rigid templates. Natural phrases
+  such as `check Google Scholar search for info on...`, `use Crossref to
+  find...`, and `look it up with PubMed` select only that enabled provider.
 - Preserved bounded published-date metadata when SearXNG supplies it, as well as
   response cancellation during either generation pass.
 
 Verification:
 
 - All source and test modules compiled, repository whitespace checks passed,
-  and 448 local tests passed in 13.701 seconds with one intentionally opt-in
+  and 449 local tests passed in 13.675 seconds with one intentionally opt-in
   benchmark skipped.
 - A real Google Scholar-only double-check compared current evidence and produced
   a completed reviewed answer with three exact citations from distinct papers.

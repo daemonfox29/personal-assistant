@@ -214,7 +214,7 @@ class WebSearchTests(unittest.TestCase):
         )
 
         result = SearXNGSearchProvider(opener=opener).search(
-            "Only search Google Scholar for sleep research."
+            "Check Google Scholar search for info on sleep research."
         )
 
         form = parse_qs(opener.calls[0][0].data.decode("utf-8"))

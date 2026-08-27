@@ -25,7 +25,8 @@ papers, reports, authors, journals, and publishers that can be compared.
 
 ## Explicit second pass
 
-Natural phrases including `double-check`, `verify this`, and `check your work`
+Natural phrases including `double-check`, `cross-check`, `verify this`, and
+`check your work`
 request a second model pass only when public-search evidence was retrieved. The
 first pass is retained as an unshown draft. The second pass receives the current
 question, bounded current tool evidence, and draft, but no authority or new

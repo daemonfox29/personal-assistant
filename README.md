@@ -76,9 +76,10 @@ Quality-first routing uses Google Web for general/current questions, up to
 three reviewed scholarly indexes for research, PubMed plus Google Scholar for
 health/science, and Wikipedia plus an Encyclopedia.com-restricted Google query
 for reference requests. The owner may enable or disable reviewed sources in
-Settings. Commands such as `only search Google for this` or `check Google
-Scholar for ...` force that one enabled source for the current message without
-silent fallback. DuckDuckGo remains available but is off by default.
+Settings. Natural commands such as `check Google Scholar search for info on
+sleep`, `use Crossref to find papers on sleep`, or `look it up with PubMed`
+force that one enabled source for the current message without silent fallback.
+DuckDuckGo remains available but is off by default.
 
 The chat Stop button cooperatively cancels streaming output, leaves already
 visible partial text in place, records `Stopped by you`, and keeps the
@@ -89,9 +90,10 @@ the current correlated results. The model is instructed to compare distinct
 documents, qualify unsupported details, and disclose conflicts, stale evidence,
 or a point supported by only one relevant document. Selecting one provider does
 not limit comparison to one document: a Google Scholar-only search can still
-read and compare up to three separate Scholar results. Add `double-check`,
-`verify this`, or `check your work` to the same search question to request one
-additional tool-free model review before the final answer is shown.
+read and compare up to three separate Scholar results. Add a natural request
+such as `double-check`, `cross-check`, `verify this`, or `check your work` to
+the same search question to request one additional tool-free model review
+before the final answer is shown.
 
 ## Set up the project
 

@@ -19,8 +19,9 @@ response without freezing the rest of the interface.
   reference domain, and an optional DuckDuckGo fallback that is off by default.
 - Provider selection is global and persistent. At least one source must remain
   enabled.
-- Direct phrases such as “only search Google for this” or “check Google Scholar
-  for…” select exactly that enabled provider for the current request. Failure
+- Natural direct phrases such as “only search Google for this,” “check Google
+  Scholar search for info on…,” “use Crossref to find…,” or “look it up with
+  PubMed” select exactly that enabled provider for the current request. Failure
   does not silently fall back to another provider.
 - Without an override, trusted code routes general/current queries to Google,
   scholarly queries to at most three scholarly sources, health/science queries

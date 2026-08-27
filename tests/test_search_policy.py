@@ -44,6 +44,24 @@ class SearchPolicyTests(unittest.TestCase):
         self.assertTrue(plan.explicit)
         self.assertEqual(plan.sources, (SearchSource.GOOGLE_SCHOLAR,))
 
+    def test_natural_provider_phrases_select_exactly_that_source(self) -> None:
+        policy = QualitySearchPolicy(tuple(SearchSource))
+        cases = (
+            (
+                "Check Google Scholar search for info on sleep.",
+                SearchSource.GOOGLE_SCHOLAR,
+            ),
+            ("Check Google search for info on Iran.", SearchSource.GOOGLE),
+            ("Use Crossref to find papers on sleep.", SearchSource.CROSSREF),
+            ("Look it up with PubMed.", SearchSource.PUBMED),
+            ("Search Wikipedia for Saturn.", SearchSource.WIKIPEDIA),
+        )
+        for prompt, expected in cases:
+            with self.subTest(prompt=prompt):
+                plan = policy.plan_for(prompt)
+                self.assertTrue(plan.explicit)
+                self.assertEqual(plan.sources, (expected,))
+
     def test_explicit_disabled_provider_fails_without_fallback(self) -> None:
         policy = QualitySearchPolicy((SearchSource.GOOGLE,))
 
@@ -84,6 +102,8 @@ class SearchPolicyTests(unittest.TestCase):
         self.assertTrue(requests_search_verification("Double-check those sources."))
         self.assertTrue(requests_search_verification("Please verify this."))
         self.assertTrue(requests_search_verification("Check your work."))
+        self.assertTrue(requests_search_verification("Cross-check the result."))
+        self.assertTrue(requests_search_verification("Check that carefully."))
         self.assertFalse(requests_search_verification("Tell me the latest update."))
 
 

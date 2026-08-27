@@ -78,8 +78,9 @@ _PRIVATE_CONTEXT_TERMS = re.compile(
     re.IGNORECASE,
 )
 _VERIFICATION_TERMS = re.compile(
-    r"\b(double[- ]check|verify (?:this|that|your answer|the answer)|"
-    r"check (?:your work|the sources|the evidence))\b",
+    r"\b(double[- ]check|cross[- ]check|"
+    r"verify (?:this|that|it|your answer|the answer|the information|the result)|"
+    r"check (?:your work|the sources|the evidence|(?:this|that|it) carefully))\b",
     re.IGNORECASE,
 )
 _EXPLICIT_PATTERNS: tuple[tuple[SearchSource, tuple[str, ...]], ...] = (
@@ -202,8 +203,11 @@ def _explicit_source(user_text: str) -> SearchSource | None:
                 rf"\bonly search {escaped}\b",
                 rf"\bsearch only {escaped}\b",
                 rf"\bcheck {escaped} for\b",
+                rf"\bcheck (?:the )?{escaped}(?: web)? search for\b",
                 rf"\bsearch {escaped} for\b",
                 rf"\buse only {escaped}\b",
+                rf"\buse {escaped} to (?:search for|find|look up)\b",
+                rf"\blook (?:this |that |it )?up (?:on|with|using) {escaped}\b",
             )
             if any(re.search(pattern, normalized) for pattern in patterns):
                 return source

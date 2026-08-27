@@ -482,11 +482,15 @@ class ConversationServiceTests(unittest.TestCase):
             ),
         )
 
-        tuple(service.events_for("Only search Google Scholar for sleep research."))
+        tuple(
+            service.events_for(
+                "Check Google Scholar search for info on sleep research."
+            )
+        )
 
         self.assertEqual(
             provider.queries,
-            ["Only search Google Scholar for sleep research."],
+            ["Check Google Scholar search for info on sleep research."],
         )
         self.assertEqual(model.requests[0].messages[-1].role, MessageRole.TOOL)
 
