@@ -101,6 +101,7 @@ class RegisteredTool:
     handler: ToolHandler
     context_validator: ToolContextValidator | None = None
     repeat_allowed: bool = True
+    invalid_input_message: str = "The tool arguments were invalid."
     failure_message: str = "The tool could not complete safely."
 
     def __post_init__(self) -> None:
@@ -116,12 +117,18 @@ class RegisteredTool:
             raise TypeError("A registered tool context validator must be callable.")
         if not isinstance(self.repeat_allowed, bool):
             raise TypeError("A registered tool repeat policy must be a boolean.")
-        if (
-            not isinstance(self.failure_message, str)
-            or not self.failure_message
-            or len(self.failure_message) > 200
+        for label, message in (
+            ("invalid-input", self.invalid_input_message),
+            ("failure", self.failure_message),
         ):
-            raise TypeError("A registered tool failure message must be bounded text.")
+            if (
+                not isinstance(message, str)
+                or not message
+                or len(message) > 200
+            ):
+                raise TypeError(
+                    f"A registered tool {label} message must be bounded text."
+                )
 
 
 class ToolRegistry:
@@ -241,7 +248,7 @@ class ToolExecutor:
             return self._fixed_result(
                 tool.definition.name,
                 ToolExecutionStatus.DENIED,
-                "The tool arguments were invalid.",
+                tool.invalid_input_message,
             )
         authorization = authorize_action(
             tool.action,
@@ -529,6 +536,11 @@ def default_tool_registry(
                 search_web,
                 context_validator=validate_web_search_context,
                 repeat_allowed=False,
+                invalid_input_message=(
+                    "Search was denied. Retry once using an exact contiguous phrase "
+                    "copied from the current user message; do not paraphrase or add "
+                    "words."
+                ),
                 failure_message=(
                     "The local web-search service is unavailable or returned an "
                     "invalid response."

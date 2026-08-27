@@ -332,6 +332,10 @@ class ConversationServiceTests(unittest.TestCase):
             model.requests[0].messages[0].content,
         )
         self.assertIn(
+            "exact contiguous phrase copied",
+            model.requests[0].messages[0].content,
+        )
+        self.assertIn(
             "untrusted_web_search_results",
             model.requests[1].messages[-1].content,
         )
@@ -339,6 +343,60 @@ class ConversationServiceTests(unittest.TestCase):
             "https://example.test/current",
             "".join(event.text for event in events),
         )
+
+    def test_invalid_search_paraphrase_gets_one_safe_retry_instruction(self) -> None:
+        class RetrySearchModel:
+            def __init__(self) -> None:
+                self.requests: list[ModelRequest] = []
+
+            def generate(self, request: ModelRequest) -> ModelResponse:
+                self.requests.append(request)
+                if len(self.requests) == 1:
+                    return ModelResponse(
+                        "",
+                        (
+                            ModelToolCall.create(
+                                "search_public_web",
+                                {"query": "newest Python version"},
+                            ),
+                        ),
+                    )
+                if len(self.requests) == 2:
+                    self.assert_retry_guidance(request)
+                    return ModelResponse(
+                        "",
+                        (
+                            ModelToolCall.create(
+                                "search_public_web",
+                                {"query": "current Python release"},
+                            ),
+                        ),
+                    )
+                return ModelResponse("Python result.")
+
+            @staticmethod
+            def assert_retry_guidance(request: ModelRequest) -> None:
+                tool_message = request.messages[-1]
+                if "exact contiguous phrase" not in tool_message.content:
+                    raise AssertionError("Search retry guidance was not returned.")
+
+        provider = SearchProvider()
+        model = RetrySearchModel()
+        service = ConversationService(
+            model,
+            tool_executor=ToolExecutor(
+                default_tool_registry(web_search=provider),
+                InMemoryAuditSink(),
+            ),
+        )
+
+        events = tuple(
+            service.events_for("What is the current Python release today?")
+        )
+
+        self.assertEqual(provider.queries, ["current Python release"])
+        self.assertEqual(len(model.requests), 3)
+        self.assertIn("Python result.", "".join(event.text for event in events))
 
     def test_duplicate_web_search_is_stopped_after_first_attempt(self) -> None:
         class DuplicateSearchModel:

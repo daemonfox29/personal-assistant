@@ -230,6 +230,11 @@ Completed:
 - Rejected Podman after its real macOS gate exposed current VM forwarding and
   startup failures. Colima with macOS Virtualization.Framework passed the same
   stability, real-search, and shutdown gates.
+- Fixed a live model-contract failure where Qwen paraphrased an outbound query
+  and the exact-user-phrase exfiltration guard correctly denied it. The trusted
+  prompt now states the exact-copy rule, and a denied search returns bounded
+  retry guidance so the model can correct the query once without weakening the
+  validator.
 
 Verification:
 
@@ -238,7 +243,7 @@ Verification:
 - A literal 125-second observation confirmed the dedicated runtime stopped after
   its 120-second inactivity threshold.
 - `uv lock --check` passed, all source and test modules compiled, and the full
-  local suite passed: 403 tests in 13.504 seconds, with only the intentionally
+  local suite passed: 404 tests in 13.687 seconds, with only the intentionally
   opt-in 100,000-record memory benchmark skipped.
 
 Next:

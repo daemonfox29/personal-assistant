@@ -177,6 +177,8 @@ class ToolRuntimeTests(unittest.TestCase):
 
         self.assertIs(allowed.status, ToolExecutionStatus.SUCCEEDED)
         self.assertIs(refused.status, ToolExecutionStatus.DENIED)
+        self.assertIn("exact contiguous phrase", refused.content)
+        self.assertNotIn("private memory value", refused.content)
         self.assertEqual(provider.queries, ["latest SearXNG release"])
         self.assertFalse(executor.repeat_allowed("search_public_web"))
         self.assertTrue(executor.repeat_allowed("calculate"))
