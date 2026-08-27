@@ -22,6 +22,9 @@ This folder holds human-readable notes about the assistant's design, decisions, 
 - [Module 2.2 bounded public page reading](module-2-2-public-page-reading-spec.md):
   request-scoped numbered-result reading, public-address pinning, extraction
   limits, and the current-events synthesis gate.
+- [Module 2.3 quality search controls](module-2-3-search-controls-spec.md):
+  quality-first source routing, trusted lifecycle settings, retry diagnostics,
+  and owner-controlled response cancellation.
 - [Encrypted SQLite provider spike](encrypted-database-spike.md): SQLCipher
   selection, verified guarantees, tradeoffs, and remaining platform checks.
 - [Typed memory repository](memory-repository.md): validated payloads,

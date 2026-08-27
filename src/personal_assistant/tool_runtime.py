@@ -29,6 +29,7 @@ from personal_assistant.authorization import (
 from personal_assistant.model import ModelToolCall, ModelToolDefinition
 from personal_assistant.permissions import ActionKind
 from personal_assistant.web_search import (
+    WebSearchError,
     WebSearchProvider,
     validate_search_query,
 )
@@ -74,6 +75,7 @@ class ToolExecutionResult:
     tool_name: str
     status: ToolExecutionStatus
     content: str
+    diagnostic_code: str = ""
 
 
 @dataclass(frozen=True)
@@ -348,6 +350,26 @@ class ToolExecutor:
                 True,
                 result,
                 max_bytes=tool.max_result_bytes,
+            )
+        except WebSearchError as error:
+            self._audit(
+                correlation_id,
+                AuditOutcome.FAILED,
+                AuditReasonCode.SAFE_INTERNAL_FAILURE,
+                metadata,
+                started,
+            )
+            return ToolExecutionResult(
+                tool.definition.name,
+                ToolExecutionStatus.FAILED,
+                self._result_content(
+                    False,
+                    {
+                        "diagnostic_code": error.code.value,
+                        "message": tool.failure_message,
+                    },
+                ),
+                error.code.value,
             )
         except Exception:
             self._audit(
@@ -639,8 +661,10 @@ def default_tool_registry(
                 ModelToolDefinition.create(
                     "search_public_web",
                     "Search current public web results for the current user's "
-                    "question. Supply no arguments; deterministic code derives the "
-                    "query from the current user message.",
+                    "question. Use it automatically for current information or "
+                    "when local knowledge may be insufficient. Supply no arguments; "
+                    "deterministic code derives the query and reviewed source route "
+                    "from the current user message.",
                     {
                         "additionalProperties": False,
                         "properties": {},

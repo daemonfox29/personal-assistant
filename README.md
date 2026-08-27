@@ -54,8 +54,10 @@ not trigger public search.
 SearXNG runs in a dedicated open-source Colima profile with a one-GiB memory
 ceiling. The application starts that isolated profile on the first search,
 reuses it while searches remain active, and stops its container and VM after
-two minutes without a search or immediately when the app closes. Only the
-reviewed SearXNG configuration directory is mounted into the VM, read-only. If
+the selected 1, 2, 5, 10, 15, or 30 minute idle period, or immediately when the
+app closes. Settings also provides trusted manual start, finish-then-stop, and
+provider controls. Only the reviewed SearXNG configuration directory is mounted
+into the VM, read-only. If
 the runtime is absent or unhealthy, search fails safely while chat, memory,
 time, and calculator features continue normally.
 
@@ -69,6 +71,18 @@ request. The model selects result numbers, never URLs. Private network targets,
 redirects, scripts, cookies, authentication, downloads, and non-text content are
 blocked. Broad current-events requests automatically read available top results
 before the assistant synthesizes and cites its answer.
+
+Quality-first routing uses Google Web for general/current questions, up to
+three reviewed scholarly indexes for research, PubMed plus Google Scholar for
+health/science, and Wikipedia plus an Encyclopedia.com-restricted Google query
+for reference requests. The owner may enable or disable reviewed sources in
+Settings. Commands such as `only search Google for this` or `check Google
+Scholar for ...` force that one enabled source for the current message without
+silent fallback. DuckDuckGo remains available but is off by default.
+
+The chat Stop button cooperatively cancels streaming output, leaves already
+visible partial text in place, records `Stopped by you`, and keeps the
+incomplete exchange out of session history and automatic memory analysis.
 
 ## Set up the project
 

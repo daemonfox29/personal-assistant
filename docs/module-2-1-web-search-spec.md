@@ -1,5 +1,10 @@
 # Module 2.1 Read-Only Web Search Specification
 
+> Historical foundation: Module 2.3 extends the original one-request,
+> two-minute-default behavior with owner-configurable reviewed sources, one
+> bounded retry, and selectable idle shutdown. See
+> `docs/module-2-3-search-controls-spec.md` for the current contract.
+
 ## Purpose
 
 Module 2.1 lets the assistant retrieve a small set of current public search

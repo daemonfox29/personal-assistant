@@ -13,6 +13,7 @@ from personal_assistant.runtime_preferences import (
     RuntimePreferencesError,
     RuntimePreferencesStore,
 )
+from personal_assistant.search_policy import QUALITY_DEFAULT_SOURCES, SearchSource
 
 
 class RuntimePreferencesTests(unittest.TestCase):
@@ -80,6 +81,49 @@ class RuntimePreferencesTests(unittest.TestCase):
 
             self.assertIsNotNone(preferences)
             self.assertEqual(preferences.backup_directory, "")
+
+    def test_version_three_preferences_gain_quality_search_defaults(self) -> None:
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "preferences.json"
+            path.write_text(
+                json.dumps(
+                    {
+                        "backup_directory": "",
+                        "context_tokens": 16_384,
+                        "default_response_tokens": 400,
+                        "font_family": "system",
+                        "font_size": 13,
+                        "maximum_response_tokens": 2_000,
+                        "theme": "system",
+                        "version": 3,
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            preferences = RuntimePreferencesStore(path).load()
+
+            self.assertIsNotNone(preferences)
+            self.assertEqual(preferences.search_idle_seconds, 120)
+            self.assertEqual(
+                preferences.enabled_search_sources,
+                QUALITY_DEFAULT_SOURCES,
+            )
+
+    def test_search_preferences_require_reviewed_unique_sources_and_idle_choice(self) -> None:
+        with self.assertRaises(ValueError):
+            RuntimePreferences(enabled_search_sources=())
+        with self.assertRaises(ValueError):
+            RuntimePreferences(enabled_search_sources=("unreviewed",))
+        with self.assertRaises(ValueError):
+            RuntimePreferences(
+                enabled_search_sources=(
+                    SearchSource.GOOGLE,
+                    SearchSource.GOOGLE,
+                )
+            )
+        with self.assertRaises(ValueError):
+            RuntimePreferences(search_idle_seconds=61)
 
     def test_desktop_loader_applies_file_then_environment_override(self) -> None:
         with TemporaryDirectory() as directory:

@@ -1,6 +1,7 @@
 """Bounded loopback-only adapter for a separately hosted SearXNG service."""
 
 from collections.abc import Callable, Mapping
+from enum import StrEnum
 import html
 from html.parser import HTMLParser
 from ipaddress import ip_address
@@ -12,6 +13,15 @@ from urllib.parse import urlencode, urlsplit, urlunsplit
 from urllib.request import Request
 
 from personal_assistant.local_http import open_local, validate_loopback_http_url
+from personal_assistant.search_policy import (
+    QUALITY_DEFAULT_SOURCES,
+    SEARCH_ENGINE_NAMES,
+    QualitySearchPolicy,
+    SearchPlan,
+    SearchPolicyError,
+    SearchSource,
+)
+from personal_assistant.search_runtime import SearchRuntimeError
 
 
 MAX_SEARCH_QUERY_CHARS = 256
@@ -23,8 +33,19 @@ MAX_SEARCH_URL_CHARS = 512
 MAX_SEARCH_DATA_BYTES = 1_700
 
 
+class WebSearchFailureCode(StrEnum):
+    START = "WEB-START-01"
+    CONNECT = "WEB-CONNECT-01"
+    RESPONSE = "WEB-RESPONSE-01"
+    PROVIDER = "WEB-PROVIDER-01"
+
+
 class WebSearchError(RuntimeError):
     """A fixed safe failure at the read-only search boundary."""
+
+    def __init__(self, message: str, code: WebSearchFailureCode) -> None:
+        super().__init__(message)
+        self.code = code
 
 
 @runtime_checkable
@@ -71,6 +92,7 @@ class SearXNGSearchProvider:
         timeout_seconds: float = 5.0,
         opener: SearchOpener = open_local,
         lifecycle: SearchLifecycle | None = None,
+        enabled_sources: tuple[SearchSource, ...] = QUALITY_DEFAULT_SOURCES,
     ) -> None:
         self._base_url = validate_loopback_http_url(base_url, base_url=True)
         if (
@@ -86,6 +108,7 @@ class SearXNGSearchProvider:
         self._timeout_seconds = float(timeout_seconds)
         self._opener = opener
         self._lifecycle = lifecycle
+        self._policy = QualitySearchPolicy(enabled_sources)
 
     @property
     def base_url(self) -> str:
@@ -93,18 +116,100 @@ class SearXNGSearchProvider:
 
     def search(self, query: str) -> Mapping[str, object]:
         query = validate_search_query(query)
-        if self._lifecycle is not None:
-            return self._lifecycle.run_while_active(lambda: self._search(query))
-        return self._search(query)
+        try:
+            plan = self._policy.plan_for(query)
+            operation = lambda: self._search_plan(query, plan)
+            if self._lifecycle is not None:
+                return self._lifecycle.run_while_active(operation)
+            return operation()
+        except SearchPolicyError as error:
+            raise WebSearchError(
+                str(error),
+                WebSearchFailureCode.PROVIDER,
+            ) from error
+        except SearchRuntimeError as error:
+            raise WebSearchError(
+                "The local search service could not start.",
+                WebSearchFailureCode.START,
+            ) from error
+
+    @property
+    def enabled_sources(self) -> tuple[SearchSource, ...]:
+        return self._policy.enabled_sources
+
+    def configure_sources(self, sources: tuple[SearchSource, ...]) -> None:
+        self._policy.configure(sources)
 
     def close(self) -> None:
         if self._lifecycle is not None:
             self._lifecycle.close()
 
-    def _search(self, query: str) -> Mapping[str, object]:
+    def _search_plan(self, query: str, plan: SearchPlan) -> Mapping[str, object]:
+        regular = tuple(
+            source
+            for source in plan.sources
+            if source is not SearchSource.ENCYCLOPEDIA_COM
+        )
+        documents: list[Mapping[str, object]] = []
+        if regular:
+            documents.append(self._search(query, regular))
+        if SearchSource.ENCYCLOPEDIA_COM in plan.sources:
+            site_filter = " site:encyclopedia.com"
+            site_query = query[: MAX_SEARCH_QUERY_CHARS - len(site_filter)].rstrip()
+            documents.append(
+                self._search(
+                    f"{site_query}{site_filter}",
+                    (SearchSource.ENCYCLOPEDIA_COM,),
+                )
+            )
+        results: list[object] = []
+        seen: set[str] = set()
+        source_values = [source.value for source in plan.sources]
+        result_groups = [document["results"] for document in documents]
+        result_index = 0
+        while len(results) < MAX_SEARCH_RESULTS:
+            added = False
+            for group in result_groups:
+                if result_index >= len(group):
+                    continue
+                item = group[result_index]
+                if not isinstance(item, dict):
+                    continue
+                url = item.get("url")
+                if not isinstance(url, str) or url in seen:
+                    continue
+                proposed = {
+                    "provider": "searxng",
+                    "results": [*results, item],
+                    "sources": source_values,
+                    "trust": "untrusted_web_search_results",
+                }
+                if len(_compact_json(proposed)) > MAX_SEARCH_DATA_BYTES:
+                    continue
+                seen.add(url)
+                results.append(item)
+                added = True
+                if len(results) >= MAX_SEARCH_RESULTS:
+                    break
+            result_index += 1
+            if not added and all(result_index >= len(group) for group in result_groups):
+                break
+        return {
+            "provider": "searxng",
+            "results": results,
+            "sources": source_values,
+            "trust": "untrusted_web_search_results",
+        }
+
+    def _search(
+        self,
+        query: str,
+        sources: tuple[SearchSource, ...],
+    ) -> Mapping[str, object]:
         form = urlencode(
             {
                 "categories": "general",
+                "engines": ",".join(SEARCH_ENGINE_NAMES[source] for source in sources),
                 "format": "json",
                 "language": "en",
                 "pageno": "1",
@@ -126,7 +231,10 @@ class SearXNGSearchProvider:
             with self._opener(request, self._timeout_seconds) as response:
                 status = getattr(response, "status", None)
                 if status != 200:
-                    raise WebSearchError("The local search service rejected the request.")
+                    raise WebSearchError(
+                        "The local search service rejected the request.",
+                        WebSearchFailureCode.RESPONSE,
+                    )
                 headers = getattr(response, "headers", None)
                 content_type = (
                     headers.get_content_type()
@@ -134,18 +242,30 @@ class SearXNGSearchProvider:
                     else ""
                 )
                 if content_type != "application/json":
-                    raise WebSearchError("The local search service response is invalid.")
+                    raise WebSearchError(
+                        "The local search service response is invalid.",
+                        WebSearchFailureCode.RESPONSE,
+                    )
                 raw = response.read(MAX_SEARCH_RESPONSE_BYTES + 1)
         except WebSearchError:
             raise
         except (HTTPError, URLError, OSError, TimeoutError) as error:
-            raise WebSearchError("The local search service is unavailable.") from error
+            raise WebSearchError(
+                "The local search service is unavailable.",
+                WebSearchFailureCode.CONNECT,
+            ) from error
         if not isinstance(raw, bytes) or len(raw) > MAX_SEARCH_RESPONSE_BYTES:
-            raise WebSearchError("The local search service response is invalid.")
+            raise WebSearchError(
+                "The local search service response is invalid.",
+                WebSearchFailureCode.RESPONSE,
+            )
         try:
             document = json.loads(raw)
         except (UnicodeError, json.JSONDecodeError) as error:
-            raise WebSearchError("The local search service response is invalid.") from error
+            raise WebSearchError(
+                "The local search service response is invalid.",
+                WebSearchFailureCode.RESPONSE,
+            ) from error
         return _validated_search_document(document)
 
 
@@ -179,7 +299,10 @@ def query_is_derived_from_user_text(query: str, user_text: str) -> bool:
 
 def _validated_search_document(value: object) -> Mapping[str, object]:
     if not isinstance(value, dict) or not isinstance(value.get("results"), list):
-        raise WebSearchError("The local search service response is invalid.")
+        raise WebSearchError(
+            "The local search service response is invalid.",
+            WebSearchFailureCode.RESPONSE,
+        )
     results: list[dict[str, str]] = []
     seen_urls: set[str] = set()
     for item in value["results"]:
@@ -202,12 +325,7 @@ def _validated_search_document(value: object) -> Mapping[str, object]:
             "results": [*results, candidate],
             "trust": "untrusted_web_search_results",
         }
-        encoded = json.dumps(
-            proposed,
-            ensure_ascii=True,
-            separators=(",", ":"),
-            sort_keys=True,
-        ).encode("utf-8")
+        encoded = _compact_json(proposed)
         if len(encoded) > MAX_SEARCH_DATA_BYTES:
             break
         seen_urls.add(source_url)
@@ -217,6 +335,15 @@ def _validated_search_document(value: object) -> Mapping[str, object]:
         "results": results,
         "trust": "untrusted_web_search_results",
     }
+
+
+def _compact_json(value: object) -> bytes:
+    return json.dumps(
+        value,
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
 
 
 def _plain_text(value: object, limit: int) -> str:

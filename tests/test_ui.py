@@ -43,6 +43,7 @@ from personal_assistant.conversation_history import (  # noqa: E402
     StoredConversationMessage,
 )
 from personal_assistant.runtime_preferences import RuntimePreferences  # noqa: E402
+from personal_assistant.search_policy import SearchSource  # noqa: E402
 from personal_assistant.ui import (  # noqa: E402
     AssistantWindow,
     ChatPage,
@@ -180,6 +181,28 @@ class NativeUiTests(unittest.TestCase):
         memory_text = page._transcript.document().find("Memory updated")
         self.assertTrue(memory_text.charFormat().fontItalic())
 
+    def test_stop_button_emits_and_marks_partial_response(self) -> None:
+        page = ChatPage()
+        stopped: list[bool] = []
+        page.stop_requested.connect(lambda: stopped.append(True))
+        page.set_busy(True)
+
+        page.apply_event(
+            ConversationEvent(
+                ConversationEventKind.ASSISTANT_CHUNK,
+                "Partial answer",
+            )
+        )
+        page._stop.click()
+        page.apply_event(
+            ConversationEvent(ConversationEventKind.CANCELLED, "Stopped by you.")
+        )
+
+        self.assertEqual(stopped, [True])
+        self.assertIn("Partial answer", page.transcript_text())
+        self.assertIn("Stopped by you.", page.transcript_text())
+        self.assertFalse(page._stop.isEnabled())
+
     def test_settings_page_emits_validated_bounded_values(self) -> None:
         page = SettingsPage()
         page.set_preferences(
@@ -223,6 +246,27 @@ class NativeUiTests(unittest.TestCase):
 
         self.assertEqual(saved[0][0], 65_536)
 
+    def test_search_settings_emit_reviewed_sources_and_idle_time(self) -> None:
+        page = SettingsPage()
+        page.set_preferences(RuntimePreferences())
+        saved: list[tuple[int, object]] = []
+        page.search_save_requested.connect(
+            lambda idle, sources: saved.append((idle, sources))
+        )
+
+        page._search_idle.setCurrentIndex(page._search_idle.findData(300))
+        page._search_sources[SearchSource.GOOGLE].setChecked(True)
+        page._search_sources[SearchSource.GOOGLE_SCHOLAR].setChecked(True)
+        for source, checkbox in page._search_sources.items():
+            if source not in {SearchSource.GOOGLE, SearchSource.GOOGLE_SCHOLAR}:
+                checkbox.setChecked(False)
+        page._search_save.click()
+
+        self.assertEqual(
+            saved,
+            [(300, (SearchSource.GOOGLE, SearchSource.GOOGLE_SCHOLAR))],
+        )
+
     def test_settings_communication_style_is_bounded_and_emits_save(self) -> None:
         page = SettingsPage()
         saved: list[str] = []
@@ -237,7 +281,7 @@ class NativeUiTests(unittest.TestCase):
 
         self.assertEqual(saved, ["Be warm and use plain language."])
         self.assertEqual(page._section_pages.currentIndex(), 2)
-        self.assertEqual(page._section_list.count(), 5)
+        self.assertEqual(page._section_list.count(), 6)
         page._communication_style.setPlainText("x" * 2_001)
         self.assertFalse(page._communication_save.isEnabled())
 
@@ -416,6 +460,10 @@ class NativeUiTests(unittest.TestCase):
             page._context_tokens,
             page._default_response_tokens,
             page._maximum_response_tokens,
+            page._search_idle,
+            page._search_start,
+            page._search_stop,
+            page._search_refresh,
             page._backup_table,
             page._backup_create,
             page._backup_restore,
@@ -432,6 +480,8 @@ class NativeUiTests(unittest.TestCase):
         self.assertEqual(page._section_pages.currentIndex(), 4)
         QTest.keyClick(page._section_list, Qt.Key.Key_Down)
         self.assertEqual(page._section_pages.currentIndex(), 5)
+        QTest.keyClick(page._section_list, Qt.Key.Key_Down)
+        self.assertEqual(page._section_pages.currentIndex(), 6)
         page.close()
 
     def test_sidebar_selects_and_renders_a_structured_saved_conversation(self) -> None:

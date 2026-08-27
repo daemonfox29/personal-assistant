@@ -205,8 +205,44 @@ complete; the batched Linux pull-request check is its final platform gate.
   results, pin public DNS addresses under hostname-verified TLS, extract bounded
   inert text, auto-read broad news results, and verify a cited real-app current-
   events synthesis.
+- [x] Module 2.3: add persistent quality-source routing, trusted search lifecycle
+  controls, exact single-provider commands, one safe retry with fixed diagnostic
+  codes, configurable idle shutdown, and cooperative generation cancellation.
 
 ## Session history
+
+### 2026-08-27 — Module 2.3 quality search controls and cancellation
+
+Completed:
+
+- Added persistent allowlisted search-source settings with quality-first routes
+  for general, scholarly, health/science, and reference requests. DuckDuckGo is
+  available but disabled by default.
+- Added exact current-message provider commands. Disabled explicit providers
+  fail with `WEB-PROVIDER-01` and never silently fall back.
+- Added trusted Settings controls for service status, manual start,
+  finish-then-stop, and 1/2/5/10/15/30-minute idle shutdown. Changes run outside
+  the UI thread; eligible later questions can restart search automatically.
+- Added one bounded retry for transient start/connect/response failures and
+  content-free fixed diagnostic codes.
+- Added cooperative generation Stop. Partial text remains visible with a
+  stopped notice, while the incomplete turn is excluded from conversational
+  history and automatic memory promotion.
+- Deferred an opt-in user-owned VPN/proxy search layer and reviewed runtime
+  update workflow without adding either authority to the model.
+
+Verification:
+
+- All source and test modules compiled, repository whitespace checks passed,
+  and 440 local tests passed in 13.630 seconds with one intentionally opt-in
+  benchmark skipped.
+- The real pinned SearXNG runtime returned five bounded Google Web results and
+  five bounded results for an exact Google Scholar-only request. Managed close
+  then stopped the dedicated Colima profile.
+
+Next:
+
+- Owner UI test before opening the pull request.
 
 ### 2026-08-26 — Module 2.2 bounded public page reading
 

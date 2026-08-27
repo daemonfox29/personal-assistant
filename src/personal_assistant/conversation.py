@@ -3,7 +3,7 @@
 from collections.abc import Iterator
 from dataclasses import dataclass
 from enum import StrEnum
-from threading import Lock
+from threading import Event, Lock
 from typing import Protocol
 from uuid import UUID, uuid4
 
@@ -38,6 +38,7 @@ from personal_assistant.session_memory import (
     MessageTooLargeError,
     SessionConversationMemory,
 )
+from personal_assistant.search_policy import requests_quality_search
 from personal_assistant.terminal_output import sanitize_terminal_text
 
 
@@ -83,6 +84,7 @@ class ConversationEventKind(StrEnum):
     ASSISTANT_CHUNK = "assistant_chunk"
     COMPLETED = "completed"
     NOTICE = "notice"
+    CANCELLED = "cancelled"
 
 
 @dataclass(frozen=True)
@@ -97,6 +99,10 @@ class _PreparedTurn:
     request: ModelRequest
     user_text: str
     notices: tuple[str, ...]
+
+
+class _ResponseCancelled(RuntimeError):
+    pass
 
 
 class ConversationService:
@@ -138,6 +144,7 @@ class ConversationService:
         self._request_lock = Lock()
         self._lifecycle_lock = Lock()
         self._closed = False
+        self._cancel_requested = Event()
         self._wait_for_memory_before_next_request = False
         self._last_completed_user_text: str | None = None
         self._memory_handoff_query: str | None = None
@@ -181,6 +188,7 @@ class ConversationService:
                 "A response is already being generated.",
             )
             return
+        self._cancel_requested.clear()
         try:
             with self._lifecycle_lock:
                 closed = self._closed
@@ -251,6 +259,12 @@ class ConversationService:
                     request_correlation_id,
                     prepared.user_text,
                 )
+            except _ResponseCancelled:
+                yield ConversationEvent(
+                    ConversationEventKind.CANCELLED,
+                    "Stopped by you.",
+                )
+                return
             except ModelError as error:
                 yield ConversationEvent(
                     ConversationEventKind.NOTICE,
@@ -294,6 +308,15 @@ class ConversationService:
         finally:
             self._request_lock.release()
 
+    def cancel_active_response(self) -> None:
+        """Request cooperative cancellation without waiting on the request lock."""
+
+        self._cancel_requested.set()
+
+    def _raise_if_cancelled(self) -> None:
+        if self._cancel_requested.is_set():
+            raise _ResponseCancelled()
+
     def _run_model_steps(
         self,
         request: ModelRequest,
@@ -308,10 +331,14 @@ class ConversationService:
         tool_steps = 0
         seen_calls: set[tuple[str, str]] = set()
         limit_reached = False
+        self._raise_if_cancelled()
         if (
             request.tools
             and self._tool_executor is not None
-            and _is_broad_current_events_request(user_text)
+            and (
+                _is_broad_current_events_request(user_text)
+                or requests_quality_search(user_text)
+            )
             and self._tool_executor.has_tool("search_public_web")
         ):
             # Current-news retrieval is a deterministic coordinator decision.
@@ -319,11 +346,12 @@ class ConversationService:
             # current knowledge, and may otherwise answer with a stale refusal
             # plus remembered links without ever invoking the search tool.
             search_call = ModelToolCall.create("search_public_web", {})
-            search_result = self._tool_executor.execute(
+            search_result = yield from self._execute_search_with_retry(
                 search_call,
                 correlation_id,
-                execution_context=ToolExecutionContext(user_text),
+                user_text,
             )
+            self._raise_if_cancelled()
             messages.append(
                 ModelMessage(
                     MessageRole.ASSISTANT,
@@ -376,28 +404,40 @@ class ConversationService:
                 (),
             )
         while True:
+            self._raise_if_cancelled()
             step_parts: list[str] = []
             calls: dict[int, ModelToolCall] = {}
             if isinstance(self._model, StreamingLanguageModel):
-                for chunk in self._model.stream_generate(request):
-                    safe_text = sanitize_terminal_text(chunk.text)
-                    if safe_text:
-                        step_parts.append(safe_text)
-                        response_pieces.append(safe_text)
-                        yield ConversationEvent(
-                            ConversationEventKind.ASSISTANT_CHUNK,
-                            safe_text,
-                        )
-                    limit_reached = limit_reached or chunk.done_reason == "length"
-                    for call in chunk.tool_calls:
-                        existing = calls.get(call.index)
-                        if existing is not None and existing != call:
-                            raise MalformedModelResponseError(
-                                "The model returned conflicting tool calls."
+                stream = self._model.stream_generate(request)
+                try:
+                    for chunk in stream:
+                        self._raise_if_cancelled()
+                        safe_text = sanitize_terminal_text(chunk.text)
+                        if safe_text:
+                            step_parts.append(safe_text)
+                            response_pieces.append(safe_text)
+                            yield ConversationEvent(
+                                ConversationEventKind.ASSISTANT_CHUNK,
+                                safe_text,
                             )
-                        calls[call.index] = call
+                        limit_reached = (
+                            limit_reached or chunk.done_reason == "length"
+                        )
+                        for call in chunk.tool_calls:
+                            existing = calls.get(call.index)
+                            if existing is not None and existing != call:
+                                raise MalformedModelResponseError(
+                                    "The model returned conflicting tool calls."
+                                )
+                            calls[call.index] = call
+                finally:
+                    close_stream = getattr(stream, "close", None)
+                    if callable(close_stream):
+                        close_stream()
             else:
+                self._raise_if_cancelled()
                 response = self._model.generate(request)
+                self._raise_if_cancelled()
                 safe_text = sanitize_terminal_text(response.text)
                 if safe_text:
                     step_parts.append(safe_text)
@@ -415,6 +455,7 @@ class ConversationService:
                     calls[call.index] = call
 
             ordered_calls = tuple(calls[index] for index in sorted(calls))
+            self._raise_if_cancelled()
             if not ordered_calls:
                 return limit_reached
             if not request.tools:
@@ -468,11 +509,19 @@ class ConversationService:
                 )
                 return limit_reached
             seen_calls.add(call_identity)
-            result = self._tool_executor.execute(
-                call,
-                correlation_id,
-                execution_context=ToolExecutionContext(user_text),
-            )
+            if call.name == "search_public_web":
+                result = yield from self._execute_search_with_retry(
+                    call,
+                    correlation_id,
+                    user_text,
+                )
+            else:
+                result = self._tool_executor.execute(
+                    call,
+                    correlation_id,
+                    execution_context=ToolExecutionContext(user_text),
+                )
+            self._raise_if_cancelled()
             messages.append(
                 ModelMessage(
                     MessageRole.ASSISTANT,
@@ -492,7 +541,10 @@ class ConversationService:
             if (
                 call.name == "search_public_web"
                 and result.status is ToolExecutionStatus.SUCCEEDED
-                and _is_broad_current_events_request(user_text)
+                and (
+                    _is_broad_current_events_request(user_text)
+                    or requests_quality_search(user_text)
+                )
                 and self._tool_executor.has_tool("read_current_search_results")
                 and tool_steps < 3
             ):
@@ -527,6 +579,51 @@ class ConversationService:
                 max(1, response_limit - visible_tokens),
                 () if final_answer_only else request.tools,
             )
+
+    def _execute_search_with_retry(
+        self,
+        call: ModelToolCall,
+        correlation_id: UUID,
+        user_text: str,
+    ) -> Iterator[ConversationEvent]:
+        if self._tool_executor is None:
+            raise RuntimeError("Search execution requires the tool executor.")
+        result = self._tool_executor.execute(
+            call,
+            correlation_id,
+            execution_context=ToolExecutionContext(user_text),
+        )
+        retryable = result.diagnostic_code in {
+            "WEB-START-01",
+            "WEB-CONNECT-01",
+            "WEB-RESPONSE-01",
+        }
+        if result.status is ToolExecutionStatus.FAILED and retryable:
+            yield ConversationEvent(
+                ConversationEventKind.NOTICE,
+                f"Web search is having trouble ({result.diagnostic_code}). "
+                "Retrying once…",
+            )
+            self._raise_if_cancelled()
+            result = self._tool_executor.execute(
+                call,
+                correlation_id,
+                execution_context=ToolExecutionContext(user_text),
+            )
+        if result.status is ToolExecutionStatus.FAILED:
+            code = result.diagnostic_code or "WEB-RESPONSE-01"
+            if code == "WEB-PROVIDER-01":
+                notice = (
+                    "The requested search source is disabled or unavailable "
+                    f"({code})."
+                )
+            else:
+                notice = f"There was an issue connecting to web search ({code})."
+            yield ConversationEvent(
+                ConversationEventKind.NOTICE,
+                notice,
+            )
+        return result
 
     def close(self) -> None:
         """Stop accepting work and close optional background memory analysis."""

@@ -23,6 +23,7 @@ from personal_assistant.model import (
 )
 from personal_assistant.tool_runtime import ToolExecutor, default_tool_registry
 from personal_assistant.web_reader import PublicWebPageReader
+from personal_assistant.web_search import WebSearchError, WebSearchFailureCode
 
 
 class SyntheticStreamingModel:
@@ -448,6 +449,34 @@ class ConversationServiceTests(unittest.TestCase):
             tuple(event.text for event in events),
         )
 
+    def test_explicit_provider_command_searches_without_model_tool_choice(self) -> None:
+        class AnsweringModel:
+            def __init__(self) -> None:
+                self.requests: list[ModelRequest] = []
+
+            def generate(self, request: ModelRequest) -> ModelResponse:
+                self.requests.append(request)
+                return ModelResponse("A source-backed answer.")
+
+        provider = SearchProvider()
+        model = AnsweringModel()
+        service = ConversationService(
+            model,
+            tool_executor=ToolExecutor(
+                default_tool_registry(web_search=provider),
+                InMemoryAuditSink(),
+            ),
+        )
+
+        tuple(service.events_for("Only search Google Scholar for sleep research."))
+
+        self.assertEqual(
+            provider.queries,
+            ["Only search Google Scholar for sleep research."],
+        )
+        self.assertEqual(model.requests[0].messages[-1].role, MessageRole.TOOL)
+
+
     def test_broad_news_phrases_trigger_automatic_page_reading(self) -> None:
         for prompt in (
             "Update me on current events today.",
@@ -664,6 +693,91 @@ class ConversationServiceTests(unittest.TestCase):
         first.join(timeout=1)
         self.assertFalse(first.is_alive())
         self.assertTrue(first_events)
+
+    def test_owner_cancellation_keeps_partial_text_out_of_memory_promotion(self) -> None:
+        model = SyntheticStreamingModel()
+        worker = RecordingPostResponseWorker()
+        service = ConversationService(model, post_response_worker=worker)
+        events = service.events_for("first private detail")
+
+        first = next(events)
+        service.cancel_active_response()
+        remaining = tuple(events)
+
+        self.assertEqual(first.kind, ConversationEventKind.ASSISTANT_CHUNK)
+        self.assertEqual(remaining[-1].kind, ConversationEventKind.CANCELLED)
+        self.assertEqual(worker.calls, 0)
+
+        tuple(service.events_for("second question"))
+        request_text = " ".join(
+            message.content for message in model.requests[-1].messages
+        )
+        self.assertNotIn("first private detail", request_text)
+
+    def test_failed_search_retries_once_and_emits_safe_code(self) -> None:
+        class FailingSearch:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            def search(self, _query: str):
+                self.calls += 1
+                raise WebSearchError(
+                    "private failure details",
+                    WebSearchFailureCode.CONNECT,
+                )
+
+        provider = FailingSearch()
+        service = ConversationService(
+            SyntheticStreamingModel(),
+            tool_executor=ToolExecutor(
+                default_tool_registry(web_search=provider),
+                InMemoryAuditSink(),
+            ),
+        )
+
+        events = tuple(service.events_for("Update me on current events today."))
+
+        self.assertEqual(provider.calls, 2)
+        notices = [
+            event.text
+            for event in events
+            if event.kind is ConversationEventKind.NOTICE
+        ]
+        self.assertTrue(any("Retrying once" in text for text in notices))
+        self.assertTrue(any("WEB-CONNECT-01" in text for text in notices))
+        self.assertFalse(any("private failure details" in text for text in notices))
+
+    def test_disabled_explicit_provider_is_not_retried_or_called_connection_error(self) -> None:
+        class DisabledSearch:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            def search(self, _query: str):
+                self.calls += 1
+                raise WebSearchError(
+                    "private provider details",
+                    WebSearchFailureCode.PROVIDER,
+                )
+
+        provider = DisabledSearch()
+        service = ConversationService(
+            SyntheticStreamingModel(),
+            tool_executor=ToolExecutor(
+                default_tool_registry(web_search=provider),
+                InMemoryAuditSink(),
+            ),
+        )
+
+        events = tuple(service.events_for("Only search Google Scholar for sleep."))
+
+        self.assertEqual(provider.calls, 1)
+        notices = [
+            event.text
+            for event in events
+            if event.kind is ConversationEventKind.NOTICE
+        ]
+        self.assertTrue(any("disabled or unavailable" in text for text in notices))
+        self.assertFalse(any("connecting" in text for text in notices))
 
     def test_replaced_chat_waits_for_prior_memory_before_model_request(self) -> None:
         model = SyntheticStreamingModel()
