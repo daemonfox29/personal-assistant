@@ -464,6 +464,67 @@ extra precision is worth its latency. None of those layers alone guarantees
 truth, but together they substantially reduce unsupported detail and false
 confidence.
 
+## 2026-08-27 — Conversational follow-ups and verified external links
+
+**Confidence: Building**
+
+### What prompted this
+
+A natural follow-up, `books on her`, initially searched the literal words in
+the new message instead of the person discussed just before it. Later, asking
+for Amazon links exposed a related problem: a language model can produce a
+plausible-looking retailer URL even when it has not verified that page exists.
+
+### What I understand now
+
+Conversation context and an outbound web query are not automatically the same
+thing. The assistant can understand the conversation, but copying all prior
+context into a public search would risk sending personal data to search
+providers. The safe compromise is a narrow heuristic: resolve a simple pronoun
+or shorthand only from a small number of recent user-authored messages, copy a
+short safe topic, and never use assistant text, saved memories, or web content
+as query material. If it cannot do that safely, it asks for clarification.
+
+An external link needs stronger treatment than an ordinary factual answer. A
+link is an action path for the user, so a convincing but invented URL is worse
+than a missing one. The app now forces a current search for link, URL, website,
+or purchase requests. It shows only an exact URL returned by that search; an
+unknown URL fails closed instead of being displayed.
+
+Provider choice is separate again: saying `on PubMed` constrains that one
+request, but the subject can carry into a follow-up without carrying the PubMed
+constraint with it. That lets a follow-up use the normal quality route while
+remaining conversationally natural.
+
+### Why it matters
+
+These rules preserve both usability and privacy. The assistant can follow a
+conversation like a normal collaborator without quietly turning private chat
+history into web-search text. They also make a displayed destination evidence,
+not an attractive guess.
+
+### Where this appears
+
+- `src/personal_assistant/search_context.py`
+- `src/personal_assistant/search_policy.py`
+- `src/personal_assistant/search_evidence.py`
+- `docs/owner-search-test-checklist.md`
+
+### Knowledge gaps to revisit
+
+- How to improve topic resolution for more complex references without expanding
+  the outbound privacy boundary.
+- How to express that a verified retailer URL was valid when searched but may
+  later change, redirect, or become unavailable.
+- Whether the UI should show a compact `verified current result` indicator next
+  to an explicitly requested external link.
+
+### Practical takeaway
+
+For conversational retrieval, carry forward only the minimum user-stated topic
+needed for the next search. For any destination, trust a URL only when current
+retrieval actually returned it.
+
 ## Entry template
 
 Copy this section for future entries:

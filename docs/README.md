@@ -36,6 +36,8 @@ This folder holds human-readable notes about the assistant's design, decisions, 
   assistant says.
 - [Project status](project-status.md): current implementation state and session
   handoff notes.
+- [Owner search test checklist](owner-search-test-checklist.md): practical native
+  UI acceptance checks for the current search milestone.
 - [Open bugs](open-bugs.md): confirmed defects intentionally deferred with
   acceptance criteria.
 - [Future features](future-features.md): ideas outside the current project step.

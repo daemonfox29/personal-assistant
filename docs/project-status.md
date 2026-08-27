@@ -263,7 +263,7 @@ Completed:
 Verification:
 
 - All source and test modules compiled, the dependency lock and repository
-  whitespace checks passed, and 472 local tests passed in 13.700 seconds with
+  whitespace checks passed, and 472 local tests passed in 13.588 seconds with
   one intentionally opt-in benchmark skipped.
 - A real Google Scholar-only double-check compared current evidence and produced
   a completed reviewed answer with three exact citations from distinct papers.
@@ -285,7 +285,10 @@ Verification:
 
 Next:
 
-- Owner UI test before updating the existing feature pull request workflow.
+- Run the owner UI acceptance checks in
+  `docs/owner-search-test-checklist.md`. The complete search-controls milestone
+  is ready for one reviewable pull request; keep auto-merge conditional on the
+  required GitHub Actions checks and the owner UI result.
 
 ### 2026-08-27 — Module 2.3 quality search controls and cancellation
 
