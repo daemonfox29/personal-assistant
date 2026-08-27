@@ -632,14 +632,21 @@ class ConversationService:
                 f"{self._settings.maximum_response_tokens:,} tokens."
             )
         tools = () if self._tool_executor is None else self._tool_executor.definitions
-        tool_reserve = (
+        maximum_tool_reserve = (
             0
             if self._tool_executor is None
             else self._tool_executor.context_reserve_bytes
         )
-        input_token_limit = (
-            self._context_window_tokens - response_limit - tool_reserve
+        available_input_tokens = self._context_window_tokens - response_limit
+        # Tool payloads have fixed security ceilings, but their up-front context
+        # reservation must scale with the model's configured window. Never let
+        # the reserve consume more than half of the remaining request budget.
+        # The executor's independent result limits still apply at every size.
+        tool_reserve = min(
+            maximum_tool_reserve,
+            available_input_tokens // 2,
         )
+        input_token_limit = available_input_tokens - tool_reserve
         base_system_text = response_instruction(response_limit)
         with self._lifecycle_lock:
             communication_style = self._communication_style
@@ -745,6 +752,29 @@ class ConversationService:
                         user_text,
                         tuple(notices),
                     )
+            # A small configured context can be narrower than the conservative
+            # worst-case tool reserve even when the current prompt itself fits.
+            # Prefer a context-minimal tool-capable turn over falsely blaming a
+            # short user message. Session history and retrieved memory remain in
+            # storage and can be used again on a later turn.
+            try:
+                messages = SessionConversationMemory(1).messages_for_request(
+                    system_text=trusted_system_text,
+                    user_text=user_text,
+                    input_token_limit=available_input_tokens,
+                )
+            except MessageTooLargeError:
+                pass
+            else:
+                notices.append(
+                    "Earlier conversation and saved context were omitted from "
+                    "this request to leave room for tool results."
+                )
+                return _PreparedTurn(
+                    ModelRequest(messages, response_limit, tools),
+                    user_text,
+                    tuple(notices),
+                )
             return (
                 "That message is too large for the current context window. "
                 "Shorten it and try again."

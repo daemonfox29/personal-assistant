@@ -419,6 +419,7 @@ class ConversationServiceTests(unittest.TestCase):
         service = ConversationService(
             model,
             communication_style=CommunicationStyle("a" * 2_000),
+            context_window_tokens=8_192,
             default_response_tokens=2_000,
             tool_executor=ToolExecutor(
                 default_tool_registry(
@@ -441,6 +442,41 @@ class ConversationServiceTests(unittest.TestCase):
         answer = "".join(event.text for event in events)
         self.assertIn("synthesized", answer)
         self.assertIn("https://example.test/current", answer)
+        self.assertIn(
+            "Earlier conversation and saved context were omitted from this "
+            "request to leave room for tool results.",
+            tuple(event.text for event in events),
+        )
+
+    def test_tool_reserve_scales_down_with_an_8k_context_window(self) -> None:
+        model = SyntheticStreamingModel()
+        service = ConversationService(
+            model,
+            context_window_tokens=8_192,
+            default_response_tokens=400,
+            tool_executor=ToolExecutor(
+                default_tool_registry(
+                    web_search=SearchProvider(),
+                    web_page_reader=PublicWebPageReader(
+                        fetcher=lambda _url, _timeout: (
+                            "text/plain",
+                            "utf-8",
+                            b"Current public report.",
+                        )
+                    ),
+                ),
+                InMemoryAuditSink(),
+            ),
+        )
+
+        events = tuple(service.events_for("Hello."))
+
+        self.assertEqual(len(model.requests), 1)
+        self.assertNotIn(
+            "Earlier conversation and saved context were omitted from this "
+            "request to leave room for tool results.",
+            tuple(event.text for event in events),
+        )
 
     def test_page_read_is_a_coordinator_enforced_terminal_tool_step(self) -> None:
         class ExtraToolModel:

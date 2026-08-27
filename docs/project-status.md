@@ -233,6 +233,10 @@ Completed:
   coordinator-enforced terminal tool step, leaving room for the final answer and
   the maximum configured communication-style preference even when the full
   2,000-token response allowance is selected.
+- Made the up-front tool reserve proportional to the active model context: it
+  may use at most half of the post-response request budget. Fixed page/result
+  security ceilings remain unchanged, while 8K, 16K, and larger configured
+  windows preserve room for their own prompt and trusted instructions.
 
 Verification:
 
@@ -244,7 +248,7 @@ Verification:
   reading as succeeded, returned a synthesized five-item update with exact HTTPS
   source links, emitted no error notice, and closed the managed runtime cleanly.
 - `uv lock --check`, source/test compilation, and whitespace validation passed.
-  The complete local suite passed 418 tests in 13.905 seconds, with only the
+  The complete local suite passed 419 tests in 13.790 seconds, with only the
   intentionally opt-in 100,000-record memory benchmark skipped.
 
 ### 2026-08-26 — Module 2.1 open-source read-only search boundary
