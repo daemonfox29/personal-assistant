@@ -37,6 +37,15 @@ from personal_assistant.web_search import (
 MAX_TOOL_RESULT_BYTES = 2_048
 MAX_DECIMAL_DIGITS = 24
 MAX_DECIMAL_MAGNITUDE = Decimal("1000000000000")
+WEEKDAYS = (
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+    "Saturday",
+    "Sunday",
+)
 
 
 class ToolRuntimeError(RuntimeError):
@@ -349,9 +358,13 @@ def default_tool_registry(
         if not zone or len(zone) > 64:
             zone = "local"
         return {
+            "calendar_date": value.date().isoformat(),
             "datetime": value.isoformat(timespec="seconds"),
+            "iso_weekday": value.isoweekday(),
+            "local_time": value.time().isoformat(timespec="seconds"),
             "timezone": zone,
             "utc_offset_seconds": int(offset.total_seconds()),
+            "weekday": WEEKDAYS[value.weekday()],
         }
 
     def validate_calculation(arguments: Mapping[str, object]) -> dict[str, object]:
@@ -420,7 +433,8 @@ def default_tool_registry(
         RegisteredTool(
             ModelToolDefinition.create(
                 "get_current_datetime",
-                "Get the current local date, time, timezone, and UTC offset.",
+                "Get the authoritative current local date, time, weekday, "
+                "timezone, and UTC offset.",
                 {
                     "additionalProperties": False,
                     "properties": {},

@@ -46,9 +46,13 @@ class ToolRuntimeTests(unittest.TestCase):
         document = json.loads(result.content)
         self.assertTrue(document["ok"])
         self.assertEqual(document["trust"], "untrusted_tool_data")
+        self.assertEqual(document["data"]["calendar_date"], "2026-08-27")
         self.assertEqual(document["data"]["datetime"], "2026-08-27T09:15:30-06:00")
+        self.assertEqual(document["data"]["iso_weekday"], 4)
+        self.assertEqual(document["data"]["local_time"], "09:15:30")
         self.assertEqual(document["data"]["timezone"], "MDT")
         self.assertEqual(document["data"]["utc_offset_seconds"], -21_600)
+        self.assertEqual(document["data"]["weekday"], "Thursday")
 
         refused = self.executor.execute(
             ModelToolCall.create("get_current_datetime", {"timezone": "UTC"}),
