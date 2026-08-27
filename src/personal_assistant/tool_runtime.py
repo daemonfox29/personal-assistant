@@ -694,7 +694,7 @@ def default_tool_registry(
                 read_search_pages,
                 context_resolver=resolve_page_read_context,
                 repeat_allowed=False,
-                max_result_bytes=7_500,
+                max_result_bytes=5_500,
                 failure_message=(
                     "The selected public pages could not be read safely."
                 ),

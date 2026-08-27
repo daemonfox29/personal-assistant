@@ -219,8 +219,8 @@ Completed:
   alternate ports, redirects, proxies, cookies, authentication, compression,
   non-text types, and any DNS answer that is not globally routable. The socket
   connects to a pinned validated address while TLS verifies the original host.
-- Bounded each page to a 512-KiB transferred prefix and 1,800 visible characters,
-  each request to three sequential pages, and the complete tool result to 7,500
+- Bounded each page to a 512-KiB transferred prefix and 1,200 visible characters,
+  each request to three sequential pages, and the complete tool result to 5,500
   bytes. Script, style, noscript, template, and SVG content is removed.
 - Labeled all extracted content untrusted and instructed the model to ignore
   page-borne directions, synthesize evidence, cite exact result URLs, compare
@@ -231,7 +231,8 @@ Completed:
 - Corrected the 16K context reservation to cover the real search-then-read path
   instead of three impossible maximum-sized page results. Page reading is now a
   coordinator-enforced terminal tool step, leaving room for the final answer and
-  the maximum configured communication-style preference.
+  the maximum configured communication-style preference even when the full
+  2,000-token response allowance is selected.
 
 Verification:
 
@@ -243,7 +244,7 @@ Verification:
   reading as succeeded, returned a synthesized five-item update with exact HTTPS
   source links, emitted no error notice, and closed the managed runtime cleanly.
 - `uv lock --check`, source/test compilation, and whitespace validation passed.
-  The complete local suite passed 418 tests in 13.746 seconds, with only the
+  The complete local suite passed 418 tests in 13.905 seconds, with only the
   intentionally opt-in 100,000-record memory benchmark skipped.
 
 ### 2026-08-26 — Module 2.1 open-source read-only search boundary

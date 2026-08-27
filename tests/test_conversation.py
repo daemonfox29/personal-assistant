@@ -419,6 +419,7 @@ class ConversationServiceTests(unittest.TestCase):
         service = ConversationService(
             model,
             communication_style=CommunicationStyle("a" * 2_000),
+            default_response_tokens=2_000,
             tool_executor=ToolExecutor(
                 default_tool_registry(
                     web_search=provider,
