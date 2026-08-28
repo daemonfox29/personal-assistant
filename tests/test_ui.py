@@ -447,6 +447,62 @@ class NativeUiTests(unittest.TestCase):
             "Redacted audit events table",
         )
 
+    def test_session_only_audit_page_explains_owner_history_is_unavailable(
+        self,
+    ) -> None:
+        page = SettingsPage()
+        page.show_audit_unavailable()
+
+        self.assertEqual(page._audit_table.rowCount(), 0)
+        self.assertFalse(page._audit_load_more.isVisible())
+        self.assertEqual(
+            page._audit_status.text(),
+            "Audit history is unavailable in session-only mode. "
+            "Unlock persistent memory to view it.",
+        )
+
+    def test_session_only_settings_do_not_request_owner_audit_inventory(
+        self,
+    ) -> None:
+        class Factory:
+            runtime_preferences = RuntimePreferences()
+
+            @staticmethod
+            def launch_state() -> ApplicationLaunchState:
+                return ApplicationLaunchState.SESSION_ONLY
+
+        class Service:
+            communication_style = ""
+            info = ApplicationSessionInfo("synthetic", False, 400, 1_200, 2_000)
+
+            @staticmethod
+            def list_memories_page() -> MemoryInventoryPage:
+                return MemoryInventoryPage((), None)
+
+            @staticmethod
+            def list_audit_events() -> AuditInventoryPage:
+                raise AssertionError(
+                    "Session-only Settings must not request audit data"
+                )
+
+            @staticmethod
+            def close() -> None:
+                pass
+
+        window = AssistantWindow(Factory())
+        window._service = Service()
+        window._show_safe_error = self.fail
+
+        window._show_settings()
+
+        self.assertEqual(window._settings._audit_table.rowCount(), 0)
+        self.assertIn(
+            "unavailable in session-only mode",
+            window._settings._audit_status.text(),
+        )
+        window._service = None
+        window.hide()
+
     def test_settings_primary_controls_are_named_and_keyboard_navigable(self) -> None:
         page = SettingsPage()
         page.show()
@@ -577,6 +633,91 @@ class NativeUiTests(unittest.TestCase):
         self.assertTrue(page._private_chat.isEnabled())
         self.assertTrue(page._conversation_list.isEnabled())
         self.assertFalse(page._delete_chat.isEnabled())
+
+    def test_private_chat_status_remains_visible_after_response_finishes(self) -> None:
+        page = ChatPage()
+        page.configure_session("synthetic", True, 400, 1_200, 2_000)
+        page.show_new_conversation(private=True)
+
+        page.show_response_ready()
+
+        self.assertEqual(
+            page._status.text(),
+            "synthetic · encrypted memory · private, not saved",
+        )
+
+    def test_cancelled_response_restores_ready_session_header(self) -> None:
+        started = Event()
+        cancelled = Event()
+
+        class Factory:
+            runtime_preferences = RuntimePreferences()
+
+            @staticmethod
+            def launch_state() -> ApplicationLaunchState:
+                return ApplicationLaunchState.SESSION_ONLY
+
+        class Service:
+            communication_style = ""
+            info = ApplicationSessionInfo("synthetic", False, 400, 1_200, 2_000)
+            active_conversation_id = None
+
+            @staticmethod
+            def iter_events(_text, *, max_response_tokens=None):
+                started.set()
+                yield ConversationEvent(
+                    ConversationEventKind.ASSISTANT_CHUNK,
+                    "Partial synthetic response",
+                )
+                cancelled.wait(2.0)
+                yield ConversationEvent(
+                    ConversationEventKind.CANCELLED,
+                    "Stopped by you.",
+                )
+
+            @staticmethod
+            def cancel_active_response() -> None:
+                cancelled.set()
+
+            @staticmethod
+            def list_conversations():
+                return ()
+
+            @staticmethod
+            def close() -> None:
+                pass
+
+        window = AssistantWindow(Factory())
+        window._service = Service()
+        window._show_safe_error = self.fail
+        window._chat.configure_session("synthetic", False, 400, 1_200, 2_000)
+
+        window._start_message("Synthetic cancellation request", 400)
+        for _ in range(100):
+            self.app.processEvents()
+            if (
+                started.is_set()
+                and "Partial synthetic response" in window._chat.transcript_text()
+            ):
+                break
+            QTest.qWait(5)
+
+        self.assertTrue(started.is_set())
+        window._chat._stop.click()
+        self.assertIn("stopping response", window._chat._status.text())
+        for _ in range(200):
+            self.app.processEvents()
+            if window._chat_thread is None:
+                break
+            QTest.qWait(5)
+
+        self.assertIsNone(window._chat_thread)
+        self.assertIn("Partial synthetic response", window._chat.transcript_text())
+        self.assertIn("Stopped by you.", window._chat.transcript_text())
+        self.assertTrue(window._chat._input.isEnabled())
+        self.assertEqual(window._chat._status.text(), "synthetic · session only")
+        window._service = None
+        window.hide()
 
     def test_generation_allows_navigation_without_mixing_chat_output(self) -> None:
         started = Event()

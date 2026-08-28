@@ -1,6 +1,7 @@
 """Synthetic checks for protected automatic-unlock credential storage."""
 
 from pathlib import Path
+import os
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 import sys
@@ -12,6 +13,7 @@ from keyring.errors import PasswordDeleteError
 
 from personal_assistant.credential_store import (
     CredentialStoreError,
+    MacOSTestOnlyPipeRecoveryCredentialStore,
     MacOSUserPresenceRecoveryCredentialStore,
     SystemRecoveryCredentialStore,
     _PyObjCMacOSUserAuthenticator,
@@ -114,10 +116,121 @@ class CredentialStoreTests(unittest.TestCase):
         self.assertIn("Unlock encrypted", authenticator.prompts[0])
 
     def test_platform_factory_selects_user_presence_store_on_macos(self) -> None:
-        with patch("personal_assistant.credential_store.sys.platform", "darwin"):
+        with patch("personal_assistant.credential_store.sys.platform", "darwin"), patch.dict(
+            "personal_assistant.credential_store.os.environ",
+            {},
+            clear=True,
+        ):
             store = default_recovery_credential_store(Path("/synthetic"))
 
         self.assertIsInstance(store, MacOSUserPresenceRecoveryCredentialStore)
+
+    def test_test_only_macos_switch_uses_enrolled_keychain_without_prompt(self) -> None:
+        with patch("personal_assistant.credential_store.sys.platform", "darwin"), patch.dict(
+            "personal_assistant.credential_store.os.environ",
+            {"PERSONAL_ASSISTANT_TEST_ONLY_SKIP_MACOS_USER_PRESENCE": "1"},
+            clear=True,
+        ):
+            store = default_recovery_credential_store(Path("/synthetic"))
+
+        self.assertIsInstance(store, MacOSTestOnlyPipeRecoveryCredentialStore)
+
+    def test_test_only_macos_switch_requires_exact_opt_in_value(self) -> None:
+        with patch("personal_assistant.credential_store.sys.platform", "darwin"), patch.dict(
+            "personal_assistant.credential_store.os.environ",
+            {"PERSONAL_ASSISTANT_TEST_ONLY_SKIP_MACOS_USER_PRESENCE": "true"},
+            clear=True,
+        ):
+            store = default_recovery_credential_store(Path("/synthetic"))
+
+        self.assertIsInstance(store, MacOSUserPresenceRecoveryCredentialStore)
+
+    def test_test_only_macos_switch_does_not_change_other_platforms(self) -> None:
+        with patch("personal_assistant.credential_store.sys.platform", "linux"), patch.dict(
+            "personal_assistant.credential_store.os.environ",
+            {"PERSONAL_ASSISTANT_TEST_ONLY_SKIP_MACOS_USER_PRESENCE": "1"},
+            clear=True,
+        ):
+            store = default_recovery_credential_store(Path("/synthetic"))
+
+        self.assertIsInstance(store, SystemRecoveryCredentialStore)
+
+    def test_test_only_macos_adapter_reads_one_inherited_pipe_credential(
+        self,
+    ) -> None:
+        store = MacOSTestOnlyPipeRecoveryCredentialStore(Path("/synthetic"))
+        self.assertTrue(
+            store.service_name.startswith(
+                "personal-assistant.testing-autounlock."
+            )
+        )
+        expected = "synthetic recovery passphrase"
+        read_descriptor, write_descriptor = os.pipe()
+        try:
+            os.write(write_descriptor, expected.encode("utf-8"))
+        finally:
+            os.close(write_descriptor)
+        with patch.dict(
+            "personal_assistant.credential_store.os.environ",
+            {"PERSONAL_ASSISTANT_TEST_ONLY_RECOVERY_FD": str(read_descriptor)},
+            clear=True,
+        ):
+            self.assertEqual(store.read_recovery(), expected)
+        with self.assertRaises(OSError):
+            os.fstat(read_descriptor)
+
+    def test_test_only_macos_adapter_returns_none_for_absent_credential(
+        self,
+    ) -> None:
+        store = MacOSTestOnlyPipeRecoveryCredentialStore(Path("/synthetic"))
+        read_descriptor, write_descriptor = os.pipe()
+        os.close(write_descriptor)
+        with patch.dict(
+            "personal_assistant.credential_store.os.environ",
+            {"PERSONAL_ASSISTANT_TEST_ONLY_RECOVERY_FD": str(read_descriptor)},
+            clear=True,
+        ):
+            self.assertIsNone(store.read_recovery())
+
+    def test_test_only_macos_adapter_rejects_an_invalid_descriptor(self) -> None:
+        store = MacOSTestOnlyPipeRecoveryCredentialStore(Path("/synthetic"))
+
+        with patch.dict(
+            "personal_assistant.credential_store.os.environ",
+            {"PERSONAL_ASSISTANT_TEST_ONLY_RECOVERY_FD": "0"},
+            clear=True,
+        ):
+            with self.assertRaises(CredentialStoreError):
+                store.read_recovery()
+
+    def test_test_only_macos_adapter_rejects_malformed_pipe_data(self) -> None:
+        store = MacOSTestOnlyPipeRecoveryCredentialStore(Path("/synthetic"))
+        cases = (
+            b"\x00invalid",
+            b"x" * 1025,
+            b"\xffinvalid",
+        )
+        for value in cases:
+            read_descriptor, write_descriptor = os.pipe()
+            try:
+                os.write(write_descriptor, value)
+            finally:
+                os.close(write_descriptor)
+            with self.subTest(value=value), patch.dict(
+                "personal_assistant.credential_store.os.environ",
+                {"PERSONAL_ASSISTANT_TEST_ONLY_RECOVERY_FD": str(read_descriptor)},
+                clear=True,
+            ):
+                with self.assertRaises(CredentialStoreError):
+                    store.read_recovery()
+
+    def test_test_only_macos_adapter_is_read_only(self) -> None:
+        store = MacOSTestOnlyPipeRecoveryCredentialStore(Path("/synthetic"))
+
+        with self.assertRaises(CredentialStoreError):
+            store.write_recovery("synthetic recovery passphrase")
+        with self.assertRaises(CredentialStoreError):
+            store.delete_recovery()
 
     def test_macos_authentication_denial_prevents_keychain_read(self) -> None:
         backend = SyntheticBackend()

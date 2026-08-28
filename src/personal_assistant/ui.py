@@ -1302,6 +1302,17 @@ class SettingsPage(QWidget):
             f"{self._audit_table.rowCount()} audit events loaded"
         )
 
+    def show_audit_unavailable(self) -> None:
+        """Explain why session-only users cannot inspect owner audit history."""
+
+        self._audit_table.setRowCount(0)
+        self._audit_next_cursor = None
+        self._audit_load_more.hide()
+        self._audit_status.setText(
+            "Audit history is unavailable in session-only mode. "
+            "Unlock persistent memory to view it."
+        )
+
     @Slot()
     def _load_more_audit_events(self) -> None:
         if self._audit_next_cursor is not None:
@@ -1711,6 +1722,7 @@ class ChatPage(QWidget):
         self._thinking_timer.timeout.connect(self._advance_thinking)
         self._display_messages: list[tuple[ConversationRole, str]] = []
         self._base_status = "Local session"
+        self._ready_status = self._base_status
         self._font_family = UI_FONT_FAMILY
         self._font_size = 14
         self._role_colors = {
@@ -1736,7 +1748,8 @@ class ChatPage(QWidget):
     ) -> None:
         memory_text = "encrypted memory" if persistent_memory else "session only"
         self._base_status = f"{model_name} · {memory_text}"
-        self._status.setText(self._base_status)
+        self._ready_status = self._base_status
+        self._status.setText(self._ready_status)
         self._sidebar.setVisible(persistent_memory)
         self._limit.clear()
         choices = (
@@ -1765,6 +1778,11 @@ class ChatPage(QWidget):
         self._stop.setEnabled(busy)
         if not busy:
             self._input.setFocus()
+
+    def show_response_ready(self) -> None:
+        """Return the session header to its ready state after a worker exits."""
+
+        self._status.setText(self._ready_status)
 
     def show_closing(self) -> None:
         self.set_busy(True)
@@ -1851,11 +1869,12 @@ class ChatPage(QWidget):
     def show_new_conversation(self, *, private: bool) -> None:
         self._reset_transcript()
         self._conversation_list.clearSelection()
-        self._status.setText(
+        self._ready_status = (
             f"{self._base_status} · private, not saved"
             if private
             else f"{self._base_status} · new conversation"
         )
+        self._status.setText(self._ready_status)
 
     def show_stored_conversation(
         self,
@@ -1900,7 +1919,8 @@ class ChatPage(QWidget):
             self._transcript.setExtraSelections([selection])
             self._transcript.setTextCursor(cursor)
             self._transcript.ensureCursorVisible()
-        self._status.setText(self._base_status)
+        self._ready_status = self._base_status
+        self._status.setText(self._ready_status)
 
     def set_appearance(
         self,
@@ -2615,6 +2635,7 @@ class AssistantWindow(QMainWindow):
         self._chat_worker = None
         if not self._closing:
             self._activate_deferred_chat_destination()
+            self._chat.show_response_ready()
             self._chat.set_busy(False)
         self._finish_close_if_ready()
 
@@ -2669,13 +2690,13 @@ class AssistantWindow(QMainWindow):
                 )
             except ApplicationOpenError as error:
                 self._show_safe_error(str(error))
-            try:
-                self._settings.set_audit_events(
-                    self._service.list_audit_events()
-                )
-            except ApplicationOpenError as error:
-                self._show_safe_error(str(error))
             if self._service.info.persistent_memory:
+                try:
+                    self._settings.set_audit_events(
+                        self._service.list_audit_events()
+                    )
+                except ApplicationOpenError as error:
+                    self._show_safe_error(str(error))
                 directory = self._factory.runtime_preferences.backup_directory
                 self._settings.show_backup_loading(
                     directory,
@@ -2683,6 +2704,7 @@ class AssistantWindow(QMainWindow):
                 )
                 self._start_backup_task("status")
             else:
+                self._settings.show_audit_unavailable()
                 self._settings.set_backups(BackupOverview("", ()))
 
     @Slot(int, object)

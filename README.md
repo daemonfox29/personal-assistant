@@ -142,8 +142,11 @@ uv run --locked personal-assistant-ui
 On Apple-silicon macOS, `launchers/install-macos-launcher.sh` builds a tiny
 native development launcher in `~/Applications`. It opens the same live `uv`
 checkout without Terminal, so Spotlight can launch **Personal Assistant** and
-the app can be pinned to the Dock. This is a development convenience, not the
-future signed and self-contained package.
+the app can be pinned to the Dock. The installer synchronizes the locked
+environment, and the launcher then executes its UI entry point directly so the
+registered macOS app and Qt window share one process for accessibility and UI
+automation. Re-run the installer after dependency or lockfile changes. This is
+a development convenience, not the future signed and self-contained package.
 
 The native app guides first-run encrypted-memory setup or recovery unlock, then
 starts Ollama and opens streaming chat. After one verified recovery entry, later
@@ -251,6 +254,23 @@ is a signed-package release gate. Automatic unlock never bypasses the separate
 high-risk passcode, and copying only the data directory to another machine does
 not copy the protected credential. The command-line recovery interface
 continues to request the recovery passphrase explicitly.
+
+The source-run macOS development launcher treats the current database and its
+contents as synthetic test data. It sets
+`PERSONAL_ASSISTANT_TEST_ONLY_SKIP_MACOS_USER_PRESENCE=1`. Its locally signed
+native executable is the only trusted client for a distinct
+`personal-assistant.testing-autounlock.*` Keychain item. It reads that item
+through macOS Security.framework, writes the bounded value into an anonymous
+pipe, clears its C buffer, and then execs its own Python UI process. The only
+environment value is the inherited pipe descriptor number—not the secret. The
+read-only Python test adapter consumes and closes that descriptor once,
+validates UTF-8/bounds/NUL safety, and never logs or stores the value. During
+installation, the current protected credential is copied to the isolated test
+item through an in-memory Keychain pipeline; its ACL removes the utility's
+default access and names only the exact freshly signed launcher executable.
+The future signed release bundle must neither set this switch nor use the
+testing Keychain service; it retains the separate Local Authentication path
+above.
 
 By default, persistent files use one stable local directory:
 `~/.personal-assistant/`. The encrypted database is always

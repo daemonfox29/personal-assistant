@@ -1,6 +1,7 @@
 """Security checks for the loopback-only SearXNG adapter."""
 
 from email.message import Message
+from datetime import datetime, timezone
 import json
 import unittest
 from urllib.error import URLError
@@ -10,6 +11,7 @@ from personal_assistant.web_search import (
     MAX_SEARCH_RESPONSE_BYTES,
     SearXNGSearchProvider,
     WebSearchError,
+    WebSearchFailureCode,
     query_is_derived_from_user_text,
     validate_search_query,
 )
@@ -243,6 +245,85 @@ class WebSearchTests(unittest.TestCase):
             [item["url"] for item in result["results"]],
             ["https://good.test/a", "https://other.test/b"],
         )
+
+    def test_recent_news_rejects_irrelevant_results_then_retries_with_a_refined_query(self) -> None:
+        opener = SequenceOpener(
+            [
+                SyntheticResponse(
+                    {
+                        "results": [
+                            {
+                                "title": "Cybersecurity marketing research",
+                                "content": "A medical screening study.",
+                                "publishedDate": "2026-08-26T12:00:00Z",
+                                "url": "https://example.test/irrelevant",
+                            },
+                            {
+                                "title": "Iran report from last year",
+                                "content": "Older context.",
+                                "publishedDate": "2025-08-26T12:00:00Z",
+                                "url": "https://example.test/stale",
+                            },
+                        ]
+                    }
+                ),
+                SyntheticResponse(
+                    {
+                        "results": [
+                            {
+                                "title": "Iran talks continue in Tehran",
+                                "content": "Latest diplomatic developments.",
+                                "publishedDate": "2026-08-27T10:00:00Z",
+                                "url": "https://example.test/iran-news",
+                            }
+                        ]
+                    }
+                ),
+            ]
+        )
+        provider = SearXNGSearchProvider(
+            opener=opener,
+            now=lambda: datetime(2026, 8, 27, 12, tzinfo=timezone.utc),
+        )
+
+        result = provider.search("Recent news about Iran")
+
+        self.assertEqual(len(opener.calls), 2)
+        first_form = parse_qs(opener.calls[0][0].data.decode("utf-8"))
+        retry_form = parse_qs(opener.calls[1][0].data.decode("utf-8"))
+        self.assertEqual(first_form["categories"], ["news"])
+        self.assertEqual(retry_form["categories"], ["news"])
+        self.assertEqual(first_form["engines"], ["google news"])
+        self.assertEqual(retry_form["q"], ["Recent news about Iran latest news"])
+        self.assertEqual(
+            [item["url"] for item in result["results"]],
+            ["https://example.test/iran-news"],
+        )
+
+    def test_recent_news_returns_a_diagnosable_failure_after_one_irrelevant_retry(self) -> None:
+        response = SyntheticResponse(
+            {
+                "results": [
+                    {
+                        "title": "Cybersecurity marketing research",
+                        "content": "A medical screening study.",
+                        "publishedDate": "2026-08-26T12:00:00Z",
+                        "url": "https://example.test/irrelevant",
+                    }
+                ]
+            }
+        )
+        opener = SequenceOpener([response, response])
+        provider = SearXNGSearchProvider(
+            opener=opener,
+            now=lambda: datetime(2026, 8, 27, 12, tzinfo=timezone.utc),
+        )
+
+        with self.assertRaises(WebSearchError) as raised:
+            provider.search("Recent news about Iran")
+
+        self.assertEqual(raised.exception.code, WebSearchFailureCode.RELEVANCE)
+        self.assertEqual(len(opener.calls), 2)
 
     def test_malformed_oversized_redirect_and_wrong_content_fail_safely(self) -> None:
         cases = (

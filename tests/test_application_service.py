@@ -604,7 +604,9 @@ class ApplicationServiceTests(unittest.TestCase):
                 return_value=SyntheticObservationModel(),
             ):
                 service = factory.open(RECOVERY)
-                original = "Lately synthetic interruptions have felt draining."
+                original = (
+                    "At work lately, I have found synthetic interruptions draining."
+                )
                 tuple(service.iter_events(original))
                 service.new_conversation()
                 tuple(
@@ -612,11 +614,11 @@ class ApplicationServiceTests(unittest.TestCase):
                         "How have synthetic interruptions affected me?"
                     )
                 )
-                observation = next(
-                    item
-                    for item in service.list_memories()
-                    if item.kind == "insight"
+                observations = tuple(
+                    item for item in service.list_memories() if item.kind == "insight"
                 )
+                self.assertEqual(len(observations), 1)
+                observation = observations[0]
 
                 source = service.open_memory_source(observation.record_id)
 
@@ -654,7 +656,8 @@ class ApplicationServiceTests(unittest.TestCase):
                 service.new_conversation()
                 tuple(
                     service.iter_events(
-                        "Lately synthetic interruptions have felt draining."
+                        "At work lately, I have found synthetic interruptions "
+                        "draining."
                     )
                 )
                 service.new_conversation()
@@ -1319,6 +1322,62 @@ class ApplicationServiceTests(unittest.TestCase):
                 )
             finally:
                 service.close()
+
+    def test_locked_owner_and_session_only_services_cannot_read_audit_history(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            private_directory = Path(temporary_directory) / "private"
+            configured = AppSettings(
+                memory=MemorySettings(data_directory=private_directory)
+            )
+            configured_factory = AssistantApplicationFactory(configured)
+            configured_factory.setup(RECOVERY, RECOVERY, PASSCODE, PASSCODE)
+            audit_path = private_directory / "audit.jsonl"
+            self.assertTrue(audit_path.is_file())
+
+            with patch(
+                "personal_assistant.application_service.OllamaModel",
+                return_value=SyntheticModel(),
+            ):
+                locked_service = configured_factory.open(session_only=True)
+            try:
+                self.assertFalse(locked_service.info.persistent_memory)
+                self.assertIsNone(locked_service._audit_path)
+                self.assertEqual(locked_service.list_audit_events().items, ())
+            finally:
+                locked_service.close()
+
+            session_only = AppSettings(
+                memory=MemorySettings(
+                    enabled=False,
+                    data_directory=private_directory,
+                )
+            )
+            session_only_factory = AssistantApplicationFactory(session_only)
+            with patch(
+                "personal_assistant.application_service.OllamaModel",
+                return_value=SyntheticModel(),
+            ):
+                session_only_service = session_only_factory.open()
+            try:
+                self.assertFalse(session_only_service.info.persistent_memory)
+                self.assertIsNone(session_only_service._audit_path)
+                self.assertEqual(session_only_service.list_audit_events().items, ())
+            finally:
+                session_only_service.close()
+
+            with patch(
+                "personal_assistant.application_service.OllamaModel",
+                return_value=SyntheticModel(),
+            ):
+                unlocked_service = configured_factory.open(RECOVERY)
+            try:
+                self.assertTrue(unlocked_service.info.persistent_memory)
+                self.assertEqual(unlocked_service._audit_path, audit_path)
+                self.assertGreater(len(unlocked_service.list_audit_events().items), 0)
+            finally:
+                unlocked_service.close()
 
 
 if __name__ == "__main__":

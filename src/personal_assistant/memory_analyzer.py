@@ -87,6 +87,24 @@ _TRANSIENT_ASSERTION = re.compile(
     r"\bi(?:\s+am|['’]m)\s+(?:looking|trying|asking|wondering)\b",
     re.IGNORECASE,
 )
+_OBSERVATION_PERSONAL_CONTEXT = re.compile(
+    r"\b(?:i|me|my|mine|we|us|our)\b",
+    re.IGNORECASE,
+)
+_QUESTION_ONLY_SENTENCE = re.compile(
+    r"^\s*(?:what|when|where|why|who|how|have|has|had|do|does|did|"
+    r"am|are|is|was|were|can|could|would|should|will)\b",
+    re.IGNORECASE,
+)
+_TRANSIENT_OBSERVATION_CONTEXT = re.compile(
+    r"\b(?:can|could|would|will|please)\s+(?:you\s+)?"
+    r"(?:search|look\s+up|find|tell\s+me|explain|research|check)\b|"
+    r"\b(?:search|look\s+up|find)\s+(?:for|me|the|a|an)\b|"
+    r"\b(?:search|tool)\s+(?:failed|failure|error|did\s+not\s+work)\b|"
+    r"\b(?:tell\s+me|explain|research|check\s+(?:whether|if))\b|"
+    r"\bi(?:\s+am|'m)\s+(?:looking|trying|asking|wondering)\b",
+    re.IGNORECASE,
+)
 _USER_SENTENCE = re.compile(r"[^.!?\n]+(?:[.!?]+|$)")
 _EVIDENCE_STOP_WORDS = {
     "about",
@@ -254,6 +272,8 @@ class ModelMemorySuggestionAnalyzer:
             elif kind == "note":
                 payload = NotePayload(item["subject"], item["content"])
             elif kind == "observation":
+                if not has_durable_observation_context(user_text):
+                    continue
                 validated = FactPayload(item["subject"], item["content"])
                 observed_at = self._clock()
                 payload = InsightPayload(
@@ -382,6 +402,30 @@ def has_clear_direct_memory_statement(user_text: str) -> bool:
     """Return whether exact deterministic capture can confirm one statement."""
 
     return bool(clear_direct_memory_statements(user_text))
+
+
+def has_durable_observation_context(user_text: str) -> bool:
+    """Require a declarative personal context before keeping an inference.
+
+    Observations intentionally lack exact evidence, so they need a stricter
+    deterministic input boundary than facts.  A question, search request, or
+    assistant answer must never be enough to create a personal candidate.
+    """
+
+    if not isinstance(user_text, str):
+        return False
+    for match in _USER_SENTENCE.finditer(user_text):
+        sentence = match.group(0).strip()
+        if not sentence or sentence.endswith("?"):
+            continue
+        if (
+            _QUESTION_ONLY_SENTENCE.search(sentence)
+            or _TRANSIENT_OBSERVATION_CONTEXT.search(sentence)
+        ):
+            continue
+        if _OBSERVATION_PERSONAL_CONTEXT.search(sentence):
+            return True
+    return False
 
 
 def clear_direct_memory_statements(user_text: str) -> tuple[str, ...]:

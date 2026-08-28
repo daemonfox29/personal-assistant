@@ -834,6 +834,11 @@ class ConversationService:
                     "The requested search source is disabled or unavailable "
                     f"({code})."
                 )
+            elif code == "WEB-RELEVANCE-01":
+                notice = (
+                    "Web search did not return relevant recent sources "
+                    f"({code})."
+                )
             else:
                 notice = f"There was an issue connecting to web search ({code})."
             yield ConversationEvent(

@@ -218,16 +218,119 @@ class JsonLinesAuditReaderTests(unittest.TestCase):
 
             reader = JsonLinesAuditReader(settings)
             first = reader.read_page()
-            second = reader.read_page(first.next_offset or 0)
+            second = reader.read_page(first.next_cursor)
 
             self.assertEqual(len(first.items), 100)
             self.assertEqual(len(second.items), 5)
             self.assertEqual(first.items[0].operation, "repository_read")
             self.assertEqual(first.items[0].timestamp, "2026-08-24T12:01:45.000Z")
-            self.assertIsNone(second.next_offset)
+            self.assertIsNone(second.next_cursor)
             serialized = repr(first.items)
             self.assertNotIn("record-105", serialized)
             self.assertNotIn("correlation", serialized)
+
+    def test_reader_cursor_skips_concurrent_appends_without_duplicates_or_gaps(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            path = Path(temporary_directory) / "audit.jsonl"
+            settings = AuditFileSettings(path)
+            sink = JsonLinesAuditSink(settings)
+            for index in range(1, 206):
+                sink.write(audit_event(index))
+
+            reader = JsonLinesAuditReader(settings)
+            first = reader.read_page()
+            self.assertIsNotNone(first.next_cursor)
+
+            for index in range(206, 216):
+                sink.write(audit_event(index))
+
+            second = reader.read_page(first.next_cursor)
+            third = reader.read_page(second.next_cursor)
+            loaded = first.items + second.items + third.items
+
+            self.assertEqual(
+                tuple(item.timestamp for item in loaded),
+                tuple(
+                    audit_event(index).timestamp.isoformat(
+                        timespec="milliseconds"
+                    ).replace("+00:00", "Z")
+                    for index in range(205, 0, -1)
+                ),
+            )
+            self.assertIsNone(third.next_cursor)
+            self.assertNotIn(
+                str(audit_event(106).event_id),
+                first.next_cursor or "",
+            )
+
+    def test_reader_cursor_remains_stable_when_appends_rotate_files(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            path = Path(temporary_directory) / "audit.jsonl"
+            settings = AuditFileSettings(
+                path,
+                max_file_bytes=16_384,
+                max_event_bytes=16_384,
+                retained_rotations=20,
+            )
+            sink = JsonLinesAuditSink(settings)
+            for index in range(1, 206):
+                sink.write(audit_event(index))
+
+            reader = JsonLinesAuditReader(settings)
+            first = reader.read_page()
+            self.assertIsNotNone(first.next_cursor)
+            rotation_count_before = len(tuple(path.parent.glob("audit.jsonl.*")))
+
+            for index in range(206, 276):
+                sink.write(audit_event(index))
+
+            self.assertGreater(
+                len(tuple(path.parent.glob("audit.jsonl.*"))),
+                rotation_count_before,
+            )
+            second = reader.read_page(first.next_cursor)
+            third = reader.read_page(second.next_cursor)
+            loaded = first.items + second.items + third.items
+
+            self.assertEqual(
+                tuple(item.timestamp for item in loaded),
+                tuple(
+                    audit_event(index).timestamp.isoformat(
+                        timespec="milliseconds"
+                    ).replace("+00:00", "Z")
+                    for index in range(205, 0, -1)
+                ),
+            )
+
+    def test_reader_cursor_retains_the_thousand_event_display_ceiling(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            path = Path(temporary_directory) / "audit.jsonl"
+            settings = AuditFileSettings(path)
+            sink = JsonLinesAuditSink(settings)
+            for index in range(1, 1_002):
+                sink.write(audit_event(index))
+
+            reader = JsonLinesAuditReader(settings)
+            page = reader.read_page()
+            loaded = page.items
+            for _ in range(9):
+                self.assertIsNotNone(page.next_cursor)
+                page = reader.read_page(page.next_cursor)
+                loaded += page.items
+
+            self.assertEqual(len(loaded), 1_000)
+            self.assertIsNone(page.next_cursor)
+            self.assertEqual(
+                tuple(item.timestamp for item in loaded),
+                tuple(
+                    audit_event(index).timestamp.isoformat(
+                        timespec="milliseconds"
+                    ).replace("+00:00", "Z")
+                    for index in range(1_001, 1, -1)
+                ),
+            )
 
     def test_reader_skips_malformed_content_and_rejects_symlink(self) -> None:
         with TemporaryDirectory() as temporary_directory:

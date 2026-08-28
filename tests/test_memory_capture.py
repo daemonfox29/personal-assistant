@@ -31,6 +31,8 @@ from personal_assistant.memory_repository import (
 )
 from personal_assistant.memory_types import (
     FactPayload,
+    InsightConfidence,
+    InsightPayload,
     MemoryValidationError,
     MentionPolicy,
     NotePayload,
@@ -343,6 +345,37 @@ class MemoryCaptureTests(unittest.TestCase):
                 connection.execute("SELECT count(*) FROM records").fetchone()[0],
                 1,
             )
+
+    def test_semantically_equivalent_observation_is_not_saved_twice(self) -> None:
+        first = self.coordinator.suggest_automatically(
+            self._suggestion(
+                InsightPayload(
+                    "Crowded synthetic meetings are draining for me lately.",
+                    InsightConfidence.LOW,
+                    "Synthetic current-turn inference.",
+                    NOW,
+                    NOW,
+                )
+            ),
+            uuid4(),
+        )
+        second = self.coordinator.suggest_automatically(
+            self._suggestion(
+                InsightPayload(
+                    "Crowded synthetic meetings have been draining for me.",
+                    InsightConfidence.LOW,
+                    "Synthetic current-turn inference.",
+                    NOW,
+                    NOW,
+                )
+            ),
+            uuid4(),
+        )
+
+        assert first.record is not None
+        self.assertEqual(second.decision, CaptureDecision.DUPLICATE)
+        self.assertEqual(second.related_record_ids, (first.record.record_id,))
+        self.assertEqual(len(self.repository.list_candidates(uuid4())), 1)
 
     def test_explicit_instruction_confirms_one_matching_candidate(self) -> None:
         candidate = self.coordinator.suggest_automatically(

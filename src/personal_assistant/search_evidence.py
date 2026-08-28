@@ -146,11 +146,21 @@ def render_grounded_answer(
         position = answer.find("https://", position + 8)
     if not cited:
         return answer, "missing_citation"
+    cited_sources = tuple(
+        source for source in catalog if source.citation_id.casefold() in cited
+    )
+    source_numbers = {
+        source.citation_id.casefold(): index
+        for index, source in enumerate(cited_sources, start=1)
+    }
     rendered = answer
-    placeholders: list[tuple[str, EvidenceSource]] = []
+    placeholders: list[tuple[str, int]] = []
     for index, source in enumerate(catalog, start=1):
+        citation_key = source.citation_id.casefold()
+        if citation_key not in source_numbers:
+            continue
         placeholder = f"\x00verified-source-{index}\x00"
-        placeholders.append((placeholder, source))
+        placeholders.append((placeholder, source_numbers[citation_key]))
         source_prefix = (
             rf"Source\s+{re.escape(source.citation_id)}\s*[—-]\s*"
             rf"{re.escape(source.label)}"
@@ -174,12 +184,9 @@ def render_grounded_answer(
             rendered,
             flags=re.IGNORECASE,
         )
-    for placeholder, source in placeholders:
-        rendered = rendered.replace(
-            placeholder,
-            _rendered_source(source, show_links=show_links),
-        )
-    return rendered, None
+    for placeholder, source_number in placeholders:
+        rendered = rendered.replace(placeholder, f"[{source_number}]")
+    return _append_source_list(rendered, cited_sources, show_links=show_links), None
 
 
 def grounded_answer_error(answer: str, allowed_urls: Iterable[str]) -> str | None:
@@ -236,8 +243,18 @@ def _source_label(value: object, url: str) -> str:
     return hostname[:120]
 
 
-def _rendered_source(source: EvidenceSource, *, show_links: bool) -> str:
-    base = f"Source {source.citation_id} — {source.label}"
-    if not show_links:
-        return base
-    return f"Source {source.citation_id} — {source.label}: {source.url}"
+def _append_source_list(
+    answer: str,
+    sources: Iterable[EvidenceSource],
+    *,
+    show_links: bool,
+) -> str:
+    """Append one compact, code-owned source list for rendered citations."""
+
+    entries = []
+    for index, source in enumerate(sources, start=1):
+        entry = f"[{index}] {source.label}"
+        if show_links:
+            entry = f"{entry}: {source.url}"
+        entries.append(entry)
+    return f"{answer.rstrip()}\n\nSources:\n" + "\n".join(entries)

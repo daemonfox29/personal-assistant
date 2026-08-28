@@ -83,7 +83,7 @@ class SearchEvidenceTests(unittest.TestCase):
             "unknown_citation",
         )
 
-    def test_source_ids_render_labels_and_hide_links_by_default(self) -> None:
+    def test_ordinary_summary_uses_compact_source_list_and_hides_links(self) -> None:
         sources = (
             EvidenceSource(
                 "S1",
@@ -104,29 +104,55 @@ class SearchEvidenceTests(unittest.TestCase):
         )
 
         self.assertIsNone(error)
-        self.assertIn("Source S1 — Lamotrigine in bipolar disorder", labeled)
+        self.assertIn("Lamotrigine is discussed here [1].", labeled)
+        self.assertIn("Sources:\n[1] Lamotrigine in bipolar disorder", labeled)
+        self.assertNotIn("S1", labeled)
         self.assertNotIn("https://", labeled)
         self.assertIsNone(linked_error)
+        self.assertIn("Sources:\n[1] Lamotrigine in bipolar disorder:", linked)
         self.assertIn("https://pubmed.ncbi.nlm.nih.gov/12345/", linked)
 
-    def test_model_written_source_label_is_not_duplicated_during_rendering(self) -> None:
+    def test_repeated_source_uses_one_source_list_entry(self) -> None:
         sources = (
             EvidenceSource(
                 "S1",
                 "Verified book listing",
                 "https://www.amazon.com/dp/verified",
             ),
+            EvidenceSource(
+                "S2",
+                "Independent review",
+                "https://example.com/review",
+            ),
         )
 
         rendered, error = render_grounded_answer(
-            "Book: Source S1 — Verified book listing: [S1]",
+            "Book: Source S1 — Verified book listing: [S1]. "
+            "It remains available [S1], with context [S2].",
+            sources,
+            show_links=False,
+        )
+
+        self.assertIsNone(error)
+        self.assertEqual(rendered.count("Verified book listing"), 1)
+        self.assertEqual(rendered.count("[1]"), 3)
+        self.assertIn("[2] Independent review", rendered)
+        self.assertNotIn("Source S1", rendered)
+
+    def test_explicit_link_request_shows_only_verified_source_url(self) -> None:
+        sources = (
+            EvidenceSource("S1", "Known study", "https://example.com/study"),
+        )
+
+        rendered, error = render_grounded_answer(
+            "Claim [S1].",
             sources,
             show_links=True,
         )
 
         self.assertIsNone(error)
-        self.assertEqual(rendered.count("Source S1 — Verified book listing"), 1)
-        self.assertIn("https://www.amazon.com/dp/verified", rendered)
+        self.assertIn("[1] Known study: https://example.com/study", rendered)
+        self.assertNotIn("S1", rendered)
 
     def test_unknown_source_id_and_unknown_url_fail_closed(self) -> None:
         sources = (
@@ -179,7 +205,8 @@ class SearchEvidenceTests(unittest.TestCase):
             (EvidenceSource("S2", "Safe study", "https://example.com/study"),),
         )
         self.assertIsNone(error)
-        self.assertIn("Source S2 — Safe study", rendered)
+        self.assertIn("Sources:\n[1] Safe study", rendered)
+        self.assertNotIn("S2", rendered)
 
     def test_untrusted_source_title_cannot_add_formatting_or_a_visible_url(self) -> None:
         content = json.dumps(
@@ -205,7 +232,8 @@ class SearchEvidenceTests(unittest.TestCase):
         )
 
         self.assertIsNone(error)
-        self.assertIn("Source S1 — Study", rendered)
+        self.assertIn("Sources:\n[1] Study", rendered)
+        self.assertNotIn("S1", rendered)
         self.assertNotIn("**", rendered)
         self.assertNotIn("https://", rendered)
 
