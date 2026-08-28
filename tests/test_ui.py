@@ -634,6 +634,18 @@ class NativeUiTests(unittest.TestCase):
         self.assertTrue(page._conversation_list.isEnabled())
         self.assertFalse(page._delete_chat.isEnabled())
 
+    def test_private_chat_status_remains_visible_after_response_finishes(self) -> None:
+        page = ChatPage()
+        page.configure_session("synthetic", True, 400, 1_200, 2_000)
+        page.show_new_conversation(private=True)
+
+        page.show_response_ready()
+
+        self.assertEqual(
+            page._status.text(),
+            "synthetic · encrypted memory · private, not saved",
+        )
+
     def test_cancelled_response_restores_ready_session_header(self) -> None:
         started = Event()
         cancelled = Event()

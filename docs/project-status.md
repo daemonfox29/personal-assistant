@@ -234,6 +234,9 @@ Completed:
 - Bound the post-cancellation ready-state transition to actual worker completion
   so partial text and the stop notice remain while the header and composer
   recover correctly.
+- Preserved the active conversation's ready-state label after generation so a
+  Private Chat continues to display `private, not saved` after its response
+  finishes.
 - Treated the current database as synthetic test data and provisioned a separate
   test-only Keychain item whose ACL trusts only the exact locally signed
   development launcher. The launcher passes the recovery credential once to its
@@ -258,6 +261,10 @@ Verification:
   results.
 - An isolated temporary profile confirmed session-only Settings exposes no
   owner audit events and instead shows the explicit unlock-required message.
+- The focused Private Chat regression, all 28 native UI tests, and the complete
+  497-test suite passed with one intentional skip. A signed-app live response
+  then completed with the composer enabled and the `private, not saved`
+  indicator still visible.
 
 ### 2026-08-27 — macOS UI automation launcher repair
 

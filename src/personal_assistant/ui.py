@@ -1722,6 +1722,7 @@ class ChatPage(QWidget):
         self._thinking_timer.timeout.connect(self._advance_thinking)
         self._display_messages: list[tuple[ConversationRole, str]] = []
         self._base_status = "Local session"
+        self._ready_status = self._base_status
         self._font_family = UI_FONT_FAMILY
         self._font_size = 14
         self._role_colors = {
@@ -1747,7 +1748,8 @@ class ChatPage(QWidget):
     ) -> None:
         memory_text = "encrypted memory" if persistent_memory else "session only"
         self._base_status = f"{model_name} · {memory_text}"
-        self._status.setText(self._base_status)
+        self._ready_status = self._base_status
+        self._status.setText(self._ready_status)
         self._sidebar.setVisible(persistent_memory)
         self._limit.clear()
         choices = (
@@ -1780,7 +1782,7 @@ class ChatPage(QWidget):
     def show_response_ready(self) -> None:
         """Return the session header to its ready state after a worker exits."""
 
-        self._status.setText(self._base_status)
+        self._status.setText(self._ready_status)
 
     def show_closing(self) -> None:
         self.set_busy(True)
@@ -1867,11 +1869,12 @@ class ChatPage(QWidget):
     def show_new_conversation(self, *, private: bool) -> None:
         self._reset_transcript()
         self._conversation_list.clearSelection()
-        self._status.setText(
+        self._ready_status = (
             f"{self._base_status} · private, not saved"
             if private
             else f"{self._base_status} · new conversation"
         )
+        self._status.setText(self._ready_status)
 
     def show_stored_conversation(
         self,
@@ -1916,7 +1919,8 @@ class ChatPage(QWidget):
             self._transcript.setExtraSelections([selection])
             self._transcript.setTextCursor(cursor)
             self._transcript.ensureCursorVisible()
-        self._status.setText(self._base_status)
+        self._ready_status = self._base_status
+        self._status.setText(self._ready_status)
 
     def set_appearance(
         self,
